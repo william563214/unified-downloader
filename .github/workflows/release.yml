@@ -51,7 +51,18 @@ jobs:
 
       - name: Install frontend deps
         working-directory: app
-        run: npm ci
+        run: |
+          npm ci
+          # Ensure platform-native @tauri-apps/cli binding is present
+          # (npm lockfiles generated on one OS often omit other optionalDeps)
+          npm install --no-save --no-package-lock \
+            "@tauri-apps/cli@$(node -p "require('./node_modules/@tauri-apps/cli/package.json').version")"
+
+      - name: Install Linux WebKit deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Build Tauri app (unsigned)
         working-directory: app
