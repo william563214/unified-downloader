@@ -1,4 +1,4 @@
-# JSON-lines 事件協定（v0.3）
+# JSON-lines 事件協定（v0.4）
 
 `udl get URL -o DIR --json` 與 Tauri sidecar 透過 **stdout 每行一個 JSON 物件** 溝通。
 人類可读訊息寫入 stderr；GUI 只解析 stdout。
@@ -92,7 +92,7 @@ Job 結束：
 {"ev":"error","job":"<job-id>","file":"<file-id>","message":"…","code":"download_failed"}
 ```
 
-常見 `code`：`unsupported`、`resolve_failed`、`download_failed`、`ffmpeg_missing`、`merge_failed`。
+常見 `code`：`unsupported`、`resolve_failed`、`download_failed`、`ffmpeg_missing`、`merge_failed`、`mega_tool_missing`。
 
 ### `cancel`
 

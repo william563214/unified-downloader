@@ -89,6 +89,8 @@ function siteTone(site: string | null | undefined): string {
       return "tone-iwara";
     case "bilibili":
       return "tone-bili";
+    case "mega":
+      return "tone-mega";
     default:
       return "tone-unknown";
   }
@@ -420,7 +422,7 @@ export default function App() {
           <p className="brand">整合下載器</p>
           <h1>貼上網址，辨識站點，一次下載</h1>
           <p className="lede">
-            統一核心支援 Gofile、Bunkr、Iwara 與 Bilibili。
+            統一核心支援 Gofile、Bunkr、Iwara、Bilibili；MEGA 經外部工具下載。
           </p>
         </div>
       </header>
@@ -432,7 +434,7 @@ export default function App() {
             <input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="gofile / bunkr / iwara.tv / bilibili.com 連結"
+              placeholder="gofile / bunkr / iwara / bilibili / mega.nz 連結"
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
@@ -473,6 +475,15 @@ export default function App() {
                 Cloudflare 繞過（選用，預設關閉；需安裝 cloudscraper）
               </span>
             </label>
+          </div>
+        )}
+
+        {resolveInfo?.site === "mega" && resolveInfo.supported && (
+          <div className="site-options" aria-label="MEGA 選項">
+            <p className="hint">
+              需本機已安裝 megatools（優先）或 MEGAcmd 的 mega-get。可用環境變數
+              UDL_MEGA_TOOL 指定路徑。不支援配額繞過。
+            </p>
           </div>
         )}
 

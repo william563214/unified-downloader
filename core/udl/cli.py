@@ -102,6 +102,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="optional Iwara Bearer token (in-memory only not stored)",
     )
+    p_get.add_argument(
+        "--mega-tool",
+        default=None,
+        help="path to megatools or mega-get (default: PATH / UDL_MEGA_TOOL)",
+    )
 
     p_schema = sub.add_parser("schema", help="print JSON-lines event schema")
     p_schema.add_argument(
@@ -248,8 +253,9 @@ def cmd_get(args: argparse.Namespace) -> int:
             _apply_site_options(ext, args)
         result = ext.resolve(args.url, password=args.password)
     except Exception as exc:  # noqa: BLE001
+        code = getattr(exc, "code", None) or "resolve_failed"
         if args.json:
-            emit.error(job=job_id, message=str(exc), code="resolve_failed")
+            emit.error(job=job_id, message=str(exc), code=str(code))
         else:
             print(f"resolve failed: {exc}", file=sys.stderr)
         return 1
@@ -313,6 +319,8 @@ def _apply_site_options(ext: object, args: argparse.Namespace) -> None:
         kwargs["token"] = args.token
     if getattr(args, "cloudflare_bypass", False):
         kwargs["cloudflare_bypass"] = True
+    if getattr(args, "mega_tool", None):
+        kwargs["mega_tool"] = args.mega_tool
     if kwargs:
         configure(**kwargs)
 

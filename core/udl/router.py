@@ -15,6 +15,7 @@ from udl.extractors import bunkr as bunkr_mod
 from udl.extractors import gofile as gofile_mod
 from udl.extractors import iwara as iwara_mod
 from udl.extractors.base import extractor
+from udl.extractors.external import mega as mega_mod
 
 Matcher = Callable[[str], bool]
 Factory = Callable[[], extractor]
@@ -63,6 +64,14 @@ registry: list[site_entry] = [
         factory=bilibili_mod.bilibili_extractor,
         status="implemented",
         kind_hint="video|bangumi",
+    ),
+    site_entry(
+        site="mega",
+        label="MEGA",
+        match=mega_mod.matches,
+        factory=mega_mod.mega_extractor,
+        status="external",
+        kind_hint="file|folder",
     ),
 ]
 
@@ -130,10 +139,15 @@ def resolve(url: str) -> resolve_info:
             message="unsupported site — no generic fallback in v0.1",
         )
 
-    supported = entry.status == "implemented"
+    supported = entry.status in {"implemented", "external"}
     message = None
     if entry.status == "stub":
         message = f"{entry.label} is reserved but not implemented yet"
+    elif entry.status == "external":
+        message = (
+            f"{entry.label} downloads via an external CLI "
+            "(megatools preferred; MEGAcmd mega-get fallback)"
+        )
     return resolve_info(
         site=entry.site,
         label=entry.label,
@@ -150,6 +164,6 @@ def get_extractor(url: str) -> extractor:
     info = resolve(url)
     if info.entry is None:
         raise ValueError(info.message or "unsupported URL")
-    if info.entry.status != "implemented":
+    if info.entry.status not in {"implemented", "external"}:
         raise NotImplementedError(info.message or f"{info.site} not implemented")
     return info.entry.factory()

@@ -13,6 +13,8 @@ uv run udl get "https://www.iwara.tv/video/XXXX" -o ./out --json --quality Sourc
 uv run udl resolve "https://www.bilibili.com/video/BV…"
 uv run udl probe "https://www.bilibili.com/video/BV…"
 uv run udl get "https://www.bilibili.com/video/BV…" -o ./out --json
+uv run udl get "https://mega.nz/file/…#…" -o ./out --json
 ```
 
-Bilibili 需要系統 FFmpeg（或 `--ffmpeg` / `UDL_FFMPEG`）。詳見倉庫根目錄 `README.md`。
+Bilibili 需要系統 FFmpeg（或 `--ffmpeg` / `UDL_FFMPEG`）。  
+MEGA 需要本機 **megatools**（優先）或 MEGAcmd `mega-get`（`--mega-tool`／`UDL_MEGA_TOOL`）。詳見倉庫根目錄 `README.md`。

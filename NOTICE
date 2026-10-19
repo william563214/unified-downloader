@@ -48,6 +48,29 @@ upstream copyright and were adapted under compatible licenses.
   itself does not forbid commercial use — both are documented here.
   QR/cookie login is stubbed for a later release (OS keychain).
 
+## External tools (subprocess only — not linked / not imported)
+
+### MEGA — `core/udl/extractors/external/mega.py`
+- Preferred: **megatools** (`megatools dl` / `megadl`)
+  - Upstream: https://xff.cz/megatools/ / https://xff.cz/git/megatools
+  - License: GPL-2.0 with OpenSSL exemption (treated as GPL-2.0-only for
+    linking purposes). **Must not be imported or statically/dynamically
+    linked into the udl process**; invoke only as a separate executable.
+  - Why preferred: single headless binary, parseable progress lines, works
+    without a background daemon on macOS / Windows / Linux.
+- Fallback: **MEGAcmd** (`mega-get`)
+  - Upstream: https://github.com/meganz/MEGAcmd
+  - License: mostly BSD-2-Clause (interactive shell binary is GPL).
+  - May require `mega-cmd-server` in the background; progress is a
+    TRANSFERRING bar that udl parses when present.
+- Supported URLs: `mega.nz/file/…`, `/folder/…`, legacy `#!` / `#F!`
+  (also `mega.co.nz` / `mega.io` hosts).
+- Missing tool: JSON-lines `error` with `code=mega_tool_missing` and
+  install guidance (brew / scoop / apt / https://mega.io/cmd). Optional
+  override: `--mega-tool` or `UDL_MEGA_TOOL`.
+- Explicitly **not** implemented: MegaBasterd SmartProxy, Quota Recovery,
+  IP rotation, or any transfer-quota bypass.
+
 ## Intentionally not ported
 - gallery-dl (GPL-2.0-only) — incompatible with GPL-3.0; do not import or copy.
-- MEGA — deferred to an external tool in a later version.
+- MegaBasterd — GUI-only Java app; MEGA is handled via megatools/MEGAcmd instead.
