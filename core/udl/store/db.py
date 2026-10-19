@@ -106,6 +106,15 @@ migrations: list[tuple[int, str]] = [
         create index if not exists idx_queue_jobs_updated on queue_jobs(updated_at);
         """,
     ),
+    (
+        2,
+        """
+        alter table history_jobs add column cover_path text;
+        alter table history_files add column role text;
+
+        create index if not exists idx_history_files_role on history_files(role);
+        """,
+    ),
 ]
 
 
@@ -117,6 +126,11 @@ def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
     conn.execute("pragma foreign_keys = on")
     migrate(conn)
     return conn
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"pragma table_info({table})").fetchall()
+    return {str(row[1]) for row in rows}
 
 
 def migrate(conn: sqlite3.Connection) -> None:
@@ -135,7 +149,19 @@ def migrate(conn: sqlite3.Connection) -> None:
     for version, sql in migrations:
         if version in applied:
             continue
-        conn.executescript(sql)
+        if version == 2:
+            # idempotent column adds for interrupted prior runs
+            job_cols = _table_columns(conn, "history_jobs")
+            file_cols = _table_columns(conn, "history_files")
+            if "cover_path" not in job_cols:
+                conn.execute("alter table history_jobs add column cover_path text")
+            if "role" not in file_cols:
+                conn.execute("alter table history_files add column role text")
+            conn.execute(
+                "create index if not exists idx_history_files_role on history_files(role)"
+            )
+        else:
+            conn.executescript(sql)
         conn.execute(
             "insert or ignore into schema_migrations(version) values (?)",
             (version,),

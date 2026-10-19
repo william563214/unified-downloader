@@ -14,6 +14,7 @@ ev_job = "job"
 ev_file = "file"
 ev_progress = "progress"
 ev_merging = "merging"
+ev_postprocess = "postprocess"
 ev_done = "done"
 ev_error = "error"
 ev_cancel = "cancel"
@@ -87,6 +88,7 @@ class emitter:
         index: int | None = None,
         metadata: dict[str, Any] | None = None,
         already_downloaded: bool | None = None,
+        role: str | None = None,
     ) -> None:
         payload: dict[str, Any] = {"job": job, "id": id, "name": name}
         if total is not None:
@@ -99,6 +101,8 @@ class emitter:
             payload["metadata"] = metadata
         if already_downloaded is not None:
             payload["already_downloaded"] = already_downloaded
+        if role is not None:
+            payload["role"] = role
         self.emit(ev_file, **payload)
 
     def progress(
@@ -134,6 +138,34 @@ class emitter:
         if message is not None:
             payload["message"] = message
         self.emit(ev_merging, **payload)
+
+    def postprocess(
+        self,
+        *,
+        job: str,
+        step: str,
+        file: str | None = None,
+        path: str | None = None,
+        role: str | None = None,
+        message: str | None = None,
+        ok: bool | None = None,
+        code: str | None = None,
+    ) -> None:
+        """NFO / cover / embed and other post-download artifact steps."""
+        payload: dict[str, Any] = {"job": job, "step": step}
+        if file is not None:
+            payload["file"] = file
+        if path is not None:
+            payload["path"] = path
+        if role is not None:
+            payload["role"] = role
+        if message is not None:
+            payload["message"] = message
+        if ok is not None:
+            payload["ok"] = ok
+        if code is not None:
+            payload["code"] = code
+        self.emit(ev_postprocess, **payload)
 
     def probe(self, **fields: Any) -> None:
         """rich metadata for GUI selectors (parts / qualities)."""
@@ -275,6 +307,7 @@ def dump_schema() -> dict[str, Any]:
                 "index": "int?",
                 "metadata": "object?",
                 "already_downloaded": "bool?",
+                "role": "str? (media|nfo|cover)",
             },
             ev_progress: {
                 "job": "str",
@@ -288,6 +321,16 @@ def dump_schema() -> dict[str, Any]:
                 "file": "str?",
                 "path": "str?",
                 "message": "str?",
+            },
+            ev_postprocess: {
+                "job": "str",
+                "step": "str (nfo|cover|embed_cover|skip)",
+                "file": "str?",
+                "path": "str?",
+                "role": "str? (nfo|cover)",
+                "message": "str?",
+                "ok": "bool?",
+                "code": "str?",
             },
             ev_duplicate: {
                 "job": "str",

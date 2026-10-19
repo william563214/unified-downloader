@@ -64,9 +64,9 @@
 ### 後續 follow-ups（仍屬 v0.5 範圍，可分 PR）
 
 - [ ] 命名／分類規則引擎（依 metadata 產生路徑與檔名）
-- [ ] NFO／sidecar 資訊檔輸出
-- [ ] 封面／縮圖下載
-- [ ] 修復中心（缺檔、hash 不符、半成品 `.part`）
+- [x] NFO／sidecar 資訊檔輸出（`udl/postprocess/nfo.py`；CLI／GUI 全域＋站點開關）
+- [x] 封面／縮圖下載（`udl/postprocess/cover.py`；poster／folder.jpg；可選 FFmpeg 嵌入）
+- [ ] 修復中心（缺檔、hash 不符、半成品 `.part`；可讀 history `role`／`cover_path`）
 - [ ] aria2 RPC 後端（與另一代理的下載引擎工作協調；本 foundation 不改引擎內部）
 - [ ] 全域限速／Proxy（同上，下載引擎平行工作）
 

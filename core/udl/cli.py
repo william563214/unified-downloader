@@ -13,6 +13,8 @@ from typing import Any
 
 from udl import __version__
 from udl.events import dump_schema, emitter
+from udl.postprocess.artifacts import run_postprocess
+from udl.postprocess.options import parse_site_toggle_list, postprocess_options
 from udl.router import get_extractor, resolve
 from udl.session import (
     finalize_download,
@@ -132,6 +134,43 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-history",
         action="store_true",
         help="do not write history / queue to SQLite",
+    )
+    p_get.add_argument(
+        "--write-nfo",
+        action="store_true",
+        help="write Kodi/Jellyfin/Emby .nfo sidecars from metadata",
+    )
+    p_get.add_argument(
+        "--write-cover",
+        action="store_true",
+        help="download cover/thumbnail next to media (poster or folder.jpg)",
+    )
+    p_get.add_argument(
+        "--embed-cover",
+        action="store_true",
+        help="embed downloaded cover into mp4/mkv via FFmpeg (implies --write-cover)",
+    )
+    p_get.add_argument(
+        "--cover-name",
+        choices=("poster", "folder"),
+        default="poster",
+        help="cover filename style: <stem>-poster.jpg or folder.jpg (default: poster)",
+    )
+    p_get.add_argument(
+        "--nfo-sites",
+        default="all",
+        help=(
+            "sites allowed for NFO when --write-nfo is set "
+            "(all|none|comma list; prefix - to disable e.g. all,-mega)"
+        ),
+    )
+    p_get.add_argument(
+        "--cover-sites",
+        default="all",
+        help=(
+            "sites allowed for cover when --write-cover/--embed-cover is set "
+            "(all|none|comma list; prefix - to disable)"
+        ),
     )
 
     p_schema = sub.add_parser("schema", help="print JSON-lines event schema")
@@ -500,6 +539,34 @@ def cmd_get(args: argparse.Namespace) -> int:
             skip_indexes=skip_indexes,
             file_dest_overrides=overrides,
         )
+
+    pp_opts = _postprocess_from_args(args)
+    if (
+        not cancel.is_set()
+        and failed == 0
+        and pp_opts.any_enabled()
+        and (ok > 0 or already_all)
+    ):
+        try:
+            run_postprocess(
+                result,
+                out,
+                pp_opts,
+                job_id=job_id,
+                emit=emit if args.json else None,
+                conn=conn,
+                cancel=cancel,
+                skip_indexes=skip_indexes,
+                file_dest_overrides=overrides,
+                kind_hint=result.kind,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if args.json:
+                emit.error(job=job_id, message=str(exc), code="postprocess_failed")
+            else:
+                print(f"postprocess failed: {exc}", file=sys.stderr)
+
+    if conn is not None:
         conn.close()
 
     emit.done(
@@ -516,6 +583,19 @@ def cmd_get(args: argparse.Namespace) -> int:
     if cancel.is_set():
         return 130
     return 0 if failed == 0 else 1
+
+
+def _postprocess_from_args(args: argparse.Namespace) -> postprocess_options:
+    write_cover = bool(args.write_cover or args.embed_cover)
+    return postprocess_options(
+        write_nfo=bool(args.write_nfo),
+        write_cover=write_cover,
+        embed_cover=bool(args.embed_cover),
+        cover_naming=args.cover_name,
+        nfo_sites=parse_site_toggle_list(args.nfo_sites),
+        cover_sites=parse_site_toggle_list(args.cover_sites),
+        ffmpeg=args.ffmpeg,
+    )
 
 
 def _apply_site_options(ext: object, args: argparse.Namespace) -> None:

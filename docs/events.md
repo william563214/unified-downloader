@@ -51,10 +51,17 @@
 
 ### `file`
 
-即將下載的單一檔案。
+即將下載的單一檔案，或後處理產出的 sidecar（NFO／封面）。
 
 ```json
 {"ev":"file","job":"<job-id>","id":"<job-id>:0","name":"a.mp4","total":null,"path":"/out/…","index":0,"metadata":{…},"already_downloaded":false}
+```
+
+後處理產物會帶 `role`：
+
+```json
+{"ev":"file","job":"<job-id>","id":"<job-id>:0:nfo","name":"a.nfo","path":"/out/a.nfo","role":"nfo","metadata":{…}}
+{"ev":"file","job":"<job-id>","id":"<job-id>:0:cover","name":"a-poster.jpg","path":"/out/a-poster.jpg","role":"cover","metadata":{…}}
 ```
 
 ### `duplicate`（v0.5）
@@ -91,6 +98,18 @@
 {"ev":"merging","job":"<job-id>","file":"<file-id>","path":"/out/a.mp4","message":"merging DASH video+audio with FFmpeg"}
 ```
 
+### `postprocess`（v0.5-D）
+
+NFO／封面下載／嵌入等下載後步驟。成功或失敗都會發出；失敗另有 `error`。
+
+```json
+{"ev":"postprocess","job":"<job-id>","file":"<job-id>:0","step":"nfo","path":"/out/a.nfo","role":"nfo","message":"nfo written","ok":true}
+{"ev":"postprocess","job":"<job-id>","file":"<job-id>:0","step":"cover","path":"/out/a-poster.jpg","role":"cover","message":"cover saved","ok":true}
+{"ev":"postprocess","job":"<job-id>","file":"<job-id>:0","step":"embed_cover","path":"/out/a.mp4","role":"cover","message":"cover embedded","ok":true}
+```
+
+`step`：`nfo`／`cover`／`embed_cover`／`skip`。
+
 ### `done`
 
 單一檔案完成，或整個 job 結束。
@@ -113,7 +132,7 @@ Job 結束：
 {"ev":"error","job":"<job-id>","file":"<file-id>","message":"…","code":"download_failed"}
 ```
 
-常見 `code`：`unsupported`、`resolve_failed`、`download_failed`、`ffmpeg_missing`、`merge_failed`、`mega_tool_missing`。
+常見 `code`：`unsupported`、`resolve_failed`、`download_failed`、`ffmpeg_missing`、`merge_failed`、`mega_tool_missing`、`nfo_failed`、`cover_failed`、`postprocess_failed`。
 
 ### `cancel`
 

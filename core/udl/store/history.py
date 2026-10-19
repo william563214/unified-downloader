@@ -29,6 +29,7 @@ class history_entry:
     resolution: str | None = None
     thumbnail_url: str | None = None
     cover_url: str | None = None
+    cover_path: str | None = None
     view_count: int | None = None
     like_count: int | None = None
     collection: str | None = None
@@ -60,6 +61,7 @@ class history_entry:
             "resolution": self.resolution,
             "thumbnail_url": self.thumbnail_url,
             "cover_url": self.cover_url,
+            "cover_path": self.cover_path,
             "view_count": self.view_count,
             "like_count": self.like_count,
             "collection": self.collection,
@@ -77,9 +79,14 @@ class history_entry:
         }
 
 
+def _row_keys(row: sqlite3.Row) -> set[str]:
+    return set(row.keys())
+
+
 def _row_to_entry(row: sqlite3.Row, *, files: list[dict[str, Any]] | None = None) -> history_entry:
     tags = json.loads(row["tags_json"] or "[]")
     extra = json.loads(row["extra_json"] or "{}")
+    keys = _row_keys(row)
     return history_entry(
         id=row["id"],
         site=row["site"],
@@ -95,6 +102,7 @@ def _row_to_entry(row: sqlite3.Row, *, files: list[dict[str, Any]] | None = None
         resolution=row["resolution"],
         thumbnail_url=row["thumbnail_url"],
         cover_url=row["cover_url"],
+        cover_path=row["cover_path"] if "cover_path" in keys else None,
         view_count=row["view_count"],
         like_count=row["like_count"],
         collection=row["collection"],
@@ -197,6 +205,7 @@ def record_file_done(
     size: int | None = None,
     sha256: str | None = None,
     metadata: item_metadata | dict[str, Any] | None = None,
+    role: str | None = None,
     compute_hash: bool = True,
 ) -> None:
     path_str = str(path) if path is not None else None
@@ -216,12 +225,16 @@ def record_file_done(
         meta_dict = metadata
     else:
         meta_dict = {}
+    if role and "role" not in meta_dict:
+        meta_dict = {**meta_dict, "role": role}
+    elif role is None and isinstance(meta_dict.get("role"), str):
+        role = str(meta_dict["role"])
     conn.execute(
         """
         insert into history_files (
           job_id, file_id, site, item_id, canonical_url, name, path,
-          size, sha256, status, metadata_json, updated_at
-        ) values (?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+          size, sha256, status, role, metadata_json, updated_at
+        ) values (?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
         on conflict(job_id, file_id) do update set
           site=excluded.site,
           item_id=coalesce(excluded.item_id, history_files.item_id),
@@ -231,6 +244,7 @@ def record_file_done(
           size=coalesce(excluded.size, history_files.size),
           sha256=coalesce(excluded.sha256, history_files.sha256),
           status=excluded.status,
+          role=coalesce(excluded.role, history_files.role),
           metadata_json=excluded.metadata_json,
           updated_at=datetime('now')
         """,
@@ -245,8 +259,28 @@ def record_file_done(
             file_size,
             digest,
             status,
+            role,
             json.dumps(meta_dict, ensure_ascii=False),
         ),
+    )
+    conn.commit()
+
+
+def set_job_cover_path(
+    conn: sqlite3.Connection,
+    *,
+    job_id: str,
+    cover_path: str | Path | None,
+) -> None:
+    """persist local cover/poster path on the history job for GUI thumbnails."""
+    conn.execute(
+        """
+        update history_jobs
+        set cover_path = ?,
+            updated_at = datetime('now')
+        where id = ?
+        """,
+        (str(cover_path) if cover_path is not None else None, job_id),
     )
     conn.commit()
 
@@ -292,6 +326,10 @@ def _load_files(conn: sqlite3.Connection, job_ids: list[str]) -> dict[str, list[
     out: dict[str, list[dict[str, Any]]] = {jid: [] for jid in job_ids}
     for row in rows:
         meta = json.loads(row["metadata_json"] or "{}")
+        keys = set(row.keys())
+        role = row["role"] if "role" in keys else None
+        if role is None and isinstance(meta, dict):
+            role = meta.get("role")
         out.setdefault(row["job_id"], []).append(
             {
                 "id": row["id"],
@@ -304,6 +342,7 @@ def _load_files(conn: sqlite3.Connection, job_ids: list[str]) -> dict[str, list[
                 "size": row["size"],
                 "sha256": row["sha256"],
                 "status": row["status"],
+                "role": role,
                 "metadata": meta if isinstance(meta, dict) else {},
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
