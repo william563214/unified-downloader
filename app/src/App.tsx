@@ -1751,10 +1751,6 @@ export default function App() {
           </div>
 
           <div className="settings-block">
-                spellCheck={false}
-              />
-            </label>
-            <label className="field compact">
             <h3>命名模板</h3>
             <p className="hint">
               使用 metadata 欄位，例如{" "}
@@ -1772,6 +1768,10 @@ export default function App() {
                   setSettingsDirty(true);
                 }}
                 placeholder="{site}/{author}/{title}.{ext}"
+                spellCheck={false}
+              />
+            </label>
+            <label className="field compact">
               <span>檔名衝突</span>
               <select
                 value={settingsDraft.nameConflict}
@@ -2037,6 +2037,9 @@ export default function App() {
               </div>
             </label>
             {rulesTestResult && <p className="hint">{rulesTestResult}</p>}
+          </div>
+
+<div className="settings-block">
             <h3>網路</h3>
             <p className="hint">
               限速、代理與 User-Agent 套用至所有站點；aria2 預設關閉，連不上時自動改用內建引擎。詳見 docs/networking.md。
@@ -2085,6 +2088,10 @@ export default function App() {
                   setSettingsDirty(true);
                 }}
                 placeholder="空白＝內建預設"
+                spellCheck={false}
+              />
+            </label>
+            <label className="field compact">
               <span>代理模式</span>
               <select
                 value={settingsDraft.proxyMode}
@@ -2211,6 +2218,7 @@ export default function App() {
               </div>
             )}
           </div>
+
 
           <div className="actions">
             <button
