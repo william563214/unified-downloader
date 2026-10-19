@@ -17,9 +17,10 @@ from urllib.parse import urlencode
 import requests
 from requests import Response, Session
 
-from udl.download.http import default_timeout, default_user_agent
+from udl.download.http import default_timeout
 from udl.extractors.bilibili.login import requires_login
 from udl.extractors.bilibili.wbi import enc_wbi, store_wbi_keys
+from udl.network import active_network, apply_to_session, default_user_agent
 
 api_base = "https://api.bilibili.com"
 nav_api = f"{api_base}/x/web-interface/nav"
@@ -77,15 +78,18 @@ class bilibili_client:
         self.timeout = timeout
         self._own_session = session is None
         self.session = session or Session()
+        ua = user_agent or active_network().user_agent or default_user_agent
         self.session.headers.update(
             {
-                "User-Agent": user_agent,
+                "User-Agent": ua,
                 "Referer": referer,
                 "Accept": "*/*",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
                 "Origin": "https://www.bilibili.com",
             }
         )
+        apply_to_session(self.session)
+        self.session.headers["User-Agent"] = ua
         self._bootstrapped = False
         self._logged_in = False
         if cookies:

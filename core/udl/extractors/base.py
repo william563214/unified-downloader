@@ -78,11 +78,11 @@ class extractor(ABC):
         skip_indexes: set[int] | None = None,
     ) -> tuple[int, int]:
         """download all files from an extract_result. returns (ok, failed)."""
-        from udl.download.http import download_item, download_many, download_options
+        from udl.download.http import download_item, download_many, options_from_network
 
         job = job_id or result.site
-        opts = download_options(
-            output_dir=output_dir,
+        opts = options_from_network(
+            output_dir,
             workers=workers,
             retries=retries,
             cancel=cancel,

@@ -16,11 +16,13 @@ from udl.config import load_config, save_config, udl_config
 from udl.events import dump_schema, emitter
 from udl.metadata import item_metadata
 from udl.naming import preview_template
+from udl.network import configure_network, settings_from_cli_args
 from udl.postprocess.artifacts import run_postprocess
 from udl.postprocess.options import parse_site_toggle_list, postprocess_options
 from udl.repair import apply_repair_actions, scan_repair
 from udl.router import get_extractor, resolve
 from udl.rules import parse_rules, test_rules_against_metadata
+from udl.secrets import delete_secret, get_secret, set_secret
 from udl.session import (
     finalize_download,
     metadata_payload,
@@ -31,6 +33,62 @@ from udl.session import (
 from udl.store.duplicates import duplicate_mode
 from udl.store.history import delete_history, get_history, list_history
 from udl.store.queue import delete_queue_job, list_queue, load_queue_job, update_queue_status
+
+
+def _add_network_args(parser: argparse.ArgumentParser, *, download: bool = False) -> None:
+    """shared proxy / UA / speed / aria2 flags for resolve probe get."""
+    parser.add_argument(
+        "--user-agent",
+        default=None,
+        help="custom User-Agent for API calls and downloads",
+    )
+    parser.add_argument(
+        "--proxy-mode",
+        choices=["none", "system", "custom"],
+        default="none",
+        help="proxy mode: none (default) system or custom",
+    )
+    parser.add_argument(
+        "--proxy",
+        default=None,
+        help="custom proxy URL (http/https/socks5) or shorthand none|system",
+    )
+    parser.add_argument("--proxy-user", default=None, help="proxy username for custom mode")
+    parser.add_argument(
+        "--proxy-password",
+        default=None,
+        help="proxy password (prefer OS keychain via `udl secrets`)",
+    )
+    if download:
+        parser.add_argument(
+            "--speed-limit",
+            default=None,
+            help="overall speed cap e.g. 1M 512K (bytes/sec human form)",
+        )
+        parser.add_argument(
+            "--job-speed-limit",
+            default=None,
+            help="per-job speed cap e.g. 500K",
+        )
+        parser.add_argument(
+            "--aria2",
+            action="store_true",
+            help="hand file downloads to aria2 via JSON-RPC when reachable",
+        )
+        parser.add_argument(
+            "--aria2-rpc",
+            default=None,
+            help="aria2 JSON-RPC URL (default http://127.0.0.1:6800/jsonrpc)",
+        )
+        parser.add_argument(
+            "--aria2-secret",
+            default=None,
+            help="aria2 RPC secret token (or store via udl secrets aria2.rpc_secret)",
+        )
+
+
+def _apply_network(args: argparse.Namespace) -> None:
+    configure_network(settings_from_cli_args(args))
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -53,6 +111,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="emit a JSON-lines resolve event (default: pretty JSON object)",
     )
+    _add_network_args(p_resolve)
 
     p_probe = sub.add_parser(
         "probe",
@@ -79,6 +138,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="bilibili keyword filter for space/favlist server search",
     )
+    _add_network_args(p_probe)
+
 
     p_get = sub.add_parser("get", help="download a URL")
     p_get.add_argument("url", help="content URL")
@@ -294,6 +355,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="path to udl.config.json / .toml (naming templates + classification rules)",
     )
+    _add_network_args(p_get, download=True)
 
     p_schema = sub.add_parser("schema", help="print JSON-lines event schema")
     p_schema.add_argument(
@@ -471,10 +533,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="JSON array of issue objects from repair scan",
     )
 
+    p_secrets = sub.add_parser("secrets", help="OS keychain helpers for proxy / future login")
+    sec_sub = p_secrets.add_subparsers(dest="secrets_command", required=True)
+    p_sec_set = sec_sub.add_parser("set", help="store a secret")
+    p_sec_set.add_argument("key", help="secret key e.g. proxy.custom")
+    p_sec_set.add_argument("value", nargs="?", default=None, help="value (or read stdin)")
+    p_sec_get = sec_sub.add_parser("get", help="read a secret (prints nothing if missing)")
+    p_sec_get.add_argument("key", help="secret key")
+    p_sec_get.add_argument("--json", action="store_true")
+    p_sec_del = sec_sub.add_parser("delete", help="delete a secret")
+    p_sec_del.add_argument("key", help="secret key")
+    p_sec_del.add_argument("--json", action="store_true")
+
     return parser
 
 
 def cmd_resolve(args: argparse.Namespace) -> int:
+    _apply_network(args)
     info = resolve(args.url)
     payload = {
         "site": info.site,
@@ -499,6 +574,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 
 def cmd_probe(args: argparse.Namespace) -> int:
+    _apply_network(args)
     urls = args.url if isinstance(args.url, list) else [args.url]
     if len(urls) > 1:
         return _cmd_probe_batch(urls, args)
@@ -673,6 +749,12 @@ def _bilibili_from_args(args: argparse.Namespace):
 
 
 def cmd_get(args: argparse.Namespace) -> int:
+    try:
+        _apply_network(args)
+    except ValueError as exc:
+        print(f"invalid network option: {exc}", file=sys.stderr)
+        return 2
+
     out: Path = args.output
     out.mkdir(parents=True, exist_ok=True)
 
@@ -965,6 +1047,33 @@ def cmd_sites(args: argparse.Namespace) -> int:
         for r in rows:
             print(f"{r['site']:12} {r['status']:12} {r['label']} ({r['kind']})")
     return 0
+
+
+def cmd_secrets(args: argparse.Namespace) -> int:
+    if args.secrets_command == "set":
+        value = args.value
+        if value is None:
+            value = sys.stdin.read()
+            if value.endswith("\n"):
+                value = value[:-1]
+        set_secret(args.key, value)
+        print("ok", file=sys.stderr)
+        return 0
+    if args.secrets_command == "get":
+        value = get_secret(args.key)
+        if args.json:
+            print(json.dumps({"key": args.key, "found": value is not None}, ensure_ascii=False))
+        elif value is not None:
+            print(value)
+        return 0 if value is not None else 1
+    if args.secrets_command == "delete":
+        removed = delete_secret(args.key)
+        if args.json:
+            print(json.dumps({"key": args.key, "deleted": removed}, ensure_ascii=False))
+        else:
+            print("deleted" if removed else "missing", file=sys.stderr)
+        return 0 if removed else 1
+    return 2
 
 
 def cmd_ffmpeg(args: argparse.Namespace) -> int:
@@ -1298,6 +1407,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_config(args)
     if args.command == "repair":
         return cmd_repair(args)
+    if args.command == "secrets":
+        return cmd_secrets(args)
     parser.error(f"unknown command {args.command}")
     return 2
 

@@ -9,6 +9,8 @@ authors = [{ name = "william563214" }]
 dependencies = [
   "requests>=2.32.0",
   "beautifulsoup4>=4.12.0",
+  "keyring>=25.0.0",
+  "PySocks>=1.7.1",
 ]
 
 [project.optional-dependencies]

@@ -5,24 +5,27 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event
 
 import requests
 from requests import Response, Session
 
+from udl.download.rate import (
+    configure_global_limiter,
+    make_job_limiter,
+    rate_limiter,
+    throttle,
+)
 from udl.events import emitter
+from udl.network import active_network, apply_to_session, default_user_agent
 
 # defaults (lowercase constants per project convention)
 default_chunk_size = 1024 * 1024
 default_timeout = 30.0
 default_retries = 5
 default_workers = 3
-default_user_agent = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
 
 
 @dataclass
@@ -38,6 +41,13 @@ class download_options:
     headers: dict[str, str] | None = None
     cancel: Event | None = None
     progress_interval: float = 0.25
+    # per-job speed cap (bytes/sec); global cap comes from network_settings
+    speed_limit_bps: int | None = None
+    aria2_enabled: bool | None = None
+    aria2_rpc_url: str | None = None
+    aria2_rpc_secret: str | None = None
+    # filled by engine
+    _job_limiter: rate_limiter | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -55,6 +65,36 @@ class download_item:
 ProgressCb = Callable[[str, int, int | None, float], None]
 
 
+def options_from_network(
+    output_dir: Path,
+    *,
+    workers: int = default_workers,
+    retries: int = default_retries,
+    cancel: Event | None = None,
+    headers: dict[str, str] | None = None,
+    speed_limit_bps: int | None = None,
+) -> download_options:
+    """build download_options seeded from active network_settings."""
+    net = active_network()
+    job_limit = speed_limit_bps
+    if job_limit is None:
+        job_limit = net.job_speed_limit_bps
+    configure_global_limiter(net.speed_limit_bps)
+    return download_options(
+        output_dir=output_dir,
+        workers=workers,
+        retries=retries,
+        cancel=cancel,
+        headers=headers,
+        user_agent=net.user_agent or default_user_agent,
+        speed_limit_bps=job_limit,
+        aria2_enabled=net.aria2_enabled,
+        aria2_rpc_url=net.aria2_rpc_url,
+        aria2_rpc_secret=net.aria2_rpc_secret,
+        _job_limiter=make_job_limiter(job_limit),
+    )
+
+
 def _make_session(opts: download_options) -> Session:
     session = Session()
     headers = {
@@ -66,6 +106,9 @@ def _make_session(opts: download_options) -> Session:
     if opts.headers:
         headers.update(opts.headers)
     session.headers.update(headers)
+    apply_to_session(session)
+    # keep explicit User-Agent from opts after apply_to_session
+    session.headers["User-Agent"] = opts.user_agent
     return session
 
 
@@ -102,12 +145,29 @@ def download_file(
     emit: emitter | None = None,
 ) -> Path:
     """download one file with Range resume and retries. returns final path."""
+    # prefer aria2 when enabled and reachable; only fall back if unreachable
+    aria2_client = None
+    try:
+        from udl.download.aria2 import download_file_aria2, try_aria2_client
+
+        aria2_client = try_aria2_client(opts)
+    except Exception:  # noqa: BLE001 — treat as unreachable
+        aria2_client = None
+    if aria2_client is not None:
+        try:
+            return download_file_aria2(
+                item, opts, aria2_client, job_id=job_id, emit=emit
+            )
+        finally:
+            aria2_client.close()
+
     own_session = session is None
     session = session or _make_session(opts)
     cancel = opts.cancel
     dest = item.dest
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(dest.name + ".part")
+    job_limiter = opts._job_limiter or make_job_limiter(opts.speed_limit_bps)
 
     if dest.exists() and dest.stat().st_size > 0:
         if emit:
@@ -177,6 +237,7 @@ def download_file(
                         job_id=job_id,
                         file_id=item.file_id,
                         emit=emit,
+                        job_limiter=job_limiter,
                     )
                 except InterruptedError:
                     raise
@@ -216,6 +277,7 @@ def _write_stream(
     job_id: str,
     file_id: str,
     emit: emitter | None,
+    job_limiter: rate_limiter | None = None,
 ) -> None:
     downloaded = part_size
     start = time.perf_counter()
@@ -226,6 +288,7 @@ def _write_stream(
                 raise InterruptedError("cancelled")
             if not chunk:
                 continue
+            throttle(len(chunk), job_limiter)
             fh.write(chunk)
             downloaded += len(chunk)
             now = time.perf_counter()
@@ -263,23 +326,51 @@ def download_many(
     if not items:
         return 0, 0
 
+    configure_global_limiter(active_network().speed_limit_bps)
+    if opts._job_limiter is None and opts.speed_limit_bps:
+        opts._job_limiter = make_job_limiter(opts.speed_limit_bps)
+
+    # probe aria2 once; if down, all files use built-in
+    aria2 = None
+    try:
+        from udl.download.aria2 import try_aria2_client
+
+        aria2 = try_aria2_client(opts)
+    except Exception:  # noqa: BLE001
+        aria2 = None
+    if aria2 is None:
+        # prevent per-file re-probe inside download_file
+        opts.aria2_enabled = False
+
     session = _make_session(opts)
     ok = 0
     failed = 0
     try:
         workers = max(1, min(opts.workers, len(items)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(
-                    download_file,
-                    item,
-                    opts,
-                    session,
-                    job_id=job_id,
-                    emit=emit,
-                ): item
-                for item in items
-            }
+            futures = {}
+            for item in items:
+                if aria2 is not None:
+                    from udl.download.aria2 import download_file_aria2
+
+                    fut = pool.submit(
+                        download_file_aria2,
+                        item,
+                        opts,
+                        aria2,
+                        job_id=job_id,
+                        emit=emit,
+                    )
+                else:
+                    fut = pool.submit(
+                        download_file,
+                        item,
+                        opts,
+                        session,
+                        job_id=job_id,
+                        emit=emit,
+                    )
+                futures[fut] = item
             for fut in as_completed(futures):
                 item = futures[fut]
                 if _is_cancelled(opts.cancel):
@@ -303,4 +394,6 @@ def download_many(
                         )
     finally:
         session.close()
+        if aria2 is not None:
+            aria2.close()
     return ok, failed

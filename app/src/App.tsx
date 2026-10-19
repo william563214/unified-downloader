@@ -169,6 +169,8 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(default_settings);
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(default_settings);
   const [settingsDirty, setSettingsDirty] = useState(false);
+  const [proxyPassword, setProxyPassword] = useState("");
+  const [clearProxyPasswordOnSave, setClearProxyPasswordOnSave] = useState(false);
   const [ffmpegInfo, setFfmpegInfo] = useState<FfmpegStatus | null>(null);
   const [ffmpegBusy, setFfmpegBusy] = useState(false);
   const [ffmpegPrompt, setFfmpegPrompt] = useState(false);
@@ -897,12 +899,19 @@ export default function App() {
 
   async function saveSettingsNow() {
     try {
+      if (clearProxyPasswordOnSave) {
+        await invoke("clear_proxy_password");
+      } else if (proxyPassword.trim()) {
+        await invoke("set_proxy_password", { password: proxyPassword });
+      }
       const saved = await invoke<AppSettings>("save_settings", {
         settings: settingsDraft,
       });
       setSettings(saved);
       setSettingsDraft(saved);
       setSettingsDirty(false);
+      setProxyPassword("");
+      setClearProxyPasswordOnSave(false);
       if (saved.downloadDir) setOutput(saved.downloadDir);
       await refreshFfmpeg();
     } catch (e) {
@@ -1742,6 +1751,10 @@ export default function App() {
           </div>
 
           <div className="settings-block">
+                spellCheck={false}
+              />
+            </label>
+            <label className="field compact">
             <h3>命名模板</h3>
             <p className="hint">
               使用 metadata 欄位，例如{" "}
@@ -1759,10 +1772,6 @@ export default function App() {
                   setSettingsDirty(true);
                 }}
                 placeholder="{site}/{author}/{title}.{ext}"
-                spellCheck={false}
-              />
-            </label>
-            <label className="field compact">
               <span>檔名衝突</span>
               <select
                 value={settingsDraft.nameConflict}
@@ -2028,6 +2037,179 @@ export default function App() {
               </div>
             </label>
             {rulesTestResult && <p className="hint">{rulesTestResult}</p>}
+            <h3>網路</h3>
+            <p className="hint">
+              限速、代理與 User-Agent 套用至所有站點；aria2 預設關閉，連不上時自動改用內建引擎。詳見 docs/networking.md。
+            </p>
+            <div className="settings-grid">
+              <label className="field compact">
+                <span>全域限速</span>
+                <input
+                  value={settingsDraft.speedLimit}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      speedLimit: e.target.value,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="空白＝不限（例 1M、512K）"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="field compact">
+                <span>單任務限速（選用）</span>
+                <input
+                  value={settingsDraft.jobSpeedLimit}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      jobSpeedLimit: e.target.value,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="空白＝不限"
+                  spellCheck={false}
+                />
+              </label>
+            </div>
+            <label className="field compact">
+              <span>User-Agent</span>
+              <input
+                value={settingsDraft.userAgent}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    userAgent: e.target.value,
+                  }));
+                  setSettingsDirty(true);
+                }}
+                placeholder="空白＝內建預設"
+              <span>代理模式</span>
+              <select
+                value={settingsDraft.proxyMode}
+                onChange={(e) => {
+                  const value = e.target.value as AppSettings["proxyMode"];
+                  setSettingsDraft((s) => ({ ...s, proxyMode: value }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="none">不使用代理</option>
+                <option value="system">系統代理</option>
+                <option value="custom">自訂代理</option>
+              </select>
+            </label>
+            {settingsDraft.proxyMode === "custom" && (
+              <>
+                <label className="field compact">
+                  <span>代理 URL</span>
+                  <input
+                    value={settingsDraft.proxyUrl}
+                    onChange={(e) => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        proxyUrl: e.target.value,
+                      }));
+                      setSettingsDirty(true);
+                    }}
+                    placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+                    spellCheck={false}
+                  />
+                </label>
+                <div className="settings-grid">
+                  <label className="field compact">
+                    <span>代理帳號（選用）</span>
+                    <input
+                      value={settingsDraft.proxyUsername}
+                      onChange={(e) => {
+                        setSettingsDraft((s) => ({
+                          ...s,
+                          proxyUsername: e.target.value,
+                        }));
+                        setSettingsDirty(true);
+                      }}
+                      spellCheck={false}
+                      autoComplete="username"
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>代理密碼（寫入系統鑰匙圈）</span>
+                    <input
+                      type="password"
+                      value={proxyPassword}
+                      onChange={(e) => {
+                        setProxyPassword(e.target.value);
+                        setClearProxyPasswordOnSave(false);
+                        setSettingsDirty(true);
+                      }}
+                      placeholder="空白＝保留既有密碼"
+                      autoComplete="new-password"
+                    />
+                  </label>
+                </div>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={clearProxyPasswordOnSave}
+                    onChange={(e) => {
+                      setClearProxyPasswordOnSave(e.target.checked);
+                      if (e.target.checked) setProxyPassword("");
+                      setSettingsDirty(true);
+                    }}
+                  />
+                  <span>儲存時清除已存的代理密碼</span>
+                </label>
+              </>
+            )}
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.aria2Enabled}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    aria2Enabled: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>使用 aria2 RPC 下載（選用，預設關閉）</span>
+            </label>
+            {settingsDraft.aria2Enabled && (
+              <div className="settings-grid">
+                <label className="field compact">
+                  <span>aria2 RPC URL</span>
+                  <input
+                    value={settingsDraft.aria2RpcUrl}
+                    onChange={(e) => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        aria2RpcUrl: e.target.value,
+                      }));
+                      setSettingsDirty(true);
+                    }}
+                    placeholder="http://127.0.0.1:6800/jsonrpc"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="field compact">
+                  <span>aria2 RPC 密鑰</span>
+                  <input
+                    type="password"
+                    value={settingsDraft.aria2RpcSecret}
+                    onChange={(e) => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        aria2RpcSecret: e.target.value,
+                      }));
+                      setSettingsDirty(true);
+                    }}
+                    placeholder="選用"
+                    autoComplete="off"
+                  />
+                </label>
+              </div>
+            )}
           </div>
 
           <div className="actions">

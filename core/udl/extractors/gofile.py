@@ -23,6 +23,7 @@ from requests import Session
 
 from udl.extractors.base import extract_result, extracted_file, extractor
 from udl.metadata import item_metadata
+from udl.network import active_network, apply_to_session
 
 # upstream-compatible defaults
 gofile_api = "https://api.gofile.io"
@@ -54,16 +55,20 @@ class gofile_extractor(extractor):
 
     def __init__(self) -> None:
         self._session = Session()
+        ua = active_network().user_agent or gofile_user_agent
         self._session.headers.update(
             {
                 "Accept-Encoding": "gzip",
-                "User-Agent": gofile_user_agent,
+                "User-Agent": ua,
                 "Connection": "keep-alive",
                 "Accept": "*/*",
                 "Origin": gofile_origin,
                 "Referer": f"{gofile_origin}/",
             }
         )
+        apply_to_session(self._session)
+        # gofile website-token depends on UA; keep configured UA after proxy apply
+        self._session.headers["User-Agent"] = ua
         self._token: str | None = None
 
     def resolve(

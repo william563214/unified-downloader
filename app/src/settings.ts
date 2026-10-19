@@ -1,6 +1,7 @@
 export type DuplicateMode = "skip" | "overwrite" | "rename";
 export type CoverNaming = "poster" | "folder";
 export type NameConflictMode = "rename" | "overwrite" | "error";
+export type ProxyMode = "none" | "system" | "custom";
 
 export type SiteId = "gofile" | "bunkr" | "iwara" | "bilibili" | "mega";
 
@@ -64,6 +65,16 @@ export type AppSettings = {
   typeTemplates: Record<string, string>;
   nameConflict: NameConflictMode;
   classificationRules: ClassifyRule[];
+  // networking (v0.5)
+  speedLimit: string;
+  jobSpeedLimit: string;
+  proxyMode: ProxyMode;
+  proxyUrl: string;
+  proxyUsername: string;
+  userAgent: string;
+  aria2Enabled: boolean;
+  aria2RpcUrl: string;
+  aria2RpcSecret: string;
 };
 
 export const default_site_flags = (): Record<SiteId, boolean> => ({
@@ -95,6 +106,15 @@ export const default_settings: AppSettings = {
   typeTemplates: {},
   nameConflict: "rename",
   classificationRules: [],
+  speedLimit: "",
+  jobSpeedLimit: "",
+  proxyMode: "none",
+  proxyUrl: "",
+  proxyUsername: "",
+  userAgent: "",
+  aria2Enabled: false,
+  aria2RpcUrl: "http://127.0.0.1:6800/jsonrpc",
+  aria2RpcSecret: "",
 };
 
 export type FfmpegStatus = {

@@ -27,6 +27,7 @@ from udl.extractors.iwara_xversion import (
     x_version_rotate_hint,
 )
 from udl.metadata import item_metadata
+from udl.network import active_network, apply_to_session
 
 # api hosts from upstream endpoints.py
 iwara_api = "https://api.iwara.tv"
@@ -114,7 +115,14 @@ def _make_session(*, use_cloudflare_bypass: bool) -> Session:
         )
     else:
         session = Session()
-    session.headers.update(default_api_headers)
+    headers = dict(default_api_headers)
+    ua = active_network().user_agent
+    if ua:
+        headers["User-Agent"] = ua
+    session.headers.update(headers)
+    apply_to_session(session)
+    if ua:
+        session.headers["User-Agent"] = ua
     return session
 
 

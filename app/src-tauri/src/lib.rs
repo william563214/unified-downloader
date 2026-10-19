@@ -56,7 +56,7 @@ struct ProbeResult {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 struct AppSettings {
     download_dir: String,
     max_concurrent: u32,
@@ -90,6 +90,25 @@ struct AppSettings {
     name_conflict: String,
     #[serde(default)]
     classification_rules: Vec<serde_json::Value>,
+    // networking v0.5
+    #[serde(default)]
+    speed_limit: String,
+    #[serde(default)]
+    job_speed_limit: String,
+    #[serde(default = "default_proxy_mode")]
+    proxy_mode: String,
+    #[serde(default)]
+    proxy_url: String,
+    #[serde(default)]
+    proxy_username: String,
+    #[serde(default)]
+    user_agent: String,
+    #[serde(default)]
+    aria2_enabled: bool,
+    #[serde(default = "default_aria2_rpc_url")]
+    aria2_rpc_url: String,
+    #[serde(default)]
+    aria2_rpc_secret: String,
 }
 
 fn default_on_duplicate() -> String {
@@ -102,6 +121,14 @@ fn default_cover_naming() -> String {
 
 fn default_name_conflict() -> String {
     "rename".into()
+}
+
+fn default_proxy_mode() -> String {
+    "none".into()
+}
+
+fn default_aria2_rpc_url() -> String {
+    "http://127.0.0.1:6800/jsonrpc".into()
 }
 
 fn default_site_flags() -> HashMap<String, bool> {
@@ -163,6 +190,15 @@ impl Default for AppSettings {
             type_templates: HashMap::new(),
             name_conflict: default_name_conflict(),
             classification_rules: Vec::new(),
+            speed_limit: String::new(),
+            job_speed_limit: String::new(),
+            proxy_mode: default_proxy_mode(),
+            proxy_url: String::new(),
+            proxy_username: String::new(),
+            user_agent: String::new(),
+            aria2_enabled: false,
+            aria2_rpc_url: default_aria2_rpc_url(),
+            aria2_rpc_secret: String::new(),
         }
     }
 }
@@ -224,6 +260,60 @@ fn use_sidecar_binary() -> bool {
     // Prefer packaged sidecar unless UDL_DEV=1
     std::env::var("UDL_DEV").ok().as_deref() != Some("1")
         && std::env::var("UDL_FORCE_SIDECAR").ok().as_deref() != Some("0")
+}
+
+fn append_proxy_ua_args(args: &mut Vec<String>, settings: &AppSettings) {
+    let mode = settings.proxy_mode.trim().to_lowercase();
+    let mode = match mode.as_str() {
+        "system" | "custom" => mode,
+        _ => "none".into(),
+    };
+    args.push("--proxy-mode".into());
+    args.push(mode.clone());
+    if mode == "custom" {
+        let proxy = settings.proxy_url.trim();
+        if !proxy.is_empty() {
+            args.push("--proxy".into());
+            args.push(proxy.to_string());
+        }
+        let user = settings.proxy_username.trim();
+        if !user.is_empty() {
+            args.push("--proxy-user".into());
+            args.push(user.to_string());
+        }
+    }
+    let ua = settings.user_agent.trim();
+    if !ua.is_empty() {
+        args.push("--user-agent".into());
+        args.push(ua.to_string());
+    }
+}
+
+fn append_network_args(args: &mut Vec<String>, settings: &AppSettings) {
+    append_proxy_ua_args(args, settings);
+    let speed = settings.speed_limit.trim();
+    if !speed.is_empty() {
+        args.push("--speed-limit".into());
+        args.push(speed.to_string());
+    }
+    let job_speed = settings.job_speed_limit.trim();
+    if !job_speed.is_empty() {
+        args.push("--job-speed-limit".into());
+        args.push(job_speed.to_string());
+    }
+    if settings.aria2_enabled {
+        args.push("--aria2".into());
+        let rpc = settings.aria2_rpc_url.trim();
+        if !rpc.is_empty() {
+            args.push("--aria2-rpc".into());
+            args.push(rpc.to_string());
+        }
+        let secret = settings.aria2_rpc_secret.trim();
+        if !secret.is_empty() {
+            args.push("--aria2-secret".into());
+            args.push(secret.to_string());
+        }
+    }
 }
 
 fn spawn_udl(
@@ -328,6 +418,14 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, S
         "overwrite" | "error" | "rename" => conflict.to_string(),
         _ => default_name_conflict(),
     };
+    let mode = settings.proxy_mode.trim().to_lowercase();
+    settings.proxy_mode = match mode.as_str() {
+        "system" | "custom" => mode,
+        _ => "none".into(),
+    };
+    if settings.aria2_rpc_url.trim().is_empty() {
+        settings.aria2_rpc_url = default_aria2_rpc_url();
+    }
     let path = settings_path(&app)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -343,6 +441,31 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, S
 }
 
 #[tauri::command]
+async fn set_proxy_password(app: AppHandle, password: String) -> Result<(), String> {
+    // store via udl secrets so Python keyring backend stays the single source
+    let args = vec![
+        "secrets".into(),
+        "set".into(),
+        "proxy.custom".into(),
+        password,
+    ];
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (_stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("store proxy password failed: {stderr}"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_proxy_password(app: AppHandle) -> Result<(), String> {
+    let args = vec!["secrets".into(), "delete".into(), "proxy.custom".into()];
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (_stdout, _stderr, _code) = collect_stdout_json(&mut rx).await?;
+    Ok(())
+}
+
+#[tauri::command]
 fn get_app_paths(app: AppHandle) -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({
         "appData": app_data_dir(&app)?.to_string_lossy(),
@@ -353,7 +476,10 @@ fn get_app_paths(app: AppHandle) -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 async fn resolve_url(app: AppHandle, url: String) -> Result<ResolveResult, String> {
-    let (mut rx, _child) = spawn_udl(&app, vec!["resolve".into(), url.clone()])?;
+    let settings = load_settings_file(&app);
+    let mut args = vec!["resolve".into(), url.clone()];
+    append_proxy_ua_args(&mut args, &settings);
+    let (mut rx, _child) = spawn_udl(&app, args)?;
     let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
     if code.unwrap_or(1) > 2 {
         return Err(format!("udl resolve exited {:?}: {stderr}", code));
@@ -398,7 +524,10 @@ async fn resolve_url(app: AppHandle, url: String) -> Result<ResolveResult, Strin
 
 #[tauri::command]
 async fn probe_url(app: AppHandle, url: String) -> Result<ProbeResult, String> {
-    let (mut rx, _child) = spawn_udl(&app, vec!["probe".into(), url.clone()])?;
+    let settings = load_settings_file(&app);
+    let mut args = vec!["probe".into(), url.clone()];
+    append_proxy_ua_args(&mut args, &settings);
+    let (mut rx, _child) = spawn_udl(&app, args)?;
     let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
     if code.unwrap_or(1) != 0 {
         return Err(format!("udl probe exited {:?}: {stderr}", code));
@@ -758,6 +887,7 @@ async fn start_download(
             args.push(cfg_path.to_string_lossy().into_owned());
         }
     }
+    append_network_args(&mut args, &settings);
     let (mut rx, child) = spawn_udl(&app, args)?;
 
     state
@@ -1161,6 +1291,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            set_proxy_password,
+            clear_proxy_password,
             get_app_paths,
             resolve_url,
             probe_url,

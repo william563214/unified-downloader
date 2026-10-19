@@ -5,7 +5,8 @@
 ## 設計原則
 
 - 仿 gallery-dl「每站一個 extractor + URL pattern 集中註冊」的**概念**，**禁止**複製或 `import gallery-dl`（GPL-2.0-only，與本專案 GPL-3.0-or-later 不相容）。
-- 共用下載邏輯放在 `udl.download.http`（續傳、重試、並行、取消、JSON-lines 進度）。
+- 共用下載邏輯放在 `udl.download.http`（續傳、重試、並行、取消、限速、可選 aria2、JSON-lines 進度）。
+- 代理／UA 經 `udl.network.apply_to_session`；機密經 `udl.secrets`（見 `docs/networking.md`）。
 - 影音合併等後處理放在 `udl.postprocess`（目前 `ffmpeg.py`）。
 - 外部 CLI（GPL-2.0-only 等）放在 `udl.extractors.external`，只以**子行程**呼叫，對應 `status="external"`。
 - Extractor 只負責：**辨識 URL → 解析遠端結構 → 產出直接下載連結清單**（或覆寫 `download()` 做特殊傳輸）。
