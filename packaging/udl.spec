@@ -3,9 +3,20 @@
 
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_submodules
+
 block_cipher = None
 # SPECPATH is the directory that contains this spec file (packaging/)
 root = Path(SPECPATH).resolve().parent / "core"
+
+# OS keyring backends differ by platform; collect all so macOS/Windows
+# release sidecars do not miss WinVault / Keychain modules.
+_keyring_mods = collect_submodules("keyring")
+_jaraco_mods = collect_submodules("jaraco")
+_qrcode_mods = collect_submodules("qrcode")
+# Pillow plugins used when rendering QR PNG for bilibili login
+_pil_mods = collect_submodules("PIL")
+_udl_mods = collect_submodules("udl")
 
 a = Analysis(
     [str(root / "udl" / "__main__.py")],
@@ -13,43 +24,35 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=[
-        "udl",
-        "udl.cli",
-        "udl.router",
-        "udl.events",
-        "udl.download.http",
-        "udl.postprocess",
-        "udl.postprocess.ffmpeg",
-        "udl.postprocess.ffmpeg_provision",
-        "udl.extractors.base",
-        "udl.extractors.gofile",
-        "udl.extractors.bunkr",
-        "udl.extractors.iwara",
-        "udl.extractors.iwara_xversion",
-        "udl.extractors.bilibili",
-        "udl.extractors.bilibili.cdn",
-        "udl.extractors.bilibili.client",
-        "udl.extractors.bilibili.extractor",
-        "udl.extractors.bilibili.ids",
-        "udl.extractors.bilibili.login",
-        "udl.extractors.bilibili.quality",
-        "udl.extractors.bilibili.wbi",
-        "udl.network",
-        "udl.secrets",
-        "udl.extractors.external",
-        "udl.extractors.external.base",
-        "udl.extractors.external.mega",
         "bs4",
         "requests",
-        "keyring",
-        "qrcode",
-        "PIL",
         "soupsieve",
         "certifi",
         "charset_normalizer",
         "idna",
         "urllib3",
-    ],
+        "socks",
+        "secretstorage",
+        "jeepney",
+        # explicit keyring platform entry points (also in collect_submodules)
+        "keyring.backends.macOS",
+        "keyring.backends.Windows",
+        "keyring.backends.SecretService",
+        "keyring.backends.libsecret",
+        "keyring.backends.kwallet",
+        "keyring.backends.chainer",
+        "keyring.backends.fail",
+        "keyring.backends.null",
+        "qrcode",
+        "PIL",
+        "PIL.Image",
+        "PIL.PngImagePlugin",
+    ]
+    + _udl_mods
+    + _keyring_mods
+    + _jaraco_mods
+    + _qrcode_mods
+    + _pil_mods,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

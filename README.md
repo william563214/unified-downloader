@@ -1,4 +1,4 @@
-# 整合下載器（unified-downloader）v0.7-B
+# 整合下載器（unified-downloader）v0.7.0
 
 桌面應用：貼上網址 → 辨識站點 → 用統一 Python 核心下載。  
 授權：**GPL-3.0-or-later**（見 `LICENSE`、`NOTICE`）。
@@ -116,7 +116,7 @@ Tauri `externalBin` 使用 `binaries/udl`，建置腳本必須把 PyInstaller �
 ### macOS（Gatekeeper）
 
 1. 從 Release 下載 `.dmg`，拖到「應用程式」。
-2. 若出現「無法驗證開發者」：系統設定 → 隱私權與安全性 → 仍要打開；或在終端機對 App 執行  
+2. 若出現「無法驗證開發者」：對 App **按右鍵 → 打開**（比雙擊更容易通過）；或系統設定 → 隱私權與安全性 → 仍要打開；或  
    `xattr -dr com.apple.quarantine "/Applications/整合下載器.app"`
 3. 本專案**不做** Apple 公證／簽章（見 ROADMAP）。
 
