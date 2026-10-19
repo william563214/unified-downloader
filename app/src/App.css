@@ -113,10 +113,48 @@ body {
   margin-bottom: 14px;
 }
 
+.field.compact {
+  margin-bottom: 0;
+}
+
 .field > span {
   font-size: 0.85rem;
   color: var(--muted);
   font-weight: 600;
+}
+
+.site-options {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, #e8eef8 55%, transparent);
+}
+
+.site-options select {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+}
+
+.check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.check input {
+  width: auto;
+  margin-top: 2px;
 }
 
 .url-row,

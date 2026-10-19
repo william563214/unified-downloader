@@ -162,20 +162,30 @@ async fn start_download(
     state: State<'_, JobState>,
     url: String,
     output: String,
+    quality: Option<String>,
+    cloudflare_bypass: Option<bool>,
 ) -> Result<String, String> {
     let job_id = Uuid::new_v4().to_string();
-    let (mut rx, child) = spawn_udl(
-        &app,
-        vec![
-            "get".into(),
-            url,
-            "-o".into(),
-            output,
-            "--json".into(),
-            "--job-id".into(),
-            job_id.clone(),
-        ],
-    )?;
+    let mut args = vec![
+        "get".into(),
+        url,
+        "-o".into(),
+        output,
+        "--json".into(),
+        "--job-id".into(),
+        job_id.clone(),
+    ];
+    if let Some(q) = quality {
+        let q = q.trim();
+        if !q.is_empty() {
+            args.push("--quality".into());
+            args.push(q.to_string());
+        }
+    }
+    if cloudflare_bypass.unwrap_or(false) {
+        args.push("--cloudflare-bypass".into());
+    }
+    let (mut rx, child) = spawn_udl(&app, args)?;
 
     state
         .children
