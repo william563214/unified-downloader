@@ -17,6 +17,7 @@ from udl.store.history import (
     record_job_finished,
     record_job_started,
     search_history,
+    set_job_cover_path,
 )
 from udl.store.queue import (
     delete_queue_job,
@@ -42,6 +43,7 @@ __all__ = [
     "record_job_finished",
     "record_job_started",
     "search_history",
+    "set_job_cover_path",
     "delete_queue_job",
     "list_queue",
     "load_queue_job",

@@ -1,4 +1,15 @@
 export type DuplicateMode = "skip" | "overwrite" | "rename";
+export type CoverNaming = "poster" | "folder";
+
+export type SiteId = "gofile" | "bunkr" | "iwara" | "bilibili" | "mega";
+
+export const site_ids: SiteId[] = [
+  "gofile",
+  "bunkr",
+  "iwara",
+  "bilibili",
+  "mega",
+];
 
 export type AppSettings = {
   downloadDir: string;
@@ -10,7 +21,21 @@ export type AppSettings = {
   bilibiliQuality: string;
   bilibiliPart: string;
   onDuplicate: DuplicateMode;
+  writeNfo: boolean;
+  writeCover: boolean;
+  embedCover: boolean;
+  coverNaming: CoverNaming;
+  nfoSites: Record<SiteId, boolean>;
+  coverSites: Record<SiteId, boolean>;
 };
+
+export const default_site_flags = (): Record<SiteId, boolean> => ({
+  gofile: true,
+  bunkr: true,
+  iwara: true,
+  bilibili: true,
+  mega: true,
+});
 
 export const default_settings: AppSettings = {
   downloadDir: "",
@@ -22,6 +47,12 @@ export const default_settings: AppSettings = {
   bilibiliQuality: "",
   bilibiliPart: "all",
   onDuplicate: "skip",
+  writeNfo: false,
+  writeCover: false,
+  embedCover: false,
+  coverNaming: "poster",
+  nfoSites: default_site_flags(),
+  coverSites: default_site_flags(),
 };
 
 export type FfmpegStatus = {
@@ -44,6 +75,9 @@ export type HistoryEntry = {
   upload_date?: string | null;
   tags?: string[];
   description?: string | null;
+  thumbnail_url?: string | null;
+  cover_url?: string | null;
+  cover_path?: string | null;
   source_url?: string | null;
   output_dir?: string | null;
   ok?: number;
@@ -58,6 +92,7 @@ export type HistoryEntry = {
     size?: number | null;
     sha256?: string | null;
     status?: string | null;
+    role?: string | null;
   }>;
 };
 
@@ -81,4 +116,22 @@ export function extractUrl(text: string): string | null {
   const match = text.trim().match(url_pattern);
   if (!match) return null;
   return match[0].replace(/[.,);\]}>]+$/, "");
+}
+
+export function history_cover_path(entry: HistoryEntry): string | null {
+  if (entry.cover_path) return entry.cover_path;
+  const cover_file = (entry.files || []).find((f) => f.role === "cover" && f.path);
+  return cover_file?.path || null;
+}
+
+export function sites_cli_list(flags: Record<string, boolean>): string {
+  const entries = site_ids.map((id) => [id, flags[id] !== false] as const);
+  const enabled = entries.filter(([, on]) => on).map(([id]) => id);
+  const disabled = entries.filter(([, on]) => !on).map(([id]) => id);
+  if (enabled.length === site_ids.length) return "all";
+  if (enabled.length === 0) return "none";
+  if (disabled.length <= enabled.length) {
+    return ["all", ...disabled.map((id) => `-${id}`)].join(",");
+  }
+  return enabled.join(",");
 }

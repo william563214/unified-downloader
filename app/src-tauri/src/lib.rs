@@ -58,10 +58,62 @@ struct AppSettings {
     bilibili_part: String,
     #[serde(default = "default_on_duplicate")]
     on_duplicate: String,
+    #[serde(default)]
+    write_nfo: bool,
+    #[serde(default)]
+    write_cover: bool,
+    #[serde(default)]
+    embed_cover: bool,
+    #[serde(default = "default_cover_naming")]
+    cover_naming: String,
+    #[serde(default = "default_site_flags")]
+    nfo_sites: HashMap<String, bool>,
+    #[serde(default = "default_site_flags")]
+    cover_sites: HashMap<String, bool>,
 }
 
 fn default_on_duplicate() -> String {
     "skip".into()
+}
+
+fn default_cover_naming() -> String {
+    "poster".into()
+}
+
+fn default_site_flags() -> HashMap<String, bool> {
+    let mut map = HashMap::new();
+    for site in ["gofile", "bunkr", "iwara", "bilibili", "mega"] {
+        map.insert(site.into(), true);
+    }
+    map
+}
+
+fn sites_cli_list(flags: &HashMap<String, bool>) -> String {
+    let sites = ["gofile", "bunkr", "iwara", "bilibili", "mega"];
+    let enabled: Vec<&str> = sites
+        .iter()
+        .copied()
+        .filter(|s| *flags.get(*s).unwrap_or(&true))
+        .collect();
+    let disabled: Vec<&str> = sites
+        .iter()
+        .copied()
+        .filter(|s| !*flags.get(*s).unwrap_or(&true))
+        .collect();
+    if enabled.len() == sites.len() {
+        return "all".into();
+    }
+    if enabled.is_empty() {
+        return "none".into();
+    }
+    if disabled.len() <= enabled.len() {
+        let mut parts = vec!["all".to_string()];
+        for site in disabled {
+            parts.push(format!("-{site}"));
+        }
+        return parts.join(",");
+    }
+    enabled.join(",")
 }
 
 impl Default for AppSettings {
@@ -76,6 +128,12 @@ impl Default for AppSettings {
             bilibili_quality: String::new(),
             bilibili_part: "all".into(),
             on_duplicate: default_on_duplicate(),
+            write_nfo: false,
+            write_cover: false,
+            embed_cover: false,
+            cover_naming: default_cover_naming(),
+            nfo_sites: default_site_flags(),
+            cover_sites: default_site_flags(),
         }
     }
 }
@@ -483,6 +541,26 @@ async fn start_download(
         args.push("--ffmpeg".into());
         args.push(path.to_string());
     }
+    if settings.write_nfo {
+        args.push("--write-nfo".into());
+        args.push("--nfo-sites".into());
+        args.push(sites_cli_list(&settings.nfo_sites));
+    }
+    let write_cover = settings.write_cover || settings.embed_cover;
+    if write_cover {
+        args.push("--write-cover".into());
+        args.push("--cover-sites".into());
+        args.push(sites_cli_list(&settings.cover_sites));
+        let naming = match settings.cover_naming.trim() {
+            "folder" => "folder",
+            _ => "poster",
+        };
+        args.push("--cover-name".into());
+        args.push(naming.into());
+    }
+    if settings.embed_cover {
+        args.push("--embed-cover".into());
+    }
     let (mut rx, child) = spawn_udl(&app, args)?;
 
     state
@@ -564,6 +642,63 @@ fn open_path(app: AppHandle, path: String) -> Result<(), String> {
     tauri_plugin_opener::OpenerExt::opener(&app)
         .open_path(path, None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+fn encode_base64(data: &[u8]) -> String {
+    const table: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut i = 0;
+    while i + 3 <= data.len() {
+        let n = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8) | (data[i + 2] as u32);
+        out.push(table[((n >> 18) & 63) as usize] as char);
+        out.push(table[((n >> 12) & 63) as usize] as char);
+        out.push(table[((n >> 6) & 63) as usize] as char);
+        out.push(table[(n & 63) as usize] as char);
+        i += 3;
+    }
+    let rem = data.len() - i;
+    if rem == 1 {
+        let n = (data[i] as u32) << 16;
+        out.push(table[((n >> 18) & 63) as usize] as char);
+        out.push(table[((n >> 12) & 63) as usize] as char);
+        out.push('=');
+        out.push('=');
+    } else if rem == 2 {
+        let n = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8);
+        out.push(table[((n >> 18) & 63) as usize] as char);
+        out.push(table[((n >> 12) & 63) as usize] as char);
+        out.push(table[((n >> 6) & 63) as usize] as char);
+        out.push('=');
+    }
+    out
+}
+
+#[tauri::command]
+fn read_local_image(path: String) -> Result<String, String> {
+    let path_buf = PathBuf::from(&path);
+    let ext = path_buf
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => return Err(format!("unsupported image type: {ext}")),
+    };
+    if !path_buf.is_file() {
+        return Err(format!("image not found: {path}"));
+    }
+    let meta = fs::metadata(&path_buf).map_err(|e| e.to_string())?;
+    if meta.len() > 8 * 1024 * 1024 {
+        return Err("image too large (>8MB)".into());
+    }
+    let buf = fs::read(&path_buf).map_err(|e| e.to_string())?;
+    Ok(format!("data:{mime};base64,{}", encode_base64(&buf)))
 }
 
 #[tauri::command]
@@ -689,6 +824,7 @@ pub fn run() {
             start_download,
             cancel_download,
             open_path,
+            read_local_image,
             history_list,
             history_delete,
             queue_list

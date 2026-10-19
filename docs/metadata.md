@@ -55,3 +55,48 @@ Python：`from udl.metadata import item_metadata`。
 4. 本機既有輸出路徑
 
 策略：`--on-duplicate skip|overwrite|rename`（GUI 設定同步）。
+
+## NFO／封面後處理（v0.5-D）
+
+下載完成後可選擇輸出媒體庫 sidecar，實作在 `udl/postprocess/`（不改各站 extractor）：
+
+| 模組 | 作用 |
+|------|------|
+| `nfo.py` | 依 metadata 產生 Kodi／Jellyfin／Emby 相容 `.nfo` |
+| `cover.py` | 經共用 HTTP 引擎抓 `cover_url`／`thumbnail_url`，webp→jpg，可嵌入 mp4／mkv |
+| `artifacts.py` | 串接事件與 SQLite 歷史 artifact 紀錄 |
+| `options.py` | 全域＋站點開關 |
+
+### NFO 根元素
+
+依 metadata／`kind` 選擇（缺欄位則略過該 XML 節點）：
+
+- `movie`（預設）
+- `episodedetails`（bangumi／episode／`extra.ep_id` 等）
+- `musicvideo`（音樂類 hint 或 `extra.nfo_type`）
+
+常用對應：`title`、`director`／`artist`（author）、`premiered`（upload_date）、`tag`／`genre`、`plot`（description）、`rating`（`extra.rating`／`score`）、`runtime`（duration）、`website`／`uniqueid`（url／site／item_id）。
+
+檔名：與媒體同 stem 的 `.nfo`（`video.mp4` → `video.nfo`）。
+
+### 封面
+
+- 來源：`cover_url` 優先，否則 `thumbnail_url`
+- 檔名：`--cover-name poster` → `<stem>-poster.jpg`；`folder` → `folder.jpg`
+- HTTP：走 `udl.download.http`，帶站點 Referer（與下載引擎一致）
+- webp／其他格式：優先以 FFmpeg 轉成 jpg
+- `--embed-cover`：mp4 用 `attached_pic`；mkv 用 attachment（需 FFmpeg）
+
+### CLI／GUI
+
+```text
+udl get URL -o DIR --write-nfo --write-cover --embed-cover \
+  --cover-name poster --nfo-sites all,-mega --cover-sites all
+```
+
+GUI 設定頁有全域開關與各站 NFO／封面勾選；歷史頁若有本機 `cover_path` 或 `role=cover` 檔案會顯示縮圖。
+
+### 事件與歷史
+
+- 事件：`postprocess`；sidecar 另發 `file`（`role`=`nfo`｜`cover`）與 `done`（見 `docs/events.md`）
+- SQLite：`history_files.role`、`history_jobs.cover_path`（供修復中心辨識產物）

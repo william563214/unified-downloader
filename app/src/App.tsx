@@ -5,12 +5,16 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { humanizeError, statusLabel } from "./errors";
 import {
   type AppSettings,
+  type CoverNaming,
   type DuplicateMode,
   type FfmpegStatus,
   type HistoryEntry,
   type QueueEntry,
   default_settings,
+  default_site_flags,
   extractUrl,
+  history_cover_path,
+  site_ids,
 } from "./settings";
 import "./App.css";
 
@@ -158,6 +162,7 @@ export default function App() {
   const [historyStatus, setHistoryStatus] = useState("");
   const [historyTag, setHistoryTag] = useState("");
   const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyCovers, setHistoryCovers] = useState<Record<string, string>>({});
   const [selectedHistory, setSelectedHistory] = useState<Set<string>>(new Set());
   const startingRef = useRef(false);
   const resumedRef = useRef(false);
@@ -199,10 +204,16 @@ export default function App() {
     void (async () => {
       try {
         const loaded = await invoke<AppSettings>("get_settings");
-        const merged = {
+        const merged: AppSettings = {
           ...default_settings,
           ...loaded,
           onDuplicate: loaded.onDuplicate || default_settings.onDuplicate,
+          coverNaming: loaded.coverNaming || default_settings.coverNaming,
+          nfoSites: { ...default_site_flags(), ...(loaded.nfoSites || {}) },
+          coverSites: { ...default_site_flags(), ...(loaded.coverSites || {}) },
+          writeNfo: Boolean(loaded.writeNfo),
+          writeCover: Boolean(loaded.writeCover),
+          embedCover: Boolean(loaded.embedCover),
         };
         setSettings(merged);
         setSettingsDraft(merged);
@@ -606,6 +617,27 @@ export default function App() {
   }, [page, refreshHistory]);
 
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const next: Record<string, string> = {};
+      for (const row of historyRows) {
+        const local = history_cover_path(row);
+        if (!local) continue;
+        try {
+          const dataUrl = await invoke<string>("read_local_image", { path: local });
+          if (!cancelled) next[row.id] = dataUrl;
+        } catch {
+          /* missing or unreadable cover */
+        }
+      }
+      if (!cancelled) setHistoryCovers(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [historyRows]);
+
+  useEffect(() => {
     const running = jobs.filter((j) => j.status === "running").length;
     const slots = Math.max(1, settings.maxConcurrent) - running;
     if (slots <= 0 || startingRef.current) return;
@@ -990,6 +1022,19 @@ export default function App() {
                         }}
                       />
                     </label>
+                    {(historyCovers[row.id] || row.cover_url || row.thumbnail_url) && (
+                      <img
+                        className="history-cover"
+                        src={
+                          historyCovers[row.id] ||
+                          row.cover_url ||
+                          row.thumbnail_url ||
+                          ""
+                        }
+                        alt=""
+                        loading="lazy"
+                      />
+                    )}
                     <span className={`badge ${siteTone(row.site)}`}>{row.site}</span>
                     <div className="job-title">
                       <strong>{row.title || row.item_id || row.id}</strong>
@@ -1018,7 +1063,10 @@ export default function App() {
                       {(row.files || []).slice(0, 8).map((f, idx) => (
                         <li key={`${row.id}-${idx}`} className="file muted">
                           <div className="file-meta">
-                            <span className="name">{f.name || f.path || f.file_id}</span>
+                            <span className="name">
+                              {f.role ? `[${f.role}] ` : ""}
+                              {f.name || f.path || f.file_id}
+                            </span>
                             <span className="stats">
                               {f.size != null ? formatBytes(f.size) : "—"}
                               {" · "}
@@ -1109,6 +1157,106 @@ export default function App() {
                 <option value="rename">重新命名</option>
               </select>
             </label>
+          </div>
+
+          <div className="settings-block">
+            <h3>後處理（NFO／封面）</h3>
+            <p className="hint">
+              全域開關開啟後，再依站點勾選是否輸出；封面可選嵌入 mp4／mkv
+            </p>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.writeNfo}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({ ...s, writeNfo: e.target.checked }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>寫入 .nfo（Kodi／Jellyfin／Emby）</span>
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.writeCover}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({ ...s, writeCover: e.target.checked }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>下載封面／縮圖</span>
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.embedCover}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    embedCover: on,
+                    writeCover: on ? true : s.writeCover,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>嵌入封面到影音檔（需 FFmpeg）</span>
+            </label>
+            <label className="field compact">
+              <span>封面檔名</span>
+              <select
+                value={settingsDraft.coverNaming}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    coverNaming: e.target.value as CoverNaming,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="poster">{"<檔名>-poster.jpg"}</option>
+                <option value="folder">folder.jpg</option>
+              </select>
+            </label>
+            <div className="site-toggle-grid" aria-label="站點 NFO／封面開關">
+              {site_ids.map((site) => (
+                <div key={site} className="site-toggle-row">
+                  <span className="site-toggle-name">{site}</span>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={settingsDraft.nfoSites[site] !== false}
+                      disabled={!settingsDraft.writeNfo}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSettingsDraft((s) => ({
+                          ...s,
+                          nfoSites: { ...s.nfoSites, [site]: checked },
+                        }));
+                        setSettingsDirty(true);
+                      }}
+                    />
+                    <span>NFO</span>
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={settingsDraft.coverSites[site] !== false}
+                      disabled={!settingsDraft.writeCover && !settingsDraft.embedCover}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSettingsDraft((s) => ({
+                          ...s,
+                          coverSites: { ...s.coverSites, [site]: checked },
+                        }));
+                        setSettingsDirty(true);
+                      }}
+                    />
+                    <span>封面</span>
+                  </label>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="settings-block">
