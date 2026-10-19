@@ -105,6 +105,8 @@ export default function App() {
   const [probing, setProbing] = useState(false);
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [iwaraQuality, setIwaraQuality] = useState("Source");
+  const [iwaraCloudflareBypass, setIwaraCloudflareBypass] = useState(false);
 
   const isBilibili = resolveInfo?.site === "bilibili" && resolveInfo.supported;
 
@@ -363,8 +365,14 @@ export default function App() {
       const jobId = await invoke<string>("start_download", {
         url: url.trim(),
         output,
-        quality: isBilibili && selectedQuality ? selectedQuality : null,
+        quality: isBilibili
+          ? selectedQuality || null
+          : resolveInfo?.site === "iwara"
+            ? iwaraQuality
+            : null,
         part: isBilibili ? selectedPart : null,
+        cloudflareBypass:
+          resolveInfo?.site === "iwara" ? iwaraCloudflareBypass : null,
       });
       setJobs((prev) => [
         {
@@ -412,7 +420,7 @@ export default function App() {
           <p className="brand">整合下載器</p>
           <h1>貼上網址，辨識站點，一次下載</h1>
           <p className="lede">
-            統一核心支援 Gofile、Bunkr 與 Bilibili；Iwara 槽位已預留。
+            統一核心支援 Gofile、Bunkr、Iwara 與 Bilibili。
           </p>
         </div>
       </header>
@@ -424,7 +432,7 @@ export default function App() {
             <input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://www.bilibili.com/video/BV… 或 gofile / bunkr 連結"
+              placeholder="gofile / bunkr / iwara.tv / bilibili.com 連結"
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
@@ -441,6 +449,32 @@ export default function App() {
             ) : null}
           </div>
         </label>
+
+        {resolveInfo?.site === "iwara" && resolveInfo.supported && (
+          <div className="site-options" aria-label="Iwara 選項">
+            <label className="field compact">
+              <span>畫質</span>
+              <select
+                value={iwaraQuality}
+                onChange={(e) => setIwaraQuality(e.target.value)}
+              >
+                <option value="Source">Source（最佳）</option>
+                <option value="540">540</option>
+                <option value="360">360</option>
+              </select>
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={iwaraCloudflareBypass}
+                onChange={(e) => setIwaraCloudflareBypass(e.target.checked)}
+              />
+              <span>
+                Cloudflare 繞過（選用，預設關閉；需安裝 cloudscraper）
+              </span>
+            </label>
+          </div>
+        )}
 
         {isBilibili && (
           <div className="bili-options" aria-label="Bilibili 選項">

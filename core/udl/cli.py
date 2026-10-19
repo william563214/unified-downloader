@@ -77,7 +77,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_get.add_argument(
         "--quality",
         default=None,
-        help="bilibili video qn (e.g. 64) or omit for best available without login",
+        help=(
+            "site quality: Iwara Source|540|360; "
+            "Bilibili qn number (e.g. 64) or omit for best available without login"
+        ),
     )
     p_get.add_argument(
         "--part",
@@ -88,6 +91,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--ffmpeg",
         default=None,
         help="path to ffmpeg binary (default: PATH or UDL_FFMPEG)",
+    )
+    p_get.add_argument(
+        "--cloudflare-bypass",
+        action="store_true",
+        help="Iwara opt-in Cloudflare bypass via cloudscraper (disabled by default)",
+    )
+    p_get.add_argument(
+        "--token",
+        default=None,
+        help="optional Iwara Bearer token (in-memory only not stored)",
     )
 
     p_schema = sub.add_parser("schema", help="print JSON-lines event schema")
@@ -211,20 +224,20 @@ def cmd_get(args: argparse.Namespace) -> int:
     emit = emitter(enabled=args.json)
     job_id = args.job_id or str(uuid.uuid4())
 
-    try:
-        quality = _parse_quality(args.quality)
-    except ValueError:
-        msg = f"invalid --quality: {args.quality}"
-        if args.json:
-            emit.error(job=job_id, message=msg, code="resolve_failed")
-        else:
-            print(msg, file=sys.stderr)
-        return 1
-
+    ext = None
     try:
         if info.site == "bilibili":
             from udl.extractors.bilibili import bilibili_extractor
 
+            try:
+                quality = _parse_quality(args.quality)
+            except ValueError:
+                msg = f"invalid bilibili --quality (expect qn int): {args.quality}"
+                if args.json:
+                    emit.error(job=job_id, message=msg, code="resolve_failed")
+                else:
+                    print(msg, file=sys.stderr)
+                return 1
             ext = bilibili_extractor(
                 quality=quality,
                 part=args.part,
@@ -232,6 +245,7 @@ def cmd_get(args: argparse.Namespace) -> int:
             )
         else:
             ext = get_extractor(args.url)
+            _apply_site_options(ext, args)
         result = ext.resolve(args.url, password=args.password)
     except Exception as exc:  # noqa: BLE001
         if args.json:
@@ -285,6 +299,22 @@ def cmd_get(args: argparse.Namespace) -> int:
     if cancel.is_set():
         return 130
     return 0 if failed == 0 else 1
+
+
+def _apply_site_options(ext: object, args: argparse.Namespace) -> None:
+    """pass optional CLI flags to site extractors that understand them."""
+    configure = getattr(ext, "configure", None)
+    if not callable(configure):
+        return
+    kwargs: dict[str, object] = {}
+    if getattr(args, "quality", None):
+        kwargs["quality"] = args.quality
+    if getattr(args, "token", None) is not None:
+        kwargs["token"] = args.token
+    if getattr(args, "cloudflare_bypass", False):
+        kwargs["cloudflare_bypass"] = True
+    if kwargs:
+        configure(**kwargs)
 
 
 def cmd_schema(_args: argparse.Namespace) -> int:

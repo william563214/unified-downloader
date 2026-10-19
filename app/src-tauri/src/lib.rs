@@ -245,6 +245,7 @@ async fn start_download(
     output: String,
     quality: Option<String>,
     part: Option<String>,
+    cloudflare_bypass: Option<bool>,
 ) -> Result<String, String> {
     let job_id = Uuid::new_v4().to_string();
     let mut args = vec![
@@ -257,16 +258,21 @@ async fn start_download(
         job_id.clone(),
     ];
     if let Some(q) = quality {
+        let q = q.trim();
         if !q.is_empty() {
             args.push("--quality".into());
-            args.push(q);
+            args.push(q.to_string());
         }
     }
     if let Some(p) = part {
+        let p = p.trim();
         if !p.is_empty() {
             args.push("--part".into());
-            args.push(p);
+            args.push(p.to_string());
         }
+    }
+    if cloudflare_bypass.unwrap_or(false) {
+        args.push("--cloudflare-bypass".into());
     }
     let (mut rx, child) = spawn_udl(&app, args)?;
 

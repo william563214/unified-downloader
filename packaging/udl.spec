@@ -24,6 +24,7 @@ a = Analysis(
         "udl.extractors.gofile",
         "udl.extractors.bunkr",
         "udl.extractors.iwara",
+        "udl.extractors.iwara_xversion",
         "udl.extractors.bilibili",
         "udl.extractors.bilibili.client",
         "udl.extractors.bilibili.extractor",

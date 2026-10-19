@@ -16,6 +16,9 @@ dev = [
   "pyinstaller>=6.0.0",
   "ruff>=0.8.0",
 ]
+iwara = [
+  "cloudscraper>=1.2.71",
+]
 
 [project.scripts]
 udl = "udl.cli:main"

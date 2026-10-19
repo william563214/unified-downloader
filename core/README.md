@@ -5,6 +5,11 @@ Python 套件 `udl`：URL 路由、站點 extractor、共用 HTTP 下載引擎�
 ```bash
 cd core
 uv sync
+# optional Iwara Cloudflare bypass dependency
+# uv sync --extra iwara
+uv run udl resolve "https://gofile.io/d/XXXX"
+uv run udl get "https://gofile.io/d/XXXX" -o ./out --json
+uv run udl get "https://www.iwara.tv/video/XXXX" -o ./out --json --quality Source
 uv run udl resolve "https://www.bilibili.com/video/BV…"
 uv run udl probe "https://www.bilibili.com/video/BV…"
 uv run udl get "https://www.bilibili.com/video/BV…" -o ./out --json

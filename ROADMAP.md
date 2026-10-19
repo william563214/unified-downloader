@@ -14,11 +14,11 @@
 
 ## v0.2 — Iwara
 
-- [ ] 移植 Moeary/IwaraTool API／下載邏輯（拆 Qt）
-- [ ] 匿名公開影片、畫質回退 Source→540→360
-- [ ] X-Version salt 失效錯誤提示
-- [ ] 不預設 Cloudflare 繞過
-- [ ] 登入延後
+- [x] 移植 Moeary/IwaraTool API／下載邏輯（拆 Qt）
+- [x] 匿名公開影片、播放清單、作者頁；畫質回退 Source→540→360
+- [x] X-Version salt 失效錯誤提示（`iwara_xversion.py`）
+- [x] 不預設 Cloudflare 繞過（`--cloudflare-bypass` / GUI 選用）
+- [x] 登入延後（可選 Bearer token stub，不寫入磁碟）
 
 ## v0.3 — Bilibili（本版）
 
@@ -46,3 +46,4 @@
 - 通用「任意網站」fallback
 - 程式碼簽章／公證（v0.1 明確跳過）
 - 付費牆／VIP／區域限制繞過
+- 完整 Iwara 帳號登入流程與憑證保管（僅 token stub）

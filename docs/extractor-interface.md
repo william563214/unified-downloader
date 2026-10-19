@@ -1,6 +1,6 @@
 # Extractor 介面（給後續代理）
 
-本文件說明如何為 `udl` 新增站點模組。已實作 **Gofile**、**Bunkr**、**Bilibili**；**Iwara** 僅保留 registry 槽位。
+本文件說明如何為 `udl` 新增站點模組。已實作 **Gofile**、**Bunkr**、**Iwara**、**Bilibili**。
 
 ## 設計原則
 
@@ -35,7 +35,7 @@ class my_extractor(extractor):
 
 預設的 `extractor.download()` 已足夠：把 `extracted_file` 轉成 `download_item` 並呼叫共用引擎。若站點需要特殊傳輸（例如 Bilibili DASH + FFmpeg），可覆寫 `download()`，但仍須透過 `emitter` 發出相同事件；合併階段請發 `merging`。
 
-可選：實作 `probe(url) -> probe_info`（或相容物件）供 `udl probe`／GUI 選項使用。
+可選：實作 `probe(url) -> probe_info`（或相容物件）供 `udl probe`／GUI 選項使用。可選：實作 `configure(**kwargs)` 接收 CLI／GUI 旗標（見 Iwara）。
 
 ### `extracted_file` 欄位
 
@@ -64,17 +64,19 @@ class my_extractor(extractor):
 |------|------|--------|------|
 | gofile | `gofile.py` | implemented | ltsdw/gofile-downloader GPL-3.0 |
 | bunkr | `bunkr.py` | implemented | Lysagxra/BunkrDownloader GPL-3.0 |
+| iwara | `iwara.py` + `iwara_xversion.py` | implemented | Moeary/IwaraTool MIT |
 | bilibili | `bilibili/` | implemented | ScottSloan/Bili23-Downloader GPL-3.0 |
-| iwara | `iwara.py` | stub | Moeary/IwaraTool MIT |
 
-## Iwara 移植提示（v0.2）
+## Iwara（v0.2 已完成）
 
 - 從 `app/core/api/` 抽出，**拆掉 PySide6 / QSettings 依賴**。
-- 匿名公開影片優先；登入延後。
-- `X-Version` salt 會輪替，失效時要有清楚錯誤。
-- **不要**預設開啟 cloudscraper Cloudflare 挑戰繞過。
+- 支援 `/video/`、`/playlist/`、`/profile|user/`；匿名公開內容。
+- 畫質預設 Source，回退 540→360；CLI `--quality`／GUI 選單。
+- `X-Version` 集中在 `iwara_xversion.py`；全部 salt 失敗 → `iwara_xversion_error`。
+- Cloudflare 繞過需明確 `--cloudflare-bypass`（optional extra `iwara`）；預設關閉。
+- 可選 `--token`（記憶體暫存，不寫入磁碟）。
 
-## Bilibili 移植提示（v0.3，已完成子集）
+## Bilibili（v0.3 已完成子集）
 
 - 套件布局：`core/udl/extractors/bilibili/`（client / wbi / ids / quality / extractor）。
 - FFmpeg：`udl/postprocess/ffmpeg.py`（可供其他 extractor 重用）。

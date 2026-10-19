@@ -53,7 +53,7 @@ registry: list[site_entry] = [
         label="Iwara",
         match=iwara_mod.matches,
         factory=iwara_mod.iwara_extractor,
-        status="stub",
+        status="implemented",
         kind_hint="video|playlist|profile",
     ),
     site_entry(
