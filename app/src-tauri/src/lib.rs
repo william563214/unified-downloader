@@ -1279,6 +1279,298 @@ async fn repair_fix(
         .map_err(|e| format!("parse repair fix: {e}; raw={stdout}; err={stderr}"))
 }
 
+async fn run_udl_json(app: &AppHandle, args: Vec<String>) -> Result<serde_json::Value, String> {
+    let (mut rx, _child) = spawn_udl(app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    // browse commands may return exit 1 with JSON error payload (e.g. CF 403)
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return Err(format!("udl exited {:?}: {stderr}", code));
+    }
+    serde_json::from_str(trimmed).map_err(|e| {
+        format!("parse udl JSON: {e}; raw={stdout}; err={stderr}; code={code:?}")
+    })
+}
+
+fn push_opt(args: &mut Vec<String>, flag: &str, value: Option<String>) {
+    if let Some(v) = value.filter(|s| !s.trim().is_empty()) {
+        args.push(flag.into());
+        args.push(v);
+    }
+}
+
+#[tauri::command]
+async fn iwara_browse(
+    app: AppHandle,
+    action: String,
+    query: Option<String>,
+    page: Option<u32>,
+    limit: Option<u32>,
+    sort: Option<String>,
+    rating: Option<String>,
+    cloudflare_bypass: Option<bool>,
+    min_likes: Option<i64>,
+    min_views: Option<i64>,
+    exclude_tags: Option<String>,
+    title: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let action = action.trim().to_lowercase();
+    let q = query.unwrap_or_default();
+    let mut args = vec!["iwara".into(), action.clone(), "--json".into()];
+    match action.as_str() {
+        "home" => {}
+        "search" | "tag" | "author" | "playlist" => {
+            if q.trim().is_empty() && action != "home" {
+                return Err("query required".into());
+            }
+            args.push(q);
+        }
+        _ => return Err(format!("unsupported iwara browse action: {action}")),
+    }
+    args.push("--page".into());
+    args.push(page.unwrap_or(0).to_string());
+    args.push("--limit".into());
+    args.push(limit.unwrap_or(32).to_string());
+    push_opt(&mut args, "--sort", sort);
+    push_opt(&mut args, "--rating", rating);
+    push_opt(&mut args, "--exclude-tags", exclude_tags);
+    push_opt(&mut args, "--title", title);
+    if let Some(v) = min_likes {
+        args.push("--min-likes".into());
+        args.push(v.to_string());
+    }
+    if let Some(v) = min_views {
+        args.push("--min-views".into());
+        args.push(v.to_string());
+    }
+    if cloudflare_bypass.unwrap_or(false) {
+        args.push("--cloudflare-bypass".into());
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn iwara_preview(
+    app: AppHandle,
+    video_id: String,
+    cloudflare_bypass: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "iwara".into(),
+        "preview".into(),
+        video_id,
+        "--json".into(),
+    ];
+    if cloudflare_bypass.unwrap_or(false) {
+        args.push("--cloudflare-bypass".into());
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn iwara_enqueue(
+    app: AppHandle,
+    video_ids: Vec<String>,
+    output: String,
+    cloudflare_bypass: Option<bool>,
+    quality: Option<String>,
+) -> Result<serde_json::Value, String> {
+    if video_ids.is_empty() {
+        return Ok(serde_json::json!({"enqueued": 0, "skipped": 0, "jobs": []}));
+    }
+    let settings = load_settings_file(&app);
+    let mut args = vec![
+        "iwara".into(),
+        "enqueue".into(),
+        "--json".into(),
+        "-o".into(),
+        output,
+    ];
+    let q = quality
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| settings.iwara_quality.clone());
+    if !q.trim().is_empty() {
+        args.push("--quality".into());
+        args.push(q);
+    }
+    if cloudflare_bypass.unwrap_or(settings.iwara_cloudflare_bypass) {
+        args.push("--cloudflare-bypass".into());
+    }
+    args.extend(video_ids);
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn iwara_subscribe(
+    app: AppHandle,
+    target: String,
+    kind: Option<String>,
+    title: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "iwara".into(),
+        "subscribe".into(),
+        target,
+        "--json".into(),
+    ];
+    push_opt(&mut args, "--kind", kind);
+    push_opt(&mut args, "--title", title);
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn iwara_unsubscribe(app: AppHandle, id: i64) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec![
+            "iwara".into(),
+            "unsubscribe".into(),
+            id.to_string(),
+            "--json".into(),
+        ],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn iwara_subscriptions(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec!["iwara".into(), "subscriptions".into(), "--json".into()],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn iwara_sync(
+    app: AppHandle,
+    output: String,
+    cloudflare_bypass: Option<bool>,
+    max_pages: Option<u32>,
+    quality: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let settings = load_settings_file(&app);
+    let mut args = vec![
+        "iwara".into(),
+        "sync".into(),
+        "--json".into(),
+        "-o".into(),
+        output,
+        "--max-pages".into(),
+        max_pages.unwrap_or(5).to_string(),
+    ];
+    let q = quality
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| settings.iwara_quality.clone());
+    if !q.trim().is_empty() {
+        args.push("--quality".into());
+        args.push(q);
+    }
+    if cloudflare_bypass.unwrap_or(settings.iwara_cloudflare_bypass) {
+        args.push("--cloudflare-bypass".into());
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn iwara_new_items(
+    app: AppHandle,
+    source_id: Option<i64>,
+    limit: Option<u32>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "iwara".into(),
+        "new".into(),
+        "--json".into(),
+        "--limit".into(),
+        limit.unwrap_or(100).to_string(),
+    ];
+    if let Some(id) = source_id {
+        args.push("--source-id".into());
+        args.push(id.to_string());
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn iwara_mark_seen(
+    app: AppHandle,
+    source_id: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec!["iwara".into(), "new".into(), "--json".into(), "--mark-seen".into()];
+    if let Some(id) = source_id {
+        args.push("--source-id".into());
+        args.push(id.to_string());
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn iwara_sections(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_udl_json(&app, vec!["iwara".into(), "sections".into(), "--json".into()]).await
+}
+
+#[tauri::command]
+async fn iwara_section_add(
+    app: AppHandle,
+    name: String,
+    kind: String,
+    value: Option<String>,
+    sort: Option<String>,
+    rating: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "iwara".into(),
+        "section-add".into(),
+        name,
+        "--kind".into(),
+        kind,
+        "--json".into(),
+    ];
+    push_opt(&mut args, "--value", value);
+    push_opt(&mut args, "--sort", sort);
+    push_opt(&mut args, "--rating", rating);
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn iwara_section_remove(app: AppHandle, id: i64) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec![
+            "iwara".into(),
+            "section-remove".into(),
+            id.to_string(),
+            "--json".into(),
+        ],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn iwara_section_fetch(
+    app: AppHandle,
+    id: i64,
+    page: Option<u32>,
+    limit: Option<u32>,
+    cloudflare_bypass: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "iwara".into(),
+        "section-fetch".into(),
+        id.to_string(),
+        "--json".into(),
+        "--page".into(),
+        page.unwrap_or(0).to_string(),
+        "--limit".into(),
+        limit.unwrap_or(32).to_string(),
+    ];
+    if cloudflare_bypass.unwrap_or(false) {
+        args.push("--cloudflare-bypass".into());
+    }
+    run_udl_json(&app, args).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1309,7 +1601,20 @@ pub fn run() {
             naming_preview,
             rules_test,
             repair_scan,
-            repair_fix
+            repair_fix,
+            iwara_browse,
+            iwara_preview,
+            iwara_enqueue,
+            iwara_subscribe,
+            iwara_unsubscribe,
+            iwara_subscriptions,
+            iwara_sync,
+            iwara_new_items,
+            iwara_mark_seen,
+            iwara_sections,
+            iwara_section_add,
+            iwara_section_remove,
+            iwara_section_fetch
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

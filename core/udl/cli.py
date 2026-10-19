@@ -12,6 +12,7 @@ from threading import Event
 from typing import Any
 
 from udl import __version__
+from udl.cli_iwara import add_iwara_parser, cmd_iwara
 from udl.config import load_config, save_config, udl_config
 from udl.events import dump_schema, emitter
 from udl.metadata import item_metadata
@@ -544,6 +545,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sec_del = sec_sub.add_parser("delete", help="delete a secret")
     p_sec_del.add_argument("key", help="secret key")
     p_sec_del.add_argument("--json", action="store_true")
+
+    add_iwara_parser(sub)
 
     return parser
 
@@ -1409,6 +1412,9 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_repair(args)
     if args.command == "secrets":
         return cmd_secrets(args)
+    if args.command == "iwara":
+        _apply_network(args)
+        return cmd_iwara(args)
     parser.error(f"unknown command {args.command}")
     return 2
 

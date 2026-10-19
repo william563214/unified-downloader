@@ -683,9 +683,206 @@ button:disabled {
   gap: 0.4rem;
 }
 
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 14px;
+}
+
+.field.grow {
+  grid-column: span 2;
+}
+
+.error-text {
+  color: var(--danger);
+  margin: 0 0 10px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.iwara-page {
+  animation: rise 0.55s ease both;
+}
+
+.iwara-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 14px;
+}
+
+.iwara-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 0;
+  background: transparent;
+}
+
+.iwara-card.selected {
+  border-color: color-mix(in srgb, var(--accent) 45%, white);
+}
+
+.iwara-thumb {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--paper-2) 70%, white);
+  cursor: pointer;
+}
+
+.iwara-thumb input {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  left: 8px;
+}
+
+.iwara-thumb img,
+.iwara-thumb-empty {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.iwara-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgba(26, 31, 28, 0.78);
+  color: white;
+}
+
+.iwara-badge.downloaded {
+  background: var(--accent);
+}
+
+.iwara-badge.queued {
+  background: var(--accent-2);
+}
+
+.iwara-meta h3 {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.iwara-meta p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.iwara-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+button.compact {
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
+
+.iwara-sub-list ul {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.iwara-sub-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.iwara-section {
+  margin-top: 18px;
+}
+
+.iwara-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.iwara-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 24, 22, 0.55);
+  display: grid;
+  place-items: center;
+  z-index: 40;
+  padding: 20px;
+}
+
+.iwara-modal {
+  width: min(880px, 100%);
+  background: #fffdf8;
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 12px;
+}
+
+.iwara-modal-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.iwara-modal-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.iwara-preview-player {
+  width: 100%;
+  max-height: 70vh;
+  background: #111;
+  border-radius: 10px;
+}
+
+.app:has(.iwara-page) {
+  max-width: 1100px;
+}
+
+.top-nav {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 @media (max-width: 720px) {
   .hero {
     grid-template-columns: 1fr;
+  }
+
+  .field.grow {
+    grid-column: span 1;
   }
 
   .url-row,

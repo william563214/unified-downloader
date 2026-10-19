@@ -115,6 +115,61 @@ migrations: list[tuple[int, str]] = [
         create index if not exists idx_history_files_role on history_files(role);
         """,
     ),
+    (
+        3,
+        """
+        create table if not exists iwara_subscriptions (
+          id integer primary key autoincrement,
+          kind text not null,
+          key text not null,
+          title text,
+          remote_id text,
+          enabled integer not null default 1,
+          last_checked_at text,
+          last_seen_video_id text,
+          filter_json text not null default '{}',
+          new_count integer not null default 0,
+          created_at text not null default (datetime('now')),
+          updated_at text not null default (datetime('now')),
+          unique(kind, key)
+        );
+
+        create index if not exists idx_iwara_subs_enabled
+          on iwara_subscriptions(enabled);
+
+        create table if not exists iwara_subscription_items (
+          id integer primary key autoincrement,
+          source_id integer not null references iwara_subscriptions(id) on delete cascade,
+          video_id text not null,
+          title text,
+          payload_json text not null default '{}',
+          seen integer not null default 0,
+          enqueued integer not null default 0,
+          discovered_at text not null default (datetime('now')),
+          unique(source_id, video_id)
+        );
+
+        create index if not exists idx_iwara_sub_items_seen
+          on iwara_subscription_items(source_id, seen);
+
+        create table if not exists iwara_home_sections (
+          id integer primary key autoincrement,
+          name text not null,
+          query_kind text not null,
+          query_value text not null default '',
+          sort text not null default 'date',
+          rating text,
+          enabled integer not null default 1,
+          position integer not null default 0,
+          filter_json text not null default '{}',
+          created_at text not null default (datetime('now')),
+          updated_at text not null default (datetime('now'))
+        );
+
+        create index if not exists idx_iwara_home_pos
+          on iwara_home_sections(position);
+        """,
+    ),
 ]
 
 

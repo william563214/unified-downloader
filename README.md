@@ -17,9 +17,9 @@ unified-downloader/
 │  ├─ metadata.py         # 統一 item_metadata（全站）
 │  ├─ store/              # SQLite 歷史／佇列／去重（migrations）
 │  ├─ events.py           # JSON-lines 事件（含 metadata / duplicate / postprocess）
-│  └─ cli.py              # resolve / probe / get / history / queue / secrets / …
+│  └─ cli.py              # resolve / probe / get / history / queue / iwara / secrets / …
 ├─ app/                   # Tauri v2 + React/TS GUI（sidecar 叫 udl）
-├─ docs/                  # 事件協定、metadata、networking、extractor 介面
+├─ docs/                  # 事件協定、metadata、networking、extractor、iwara-browse
 ├─ packaging/             # PyInstaller spec
 └─ scripts/               # sidecar 建置腳本
 ```
@@ -35,7 +35,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 |------|------|------|
 | Gofile | ✅ | ltsdw/gofile-downloader（訪客 token，公開連結） |
 | Bunkr | ✅ | Lysagxra/BunkrDownloader（相簿／單檔） |
-| Iwara | ✅ | Moeary/IwaraTool（公開影片／播放清單／作者頁） |
+| Iwara | ✅ | Moeary/IwaraTool（公開下載＋瀏覽／本機訂閱／首頁；無登入） |
 | Bilibili | ✅ v0.7-A | ScottSloan/Bili23-Downloader（多類型解析、彈幕字幕、codec；無登入；見 `docs/bilibili.md`） |
 | MEGA | ✅ 外部工具 | **megatools**（優先）／MEGAcmd `mega-get`（備援）；子行程，不移植 MegaBasterd |
 
@@ -48,6 +48,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - 公開內容匿名可抓；`--token` 僅記憶體暫存（尚未實作帳密登入／keychain）
 - **不**預設開 Cloudflare 繞過。需要時：`udl get … --cloudflare-bypass`（需 `uv sync --extra iwara` 或安裝 cloudscraper），GUI 有對應核取方塊且預設關閉
 - `X-Version` salt 在 `core/udl/extractors/iwara_xversion.py`；全部失敗會拋清楚錯誤
+- **v0.6-A 瀏覽／訂閱（無登入）：** `udl iwara search|tag|author|playlist|home|sync|…`；GUI「Iwara／首頁／訂閱」頁。詳見 `docs/iwara-browse.md`。帳號 following 匯入另 PR。
 
 ### Bilibili 備註（v0.7-A）
 

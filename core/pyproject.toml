@@ -1,6 +1,6 @@
 [project]
 name = "udl"
-version = "0.5.0"
+version = "0.6.0"
 description = "整合下載器 unified Python core"
 readme = "README.md"
 requires-python = ">=3.11"
