@@ -11,9 +11,9 @@ unified-downloader/
 │  ├─ router.py           # URL → extractor 註冊表
 │  ├─ extractors/         # gofile、bunkr、iwara、bilibili/、external/mega
 │  ├─ download/http.py    # 共用 HTTP：續傳、重試、並行、取消
-│  ├─ postprocess/ffmpeg.py  # DASH 合併（Bilibili 等可重用）
+│  ├─ postprocess/ffmpeg.py  # DASH 合併＋首次佈建（checksum）
 │  ├─ events.py           # JSON-lines 事件（含 merging / probe）
-│  └─ cli.py              # udl resolve / probe / get / sites / schema
+│  └─ cli.py              # udl resolve / probe / get / ffmpeg / sites / schema
 ├─ app/                   # Tauri v2 + React/TS GUI（sidecar 叫 udl）
 ├─ docs/                  # 事件協定、extractor 介面
 ├─ packaging/             # PyInstaller spec
@@ -48,7 +48,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 
 - 預設使用**無需登入即可取得的最高畫質**；`--quality`（qn 數字）／GUI 可改選。
 - 多分 P：未帶 `?p=` 時預設全部；bangumi 季節連結預設當前／第一集，可用 `--part all`。
-- 需要 FFmpeg（PATH、`UDL_FFMPEG` 或 `--ffmpeg`）。尚未內建自動下載；缺少時會發出 `ffmpeg_missing`。
+- 需要 FFmpeg（PATH、`UDL_FFMPEG`、`--ffmpeg`，或 GUI 首次下載到應用資料目錄）。缺少時會發出 `ffmpeg_missing`。
 - **不會**繞過大會員、付費牆或地區限制；QR 登入僅 stub。
 
 ### MEGA 備註（v0.4）
@@ -59,6 +59,35 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - 缺少工具時發出 `mega_tool_missing` 與安裝指引（brew／scoop／apt／[mega.io/cmd](https://mega.io/cmd)）。可用 `--mega-tool` 或 `UDL_MEGA_TOOL` 指定路徑。
 - 取消會結束子行程（行程組 SIGTERM→SIGKILL）。
 - **不**實作 SmartProxy／Quota Recovery／換 IP 等配額繞過；遇到 509 只回報清楚錯誤。
+
+### GUI 設定與佇列
+
+- **設定頁**：預設下載資料夾、同時任務數、單一任務檔案並發、Iwara 畫質／Cloudflare（預設關）、Bilibili 分 P／畫質、FFmpeg 路徑；寫入應用資料目錄 `settings.json`。
+- **佇列**：並發下載、暫停／取消／重試、zh-TW 錯誤訊息、開啟檔案／資料夾、焦點時偵測剪貼簿連結。
+- **FFmpeg 首次佈建**：偵測不到時可下載目前 OS／arch 靜態建置並驗證 checksum（見 `NOTICE`）。CLI：`udl ffmpeg status` / `udl ffmpeg install`。
+
+## 安裝未簽章建置（Release）
+
+GitHub Actions `release.yml` 產出**未簽章**安裝包：
+
+| 平台 | 產物 | sidecar 檔名 |
+|------|------|----------------|
+| macOS arm64 | `unified-downloader-macos-arm64.dmg`（另可有 `.app.zip`） | `udl-aarch64-apple-darwin` |
+| Windows x64 | `unified-downloader-windows-x64-setup.exe`（NSIS；另可有 `.msi`） | `udl-x86_64-pc-windows-msvc.exe` |
+
+Tauri `externalBin` 使用 `binaries/udl`，建置腳本必須把 PyInstaller 產物命名為 `udl-<target-triple>[.exe]`。
+
+### macOS（Gatekeeper）
+
+1. 從 Release 下載 `.dmg`，拖到「應用程式」。
+2. 若出現「無法驗證開發者」：系統設定 → 隱私權與安全性 → 仍要打開；或在終端機對 App 執行  
+   `xattr -dr com.apple.quarantine "/Applications/整合下載器.app"`
+3. 本專案**不做** Apple 公證／簽章（見 ROADMAP）。
+
+### Windows（SmartScreen）
+
+1. 執行 `*-setup.exe`。若 SmartScreen 提示「Windows 已保護你的電腦」：選「更多資訊」→「仍要執行」。
+2. 本專案**不做** Authenticode 簽章。企業環境可能需允許未知發行者或改用本機建置。
 
 ## 開發環境
 
@@ -85,6 +114,8 @@ uv run udl probe "https://www.bilibili.com/video/BV1xx411c7mD"
 uv run udl get "https://www.bilibili.com/video/BV1xx411c7mD" -o ./out --json
 uv run udl resolve "https://mega.nz/file/<id>#<key>"
 uv run udl get "https://mega.nz/file/<id>#<key>" -o ./out --json
+uv run udl ffmpeg status --json
+# uv run udl ffmpeg install   # macOS arm64 / Windows x64 靜態建置
 ```
 
 ### GUI
@@ -111,7 +142,9 @@ cd app && npm run tauri build
 ### CI 產物
 
 - `.github/workflows/ci.yml`：Python lint + 前端 build
-- `.github/workflows/release.yml`：**未簽章** macOS arm64、Windows x64 安裝包與 sidecar
+- `.github/workflows/release.yml`：**未簽章** macOS arm64 `.dmg`、Windows x64 NSIS／MSI，並上傳對應 triple 命名的 `udl` sidecar；缺產物時失敗
+
+正式打包請用 `./scripts/build-sidecar.sh <target-triple>`（CI matrix 會傳入），再 `npm run tauri -- build --target <triple>`。
 
 ## 注意事項
 

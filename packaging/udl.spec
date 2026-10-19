@@ -20,6 +20,7 @@ a = Analysis(
         "udl.download.http",
         "udl.postprocess",
         "udl.postprocess.ffmpeg",
+        "udl.postprocess.ffmpeg_provision",
         "udl.extractors.base",
         "udl.extractors.gofile",
         "udl.extractors.bunkr",

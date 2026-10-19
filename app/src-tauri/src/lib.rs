@@ -1,10 +1,11 @@
 //! Tauri shell for 整合下載器 — spawns the `udl` Python sidecar and forwards JSON-lines.
 
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -44,6 +45,45 @@ struct ProbeResult {
     message: Option<String>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppSettings {
+    download_dir: String,
+    max_concurrent: u32,
+    workers: u32,
+    ffmpeg_path: String,
+    iwara_quality: String,
+    iwara_cloudflare_bypass: bool,
+    bilibili_quality: String,
+    bilibili_part: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            download_dir: String::new(),
+            max_concurrent: 2,
+            workers: 3,
+            ffmpeg_path: String::new(),
+            iwara_quality: "Source".into(),
+            iwara_cloudflare_bypass: false,
+            bilibili_quality: String::new(),
+            bilibili_part: "all".into(),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FfmpegStatus {
+    found: bool,
+    path: Option<String>,
+    source: Option<String>,
+    platform: String,
+    provision_supported: bool,
+    message: String,
+}
+
 fn core_dir(app: &AppHandle) -> PathBuf {
     // repo layout: app/src-tauri -> ../../core
     if let Ok(cwd) = std::env::current_dir() {
@@ -62,6 +102,30 @@ fn core_dir(app: &AppHandle) -> PathBuf {
     PathBuf::from(".")
 }
 
+fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("app data dir: {e}"))
+}
+
+fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("settings.json"))
+}
+
+fn ffmpeg_install_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("ffmpeg"))
+}
+
+fn load_settings_file(app: &AppHandle) -> AppSettings {
+    let Ok(path) = settings_path(app) else {
+        return AppSettings::default();
+    };
+    let Ok(raw) = fs::read_to_string(path) else {
+        return AppSettings::default();
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
 fn use_sidecar_binary() -> bool {
     // Prefer packaged sidecar unless UDL_DEV=1
     std::env::var("UDL_DEV").ok().as_deref() != Some("1")
@@ -72,7 +136,10 @@ fn spawn_udl(
     app: &AppHandle,
     args: Vec<String>,
 ) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, CommandChild), String> {
+    // FFmpeg path is passed via --ffmpeg from start_download / ffmpeg_status
+    // Managed install dir matches tauri app_data_dir/ffmpeg (Python app_data_name)
     let shell = app.shell();
+
     if use_sidecar_binary() {
         match shell.sidecar("udl") {
             Ok(cmd) => {
@@ -103,11 +170,12 @@ fn spawn_udl(
         .map_err(|e| format!("spawn uv udl: {e}"))
 }
 
-#[tauri::command]
-async fn resolve_url(app: AppHandle, url: String) -> Result<ResolveResult, String> {
-    let (mut rx, _child) = spawn_udl(&app, vec!["resolve".into(), url.clone()])?;
+async fn collect_stdout_json(
+    rx: &mut tauri::async_runtime::Receiver<CommandEvent>,
+) -> Result<(String, String, Option<i32>), String> {
     let mut stdout = String::new();
     let mut stderr = String::new();
+    let mut code = None;
     while let Some(event) = rx.recv().await {
         match event {
             CommandEvent::Stdout(line) => {
@@ -118,16 +186,59 @@ async fn resolve_url(app: AppHandle, url: String) -> Result<ResolveResult, Strin
             }
             CommandEvent::Error(err) => return Err(err),
             CommandEvent::Terminated(payload) => {
-                if payload.code.unwrap_or(1) > 2 {
-                    return Err(format!(
-                        "udl resolve exited {:?}: {stderr}",
-                        payload.code
-                    ));
-                }
+                code = payload.code;
                 break;
             }
             _ => {}
         }
+    }
+    Ok((stdout, stderr, code))
+}
+
+#[tauri::command]
+fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
+    Ok(load_settings_file(&app))
+}
+
+#[tauri::command]
+fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
+    let mut settings = settings;
+    if settings.max_concurrent == 0 {
+        settings.max_concurrent = 1;
+    }
+    if settings.max_concurrent > 8 {
+        settings.max_concurrent = 8;
+    }
+    if settings.workers == 0 {
+        settings.workers = 1;
+    }
+    if settings.workers > 16 {
+        settings.workers = 16;
+    }
+    let path = settings_path(&app)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let raw = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    fs::write(&path, raw).map_err(|e| e.to_string())?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn get_app_paths(app: AppHandle) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({
+        "appData": app_data_dir(&app)?.to_string_lossy(),
+        "ffmpegDir": ffmpeg_install_dir(&app)?.to_string_lossy(),
+        "settings": settings_path(&app)?.to_string_lossy(),
+    }))
+}
+
+#[tauri::command]
+async fn resolve_url(app: AppHandle, url: String) -> Result<ResolveResult, String> {
+    let (mut rx, _child) = spawn_udl(&app, vec!["resolve".into(), url.clone()])?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) > 2 {
+        return Err(format!("udl resolve exited {:?}: {stderr}", code));
     }
     let value: serde_json::Value = serde_json::from_str(stdout.trim())
         .map_err(|e| format!("parse resolve JSON: {e}; raw={stdout}; err={stderr}"))?;
@@ -157,43 +268,22 @@ async fn resolve_url(app: AppHandle, url: String) -> Result<ResolveResult, Strin
             .get("status")
             .and_then(|v| v.as_str())
             .map(str::to_string),
-        message: value
-            .get("message")
-            .and_then(|v| {
-                if v.is_null() {
-                    None
-                } else {
-                    v.as_str().map(str::to_string)
-                }
-            }),
+        message: value.get("message").and_then(|v| {
+            if v.is_null() {
+                None
+            } else {
+                v.as_str().map(str::to_string)
+            }
+        }),
     })
 }
 
 #[tauri::command]
 async fn probe_url(app: AppHandle, url: String) -> Result<ProbeResult, String> {
     let (mut rx, _child) = spawn_udl(&app, vec!["probe".into(), url.clone()])?;
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(line) => {
-                stdout.push_str(&String::from_utf8_lossy(&line));
-            }
-            CommandEvent::Stderr(line) => {
-                stderr.push_str(&String::from_utf8_lossy(&line));
-            }
-            CommandEvent::Error(err) => return Err(err),
-            CommandEvent::Terminated(payload) => {
-                if payload.code.unwrap_or(1) != 0 {
-                    return Err(format!(
-                        "udl probe exited {:?}: {stderr}",
-                        payload.code
-                    ));
-                }
-                break;
-            }
-            _ => {}
-        }
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("udl probe exited {:?}: {stderr}", code));
     }
     let value: serde_json::Value = serde_json::from_str(stdout.trim())
         .map_err(|e| format!("parse probe JSON: {e}; raw={stdout}; err={stderr}"))?;
@@ -238,6 +328,82 @@ async fn probe_url(app: AppHandle, url: String) -> Result<ProbeResult, String> {
 }
 
 #[tauri::command]
+async fn ffmpeg_status(app: AppHandle) -> Result<FfmpegStatus, String> {
+    let settings = load_settings_file(&app);
+    let mut args = vec!["ffmpeg".into(), "status".into(), "--json".into()];
+    if !settings.ffmpeg_path.trim().is_empty() {
+        args.push("--ffmpeg".into());
+        args.push(settings.ffmpeg_path.trim().to_string());
+    }
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, _code) = collect_stdout_json(&mut rx).await?;
+    let value: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse ffmpeg status: {e}; raw={stdout}; err={stderr}"))?;
+    Ok(FfmpegStatus {
+        found: value
+            .get("found")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        path: value
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        source: value
+            .get("source")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        platform: value
+            .get("platform")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        provision_supported: value
+            .get("provision_supported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        message: value
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+    })
+}
+
+#[tauri::command]
+async fn install_ffmpeg(app: AppHandle) -> Result<FfmpegStatus, String> {
+    let dir = ffmpeg_install_dir(&app)?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let args = vec![
+        "ffmpeg".into(),
+        "install".into(),
+        "--json".into(),
+        "--dir".into(),
+        dir.to_string_lossy().into_owned(),
+    ];
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    let value: serde_json::Value = serde_json::from_str(stdout.trim()).map_err(|e| {
+        format!("parse ffmpeg install: {e}; raw={stdout}; err={stderr}; code={code:?}")
+    })?;
+    if !value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return Err(value
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("FFmpeg 安裝失敗")
+            .to_string());
+    }
+    // persist discovered path into settings when empty
+    let mut settings = load_settings_file(&app);
+    if settings.ffmpeg_path.trim().is_empty() {
+        if let Some(path) = value.get("path").and_then(|v| v.as_str()) {
+            settings.ffmpeg_path = path.to_string();
+            let _ = save_settings(app.clone(), settings);
+        }
+    }
+    ffmpeg_status(app).await
+}
+
+#[tauri::command]
 async fn start_download(
     app: AppHandle,
     state: State<'_, JobState>,
@@ -246,7 +412,10 @@ async fn start_download(
     quality: Option<String>,
     part: Option<String>,
     cloudflare_bypass: Option<bool>,
+    workers: Option<u32>,
+    ffmpeg: Option<String>,
 ) -> Result<String, String> {
+    let settings = load_settings_file(&app);
     let job_id = Uuid::new_v4().to_string();
     let mut args = vec![
         "get".into(),
@@ -256,6 +425,8 @@ async fn start_download(
         "--json".into(),
         "--job-id".into(),
         job_id.clone(),
+        "--workers".into(),
+        workers.unwrap_or(settings.workers).max(1).to_string(),
     ];
     if let Some(q) = quality {
         let q = q.trim();
@@ -273,6 +444,22 @@ async fn start_download(
     }
     if cloudflare_bypass.unwrap_or(false) {
         args.push("--cloudflare-bypass".into());
+    }
+    let ffmpeg_path = ffmpeg
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            let trimmed = settings.ffmpeg_path.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+    if let Some(path) = ffmpeg_path {
+        args.push("--ffmpeg".into());
+        args.push(path.to_string());
     }
     let (mut rx, child) = spawn_udl(&app, args)?;
 
@@ -367,8 +554,13 @@ pub fn run() {
             children: Mutex::new(HashMap::new()),
         })
         .invoke_handler(tauri::generate_handler![
+            get_settings,
+            save_settings,
+            get_app_paths,
             resolve_url,
             probe_url,
+            ffmpeg_status,
+            install_ffmpeg,
             start_download,
             cancel_download,
             open_path

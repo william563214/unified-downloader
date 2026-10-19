@@ -119,6 +119,27 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sites = sub.add_parser("sites", help="list registered sites")
     p_sites.add_argument("--json", action="store_true")
 
+    p_ffmpeg = sub.add_parser("ffmpeg", help="locate or install a static FFmpeg build")
+    ff_sub = p_ffmpeg.add_subparsers(dest="ffmpeg_command", required=True)
+    p_ff_status = ff_sub.add_parser("status", help="show whether FFmpeg is available")
+    p_ff_status.add_argument(
+        "--ffmpeg",
+        default=None,
+        help="explicit ffmpeg path to check",
+    )
+    p_ff_status.add_argument("--json", action="store_true")
+    p_ff_install = ff_sub.add_parser(
+        "install",
+        help="download a checksum-verified static build into the app data dir",
+    )
+    p_ff_install.add_argument(
+        "--dir",
+        type=Path,
+        default=None,
+        help="install directory (default: platform app data /ffmpeg)",
+    )
+    p_ff_install.add_argument("--json", action="store_true")
+
     return parser
 
 
@@ -350,6 +371,55 @@ def cmd_sites(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ffmpeg(args: argparse.Namespace) -> int:
+    from udl.postprocess.ffmpeg_provision import (
+        ffmpeg_provision_error,
+        install_ffmpeg,
+        probe_ffmpeg,
+        provision_supported,
+    )
+
+    if args.ffmpeg_command == "status":
+        status = probe_ffmpeg(args.ffmpeg)
+        payload = {
+            "found": status.found,
+            "path": status.path,
+            "source": status.source,
+            "platform": status.platform_key,
+            "provision_supported": provision_supported(),
+            "message": status.message,
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if status.found else 1
+
+    if args.ffmpeg_command == "install":
+        try:
+            path = install_ffmpeg(args.dir)
+        except ffmpeg_provision_error as exc:
+            payload = {"ok": False, "message": str(exc), "code": exc.code}
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False))
+            else:
+                print(str(exc), file=sys.stderr)
+            return 1
+        payload = {
+            "ok": True,
+            "path": str(path),
+            "platform": probe_ffmpeg(path).platform_key,
+            "message": "FFmpeg installed",
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -363,6 +433,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_schema(args)
     if args.command == "sites":
         return cmd_sites(args)
+    if args.command == "ffmpeg":
+        return cmd_ffmpeg(args)
     parser.error(f"unknown command {args.command}")
     return 2
 
