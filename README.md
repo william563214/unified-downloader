@@ -1,4 +1,4 @@
-# 整合下載器（unified-downloader）v0.4
+# 整合下載器（unified-downloader）v0.5
 
 桌面應用：貼上網址 → 辨識站點 → 用統一 Python 核心下載。  
 授權：**GPL-3.0-or-later**（見 `LICENSE`、`NOTICE`）。
@@ -12,17 +12,20 @@ unified-downloader/
 │  ├─ extractors/         # gofile、bunkr、iwara、bilibili/、external/mega
 │  ├─ download/http.py    # 共用 HTTP：續傳、重試、並行、取消
 │  ├─ postprocess/ffmpeg.py  # DASH 合併＋首次佈建（checksum）
-│  ├─ events.py           # JSON-lines 事件（含 merging / probe）
-│  └─ cli.py              # udl resolve / probe / get / ffmpeg / sites / schema
+│  ├─ metadata.py         # 統一 item_metadata（全站）
+│  ├─ store/              # SQLite 歷史／佇列／去重（migrations）
+│  ├─ events.py           # JSON-lines 事件（含 metadata / duplicate）
+│  └─ cli.py              # resolve / probe / get / history / queue / …
 ├─ app/                   # Tauri v2 + React/TS GUI（sidecar 叫 udl）
-├─ docs/                  # 事件協定、extractor 介面
+├─ docs/                  # 事件協定、metadata、extractor 介面
 ├─ packaging/             # PyInstaller spec
 └─ scripts/               # sidecar 建置腳本
 ```
 
-GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-lines（見 `docs/events.md`）。
+GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-lines（見 `docs/events.md`）。  
+全域歷史 DB 在應用資料目錄（與 FFmpeg 佈建同根），由核心擁有。
 
-**不做：** gallery-dl 程式碼／import（GPL-2.0-only 衝突）、通用任意站 fallback、付費牆／配額／VIP／區域繞過、完整登入保管、簽章。
+**不做：** gallery-dl 程式碼／import（GPL-2.0-only 衝突）、Pixeldrain、通用任意站 fallback、付費牆／配額／VIP／區域繞過、完整登入保管、簽章。
 
 ## 目前支援
 
@@ -62,9 +65,19 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 
 ### GUI 設定與佇列
 
-- **設定頁**：預設下載資料夾、同時任務數、單一任務檔案並發、Iwara 畫質／Cloudflare（預設關）、Bilibili 分 P／畫質、FFmpeg 路徑；寫入應用資料目錄 `settings.json`。
-- **佇列**：並發下載、暫停／取消／重試、zh-TW 錯誤訊息、開啟檔案／資料夾、焦點時偵測剪貼簿連結。
+- **設定頁**：預設下載資料夾、同時任務數、單一任務檔案並發、重複檔策略（skip／overwrite／rename）、Iwara 畫質／Cloudflare（預設關）、Bilibili 分 P／畫質、FFmpeg 路徑；寫入應用資料目錄 `settings.json`。
+- **佇列**：並發下載、暫停／取消／重試、zh-TW 錯誤訊息、開啟檔案／資料夾、焦點時偵測剪貼簿連結；狀態寫入 SQLite，重啟後未完成任務自動恢復。
+- **歷史頁**：搜尋、站點／狀態／日期／標籤篩選、排序、刪除條目（可選刪檔）。
 - **FFmpeg 首次佈建**：偵測不到時可下載目前 OS／arch 靜態建置並驗證 checksum（見 `NOTICE`）。CLI：`udl ffmpeg status` / `udl ffmpeg install`。
+
+### 歷史／去重 CLI（v0.5）
+
+```bash
+uv run udl history list --json --site iwara --query "keyword"
+uv run udl history delete <job-id> --delete-files
+uv run udl queue list --unfinished --json
+uv run udl get "URL" -o ./out --json --on-duplicate skip
+```
 
 ## 安裝未簽章建置（Release）
 

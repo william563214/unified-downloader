@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
 from typing import Any
@@ -25,6 +26,7 @@ from udl.extractors.bilibili.quality import (
     pick_video_stream,
     stream_urls,
 )
+from udl.metadata import item_metadata
 from udl.postprocess.ffmpeg import ffmpeg_missing_error, find_ffmpeg, merge_dash, merge_error
 
 # vip / paid badges we refuse without attempting a bypass
@@ -75,7 +77,7 @@ class probe_info:
     meta: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "site": self.site,
             "kind": self.kind,
             "title": self.title,
@@ -87,6 +89,10 @@ class probe_info:
             "message": self.message,
             "meta": self.meta,
         }
+        metadata = self.meta.get("metadata") if isinstance(self.meta, dict) else None
+        if metadata is not None:
+            payload["metadata"] = metadata
+        return payload
 
 
 class bilibili_extractor(extractor):
@@ -133,7 +139,39 @@ class bilibili_extractor(extractor):
 
         multi = len(probe.parts) > 1
         files: list[extracted_file] = []
+        job_meta = self._job_metadata(probe)
         for part in parts:
+            part_id = f"{part.bvid}/p{part.page}"
+            part_meta = item_metadata(
+                site=self.site,
+                item_id=part_id,
+                canonical_url=f"https://www.bilibili.com/video/{part.bvid}?p={part.page}",
+                title=part.title or probe.title,
+                author=job_meta.author,
+                upload_date=job_meta.upload_date,
+                tags=list(job_meta.tags),
+                description=job_meta.description,
+                duration=float(part.duration) if part.duration is not None else job_meta.duration,
+                resolution=(
+                    str(self.quality or probe.default_quality)
+                    if (self.quality or probe.default_quality) is not None
+                    else None
+                ),
+                thumbnail_url=job_meta.thumbnail_url,
+                cover_url=job_meta.cover_url,
+                view_count=job_meta.view_count,
+                like_count=job_meta.like_count,
+                collection=probe.title if multi else None,
+                collection_id=part.bvid if multi else None,
+                extra={
+                    "bvid": part.bvid,
+                    "cid": part.cid,
+                    "page": part.page,
+                    "aid": part.aid,
+                    "ep_id": part.ep_id,
+                    "kind": probe.kind,
+                },
+            )
             files.append(
                 extracted_file(
                     url=f"bilibili://{part.bvid}/p{part.page}/cid{part.cid}",
@@ -151,6 +189,7 @@ class bilibili_extractor(extractor):
                         "kind": probe.kind,
                         "quality": self.quality or probe.default_quality,
                     },
+                    metadata=part_meta,
                 )
             )
 
@@ -167,6 +206,7 @@ class bilibili_extractor(extractor):
                 "login_stub": login_stub_note,
                 "source_url": probe.url,
             },
+            metadata=job_meta,
         )
 
     def probe(self, url: str) -> probe_info:
@@ -190,6 +230,8 @@ class bilibili_extractor(extractor):
         workers: int = 3,
         retries: int = 5,
         job_id: str | None = None,
+        file_dest_overrides: dict[int, Path] | None = None,
+        skip_indexes: set[int] | None = None,
     ) -> tuple[int, int]:
         del workers  # sequential per part; DASH uses two HTTP fetches each
         job = job_id or result.site
@@ -212,6 +254,32 @@ class bilibili_extractor(extractor):
             file_id = f"{job}:{idx}"
             dest_dir = output_dir / f.relative_dir if f.relative_dir else output_dir
             dest = dest_dir / f.name
+            if file_dest_overrides and idx in file_dest_overrides:
+                dest = file_dest_overrides[idx]
+            file_meta = f.metadata or result.metadata
+            meta_payload = file_meta.to_dict(omit_empty=True) if file_meta else None
+            if skip_indexes and idx in skip_indexes:
+                ok += 1
+                if emit:
+                    emit.file(
+                        job=job,
+                        id=file_id,
+                        name=f.name,
+                        total=f.size,
+                        path=str(dest),
+                        index=idx,
+                        metadata=meta_payload,
+                        already_downloaded=True,
+                    )
+                    emit.done(
+                        job=job,
+                        file=file_id,
+                        path=str(dest),
+                        skipped=True,
+                        already_downloaded=True,
+                        metadata=meta_payload,
+                    )
+                continue
             if emit:
                 emit.file(
                     job=job,
@@ -220,6 +288,7 @@ class bilibili_extractor(extractor):
                     total=f.size,
                     path=str(dest),
                     index=idx,
+                    metadata=meta_payload,
                 )
             try:
                 self._download_one(
@@ -234,7 +303,12 @@ class bilibili_extractor(extractor):
                 )
                 ok += 1
                 if emit:
-                    emit.done(job=job, file=file_id, path=str(dest))
+                    emit.done(
+                        job=job,
+                        file=file_id,
+                        path=str(dest),
+                        metadata=meta_payload,
+                    )
             except InterruptedError:
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -247,6 +321,28 @@ class bilibili_extractor(extractor):
                         code=_error_code(exc),
                     )
         return ok, failed
+
+    def _job_metadata(self, probe: probe_info) -> item_metadata:
+        meta = probe.meta if isinstance(probe.meta, dict) else {}
+        raw = meta.get("metadata")
+        if isinstance(raw, dict):
+            return item_metadata.from_dict(raw, site=self.site)
+        return item_metadata(
+            site=self.site,
+            item_id=str(meta.get("bvid") or meta.get("season_id") or "") or None,
+            canonical_url=probe.url,
+            title=probe.title,
+            author=_str_or_none(meta.get("author") or meta.get("owner")),
+            upload_date=_str_or_none(meta.get("upload_date") or meta.get("pubdate")),
+            tags=[str(t) for t in (meta.get("tags") or [])],
+            description=_str_or_none(meta.get("description")),
+            duration=_float_or_none(meta.get("duration")),
+            thumbnail_url=_str_or_none(meta.get("thumbnail_url") or meta.get("pic")),
+            cover_url=_str_or_none(meta.get("cover_url") or meta.get("cover")),
+            view_count=_int_or_none(meta.get("view_count") or meta.get("view")),
+            like_count=_int_or_none(meta.get("like_count") or meta.get("like")),
+            extra={"kind": probe.kind, "login_stub": login_stub_note},
+        )
 
     def _download_one(
         self,
@@ -459,6 +555,38 @@ class bilibili_extractor(extractor):
         qualities = available_qualities(dash) if isinstance(dash, dict) else []
         default_quality = qualities[0]["qn"] if qualities else None
 
+        owner = data.get("owner") if isinstance(data.get("owner"), dict) else {}
+        stat = data.get("stat") if isinstance(data.get("stat"), dict) else {}
+        tags = []
+        for tag in data.get("tag") or []:
+            if isinstance(tag, dict) and tag.get("tag_name"):
+                tags.append(str(tag["tag_name"]))
+            elif isinstance(tag, str):
+                tags.append(tag)
+        pubdate = data.get("pubdate")
+        upload_date = None
+        if isinstance(pubdate, int):
+            upload_date = datetime.fromtimestamp(pubdate, tz=UTC).date().isoformat()
+        metadata = item_metadata(
+            site=self.site,
+            item_id=str(bvid),
+            canonical_url=f"https://www.bilibili.com/video/{bvid}",
+            title=title,
+            author=_str_or_none(owner.get("name")),
+            upload_date=upload_date,
+            tags=tags,
+            description=_str_or_none(data.get("desc")),
+            duration=_float_or_none(data.get("duration")),
+            thumbnail_url=_str_or_none(data.get("pic")),
+            cover_url=_str_or_none(data.get("pic")),
+            view_count=_int_or_none(stat.get("view")),
+            like_count=_int_or_none(stat.get("like")),
+            extra={
+                "aid": data.get("aid"),
+                "bvid": bvid,
+                "owner_mid": owner.get("mid"),
+            },
+        )
         return probe_info(
             site=self.site,
             kind="video",
@@ -484,6 +612,16 @@ class bilibili_extractor(extractor):
                 "aid": data.get("aid"),
                 "bvid": bvid,
                 "url_pinned_part": pinned is not None,
+                "author": owner.get("name"),
+                "upload_date": upload_date,
+                "tags": tags,
+                "description": data.get("desc"),
+                "duration": data.get("duration"),
+                "pic": data.get("pic"),
+                "thumbnail_url": data.get("pic"),
+                "view_count": stat.get("view"),
+                "like_count": stat.get("like"),
+                "metadata": metadata.to_dict(omit_empty=True),
             },
         )
 
@@ -566,6 +704,23 @@ class bilibili_extractor(extractor):
             # keep part list so UI can show titles; download will fail clearly
             message = str(exc)
 
+        season_id = result.get("season_id")
+        cover = result.get("cover") or result.get("square_cover")
+        metadata = item_metadata(
+            site=self.site,
+            item_id=str(season_id or target.ep_id or title),
+            canonical_url=final_url,
+            title=title,
+            cover_url=_str_or_none(cover),
+            thumbnail_url=_str_or_none(cover),
+            collection=title,
+            collection_id=str(season_id) if season_id is not None else None,
+            extra={
+                "season_id": season_id,
+                "media_id": result.get("media_id"),
+                "episode_count": len(parts),
+            },
+        )
         return probe_info(
             site=self.site,
             kind="bangumi",
@@ -590,8 +745,12 @@ class bilibili_extractor(extractor):
             message=message,
             meta={
                 "login_stub": login_stub_note,
-                "season_id": result.get("season_id"),
+                "season_id": season_id,
                 "url_pinned_part": target.ep_id is not None,
+                "cover": cover,
+                "cover_url": cover,
+                "thumbnail_url": cover,
+                "metadata": metadata.to_dict(omit_empty=True),
             },
         )
 
@@ -638,6 +797,31 @@ class bilibili_extractor(extractor):
             part_name = safe_filename(part.title, max_len=80)
             return f"P{part.page:02d}_{part_name}.mp4"
         return f"{base}.mp4"
+
+
+def _str_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _error_code(exc: BaseException) -> str:

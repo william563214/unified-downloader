@@ -26,6 +26,7 @@ from udl.extractors.iwara_xversion import (
     merge_salts,
     x_version_rotate_hint,
 )
+from udl.metadata import item_metadata
 
 # api hosts from upstream endpoints.py
 iwara_api = "https://api.iwara.tv"
@@ -389,7 +390,67 @@ class iwara_extractor(extractor):
         headers.update(self._auth_headers())
         return headers
 
-    def _file_from_video_info(self, video_info: dict[str, Any]) -> extracted_file:
+    def _metadata_from_video_info(
+        self,
+        video_info: dict[str, Any],
+        *,
+        quality: str | None = None,
+        collection: str | None = None,
+        collection_id: str | None = None,
+    ) -> item_metadata:
+        video_id = str(video_info.get("id") or video_info.get("video_id") or "")
+        title = str(video_info.get("title") or video_id or "video")
+        user = video_info.get("user") if isinstance(video_info.get("user"), dict) else {}
+        author = None
+        if isinstance(user, dict):
+            author = str(user.get("name") or user.get("username") or "") or None
+        tags: list[str] = []
+        raw_tags = video_info.get("tags") or []
+        if isinstance(raw_tags, list):
+            for tag in raw_tags:
+                if isinstance(tag, dict):
+                    label = tag.get("id") or tag.get("name") or tag.get("label")
+                    if label:
+                        tags.append(str(label))
+                elif tag:
+                    tags.append(str(tag))
+        thumb = None
+        file_obj = video_info.get("file") if isinstance(video_info.get("file"), dict) else {}
+        if isinstance(file_obj, dict):
+            thumb = file_obj.get("id")
+        thumbnail_url = None
+        if thumb:
+            thumbnail_url = f"https://i.iwara.tv/image/thumbnail/{thumb}/thumbnail-00.jpg"
+        created = video_info.get("createdAt") or video_info.get("updatedAt")
+        duration = video_info.get("file", {}).get("duration") if isinstance(
+            video_info.get("file"), dict
+        ) else video_info.get("duration")
+        return item_metadata(
+            site=self.site,
+            item_id=video_id or None,
+            canonical_url=f"{iwara_origin}/video/{video_id}" if video_id else None,
+            title=title,
+            author=author,
+            upload_date=str(created) if created else None,
+            tags=tags,
+            description=str(video_info.get("body") or "") or None,
+            duration=float(duration) if duration is not None else None,
+            resolution=quality,
+            thumbnail_url=thumbnail_url,
+            view_count=_int_or_none(video_info.get("numViews")),
+            like_count=_int_or_none(video_info.get("numLikes")),
+            collection=collection,
+            collection_id=collection_id,
+            extra={"rating": video_info.get("rating"), "private": video_info.get("private")},
+        )
+
+    def _file_from_video_info(
+        self,
+        video_info: dict[str, Any],
+        *,
+        collection: str | None = None,
+        collection_id: str | None = None,
+    ) -> extracted_file:
         video_id = str(video_info.get("id") or video_info.get("video_id") or "video")
         title = str(video_info.get("title") or video_id)
         unavailable = self._unavailable_reason(video_info)
@@ -405,6 +466,12 @@ class iwara_extractor(extractor):
             relative_dir="",
             headers=self._download_headers(),
             meta={"video_id": video_id, "quality": quality, "title": title},
+            metadata=self._metadata_from_video_info(
+                video_info,
+                quality=quality,
+                collection=collection,
+                collection_id=collection_id,
+            ),
         )
 
     @staticmethod
@@ -437,11 +504,17 @@ class iwara_extractor(extractor):
             files=[file],
             kind="video",
             meta={"video_id": video_id, "quality": file.meta.get("quality")},
+            metadata=file.metadata,
         )
 
     def _resolve_playlist(self, playlist_id: str) -> extract_result:
         title, stubs = self._list_playlist_videos(playlist_id)
-        files = self._files_from_stubs(stubs, relative_dir=sanitize_filename(title))
+        files = self._files_from_stubs(
+            stubs,
+            relative_dir=sanitize_filename(title),
+            collection=title,
+            collection_id=playlist_id,
+        )
         if not files:
             raise RuntimeError(f"playlist {playlist_id} has no downloadable videos")
         return extract_result(
@@ -450,13 +523,27 @@ class iwara_extractor(extractor):
             files=files,
             kind="playlist",
             meta={"playlist_id": playlist_id},
+            metadata=item_metadata(
+                site=self.site,
+                item_id=playlist_id,
+                canonical_url=f"{iwara_origin}/playlist/{playlist_id}",
+                title=title,
+                collection=title,
+                collection_id=playlist_id,
+                extra={"file_count": len(files)},
+            ),
         )
 
     def _resolve_user(self, username: str) -> extract_result:
         user_id = self._get_user_id(username)
         stubs = self._list_user_videos(user_id)
         folder = sanitize_filename(username)
-        files = self._files_from_stubs(stubs, relative_dir=folder)
+        files = self._files_from_stubs(
+            stubs,
+            relative_dir=folder,
+            collection=username,
+            collection_id=user_id,
+        )
         if not files:
             raise RuntimeError(f"user {username} has no downloadable public videos")
         return extract_result(
@@ -465,6 +552,16 @@ class iwara_extractor(extractor):
             files=files,
             kind="profile",
             meta={"username": username, "user_id": user_id},
+            metadata=item_metadata(
+                site=self.site,
+                item_id=user_id,
+                canonical_url=f"{iwara_origin}/profile/{username}",
+                title=username,
+                author=username,
+                collection=username,
+                collection_id=user_id,
+                extra={"file_count": len(files)},
+            ),
         )
 
     def _files_from_stubs(
@@ -472,6 +569,8 @@ class iwara_extractor(extractor):
         stubs: list[dict[str, Any]],
         *,
         relative_dir: str,
+        collection: str | None = None,
+        collection_id: str | None = None,
     ) -> list[extracted_file]:
         files: list[extracted_file] = []
         errors: list[str] = []
@@ -481,7 +580,11 @@ class iwara_extractor(extractor):
                 continue
             try:
                 info = self._get_video_info(vid)
-                extracted = self._file_from_video_info(info)
+                extracted = self._file_from_video_info(
+                    info,
+                    collection=collection,
+                    collection_id=collection_id,
+                )
                 extracted.relative_dir = relative_dir
                 files.append(extracted)
             except Exception as exc:  # noqa: BLE001
@@ -492,3 +595,12 @@ class iwara_extractor(extractor):
                 "no downloadable videos; first errors: " + "; ".join(errors[:3])
             )
         return files
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

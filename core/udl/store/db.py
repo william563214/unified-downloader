@@ -1,0 +1,152 @@
+"""SQLite connection and schema migrations."""
+
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Iterable
+from pathlib import Path
+
+from udl.paths import default_db_path as _default_db_path
+
+default_db_path = _default_db_path
+
+# ordered migrations: (version, sql statements)
+migrations: list[tuple[int, str]] = [
+    (
+        1,
+        """
+        create table if not exists schema_migrations (
+          version integer primary key,
+          applied_at text not null default (datetime('now'))
+        );
+
+        create table if not exists history_jobs (
+          id text primary key,
+          site text not null,
+          item_id text,
+          canonical_url text,
+          title text,
+          author text,
+          upload_date text,
+          tags_json text not null default '[]',
+          description text,
+          duration real,
+          resolution text,
+          thumbnail_url text,
+          cover_url text,
+          view_count integer,
+          like_count integer,
+          collection text,
+          collection_id text,
+          extra_json text not null default '{}',
+          source_url text,
+          output_dir text,
+          status text not null,
+          ok integer not null default 0,
+          failed integer not null default 0,
+          error_message text,
+          created_at text not null default (datetime('now')),
+          updated_at text not null default (datetime('now')),
+          finished_at text
+        );
+
+        create index if not exists idx_history_jobs_site on history_jobs(site);
+        create index if not exists idx_history_jobs_item on history_jobs(site, item_id);
+        create index if not exists idx_history_jobs_status on history_jobs(status);
+        create index if not exists idx_history_jobs_created on history_jobs(created_at);
+        create index if not exists idx_history_jobs_url on history_jobs(canonical_url);
+
+        create table if not exists history_files (
+          id integer primary key autoincrement,
+          job_id text not null references history_jobs(id) on delete cascade,
+          file_id text,
+          site text not null,
+          item_id text,
+          canonical_url text,
+          name text,
+          path text,
+          size integer,
+          sha256 text,
+          status text not null,
+          metadata_json text not null default '{}',
+          created_at text not null default (datetime('now')),
+          updated_at text not null default (datetime('now')),
+          unique(job_id, file_id)
+        );
+
+        create index if not exists idx_history_files_site_item
+          on history_files(site, item_id);
+        create index if not exists idx_history_files_url on history_files(canonical_url);
+        create index if not exists idx_history_files_sha on history_files(sha256);
+        create index if not exists idx_history_files_status on history_files(status);
+
+        create table if not exists queue_jobs (
+          id text primary key,
+          url text not null,
+          site text,
+          title text,
+          output_dir text not null,
+          status text not null,
+          quality text,
+          part text,
+          cloudflare_bypass integer not null default 0,
+          workers integer,
+          ffmpeg text,
+          on_duplicate text not null default 'skip',
+          metadata_json text not null default '{}',
+          options_json text not null default '{}',
+          error_message text,
+          created_at text not null default (datetime('now')),
+          updated_at text not null default (datetime('now')),
+          started_at text,
+          finished_at text
+        );
+
+        create index if not exists idx_queue_jobs_status on queue_jobs(status);
+        create index if not exists idx_queue_jobs_updated on queue_jobs(updated_at);
+        """,
+    ),
+]
+
+
+def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
+    path = default_db_path(db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("pragma foreign_keys = on")
+    migrate(conn)
+    return conn
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        create table if not exists schema_migrations (
+          version integer primary key,
+          applied_at text not null default (datetime('now'))
+        )
+        """
+    )
+    applied = {
+        int(row[0])
+        for row in conn.execute("select version from schema_migrations").fetchall()
+    }
+    for version, sql in migrations:
+        if version in applied:
+            continue
+        conn.executescript(sql)
+        conn.execute(
+            "insert or ignore into schema_migrations(version) values (?)",
+            (version,),
+        )
+        conn.commit()
+
+
+def executemany(
+    conn: sqlite3.Connection,
+    sql: str,
+    rows: Iterable[tuple[object, ...]],
+) -> None:
+    conn.executemany(sql, rows)
+    conn.commit()

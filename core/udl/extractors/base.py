@@ -1,6 +1,6 @@
 """Extractor interface for all site modules.
 
-Other agents adding Iwara / Bilibili should implement `extractor`
+Other agents adding sites should implement `extractor`
 and register patterns in `udl.router`. See docs/extractor-interface.md.
 """
 
@@ -13,6 +13,7 @@ from threading import Event
 from typing import Any
 
 from udl.events import emitter
+from udl.metadata import item_metadata
 
 
 @dataclass
@@ -25,6 +26,7 @@ class extracted_file:
     size: int | None = None
     headers: dict[str, str] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
+    metadata: item_metadata | None = None
 
 
 @dataclass
@@ -36,6 +38,7 @@ class extract_result:
     files: list[extracted_file]
     kind: str = "unknown"
     meta: dict[str, Any] = field(default_factory=dict)
+    metadata: item_metadata | None = None
 
 
 class extractor(ABC):
@@ -71,6 +74,8 @@ class extractor(ABC):
         workers: int = 3,
         retries: int = 5,
         job_id: str | None = None,
+        file_dest_overrides: dict[int, Path] | None = None,
+        skip_indexes: set[int] | None = None,
     ) -> tuple[int, int]:
         """download all files from an extract_result. returns (ok, failed)."""
         from udl.download.http import download_item, download_many, download_options
@@ -83,10 +88,36 @@ class extractor(ABC):
             cancel=cancel,
         )
         items: list[download_item] = []
+        skipped = 0
         for idx, f in enumerate(result.files):
             file_id = f"{job}:{idx}"
             dest_dir = output_dir / f.relative_dir if f.relative_dir else output_dir
             dest = dest_dir / f.name
+            if file_dest_overrides and idx in file_dest_overrides:
+                dest = file_dest_overrides[idx]
+            file_meta = f.metadata or result.metadata
+            meta_payload = file_meta.to_dict(omit_empty=True) if file_meta else None
+            if skip_indexes and idx in skip_indexes:
+                skipped += 1
+                if emit:
+                    emit.file(
+                        job=job,
+                        id=file_id,
+                        name=f.name,
+                        total=f.size,
+                        path=str(dest),
+                        index=idx,
+                        metadata=meta_payload,
+                        already_downloaded=True,
+                    )
+                    emit.done(
+                        job=job,
+                        file=file_id,
+                        path=str(dest),
+                        skipped=True,
+                        already_downloaded=True,
+                    )
+                continue
             items.append(
                 download_item(
                     url=f.url,
@@ -105,6 +136,8 @@ class extractor(ABC):
                     total=f.size,
                     path=str(dest),
                     index=idx,
+                    metadata=meta_payload,
                 )
 
-        return download_many(items, opts, job_id=job, emit=emit)
+        ok, failed = download_many(items, opts, job_id=job, emit=emit)
+        return ok + skipped, failed

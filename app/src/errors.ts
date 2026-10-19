@@ -67,6 +67,8 @@ export function statusLabel(
       return "失敗";
     case "cancelled":
       return "已取消";
+    case "skipped":
+      return "已下載（略過）";
     default:
       return status;
   }

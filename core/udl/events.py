@@ -7,6 +7,8 @@ import sys
 from dataclasses import asdict, dataclass, field
 from typing import Any, TextIO
 
+from udl.metadata import metadata_schema
+
 # event type names (lowercase per project naming)
 ev_job = "job"
 ev_file = "file"
@@ -17,6 +19,7 @@ ev_error = "error"
 ev_cancel = "cancel"
 ev_resolve = "resolve"
 ev_probe = "probe"
+ev_duplicate = "duplicate"
 
 
 @dataclass
@@ -57,6 +60,8 @@ class emitter:
         title: str | None = None,
         url: str | None = None,
         files: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        already_downloaded: bool | None = None,
     ) -> None:
         payload: dict[str, Any] = {"id": id, "site": site}
         if title is not None:
@@ -65,6 +70,10 @@ class emitter:
             payload["url"] = url
         if files is not None:
             payload["files"] = files
+        if metadata is not None:
+            payload["metadata"] = metadata
+        if already_downloaded is not None:
+            payload["already_downloaded"] = already_downloaded
         self.emit(ev_job, **payload)
 
     def file(
@@ -76,6 +85,8 @@ class emitter:
         total: int | None = None,
         path: str | None = None,
         index: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        already_downloaded: bool | None = None,
     ) -> None:
         payload: dict[str, Any] = {"job": job, "id": id, "name": name}
         if total is not None:
@@ -84,6 +95,10 @@ class emitter:
             payload["path"] = path
         if index is not None:
             payload["index"] = index
+        if metadata is not None:
+            payload["metadata"] = metadata
+        if already_downloaded is not None:
+            payload["already_downloaded"] = already_downloaded
         self.emit(ev_file, **payload)
 
     def progress(
@@ -124,6 +139,35 @@ class emitter:
         """rich metadata for GUI selectors (parts / qualities)."""
         self.emit(ev_probe, **fields)
 
+    def duplicate(
+        self,
+        *,
+        job: str,
+        file: str | None = None,
+        action: str,
+        message: str | None = None,
+        path: str | None = None,
+        matched_by: str | None = None,
+        already_downloaded: bool = True,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "job": job,
+            "action": action,
+            "already_downloaded": already_downloaded,
+        }
+        if file is not None:
+            payload["file"] = file
+        if message is not None:
+            payload["message"] = message
+        if path is not None:
+            payload["path"] = path
+        if matched_by is not None:
+            payload["matched_by"] = matched_by
+        if metadata is not None:
+            payload["metadata"] = metadata
+        self.emit(ev_duplicate, **payload)
+
     def done(
         self,
         *,
@@ -132,6 +176,11 @@ class emitter:
         path: str | None = None,
         ok: int | None = None,
         failed: int | None = None,
+        skipped: bool | None = None,
+        already_downloaded: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+        sha256: str | None = None,
+        size: int | None = None,
     ) -> None:
         payload: dict[str, Any] = {"job": job}
         if file is not None:
@@ -142,6 +191,16 @@ class emitter:
             payload["ok"] = ok
         if failed is not None:
             payload["failed"] = failed
+        if skipped is not None:
+            payload["skipped"] = skipped
+        if already_downloaded is not None:
+            payload["already_downloaded"] = already_downloaded
+        if metadata is not None:
+            payload["metadata"] = metadata
+        if sha256 is not None:
+            payload["sha256"] = sha256
+        if size is not None:
+            payload["size"] = size
         self.emit(ev_done, **payload)
 
     def error(
@@ -186,8 +245,10 @@ class emitter:
 
 def dump_schema() -> dict[str, Any]:
     """return a machine-readable overview of event fields."""
+    meta = metadata_schema()
     return {
         "format": "newline-delimited JSON (JSON-lines) on stdout",
+        "metadata": meta,
         "events": {
             ev_resolve: {
                 "site": "str|null",
@@ -202,6 +263,8 @@ def dump_schema() -> dict[str, Any]:
                 "title": "str?",
                 "url": "str?",
                 "files": "int?",
+                "metadata": "object?",
+                "already_downloaded": "bool?",
             },
             ev_file: {
                 "job": "str",
@@ -210,6 +273,8 @@ def dump_schema() -> dict[str, Any]:
                 "total": "int?",
                 "path": "str?",
                 "index": "int?",
+                "metadata": "object?",
+                "already_downloaded": "bool?",
             },
             ev_progress: {
                 "job": "str",
@@ -224,6 +289,16 @@ def dump_schema() -> dict[str, Any]:
                 "path": "str?",
                 "message": "str?",
             },
+            ev_duplicate: {
+                "job": "str",
+                "file": "str?",
+                "action": "skip|overwrite|rename",
+                "already_downloaded": "bool",
+                "message": "str?",
+                "path": "str?",
+                "matched_by": "str?",
+                "metadata": "object?",
+            },
             ev_probe: {
                 "site": "str",
                 "kind": "str",
@@ -234,6 +309,7 @@ def dump_schema() -> dict[str, Any]:
                 "default_part": "int?",
                 "default_quality": "int?",
                 "message": "str?",
+                "metadata": "object?",
             },
             ev_done: {
                 "job": "str",
@@ -241,6 +317,11 @@ def dump_schema() -> dict[str, Any]:
                 "path": "str?",
                 "ok": "int?",
                 "failed": "int?",
+                "skipped": "bool?",
+                "already_downloaded": "bool?",
+                "metadata": "object?",
+                "sha256": "str?",
+                "size": "int?",
             },
             ev_error: {
                 "job": "str?",

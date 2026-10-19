@@ -20,6 +20,8 @@ jobs:
           uv run ruff check udl
           uv run udl sites
           uv run udl schema >/dev/null
+          UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl history list --json --limit 1 >/dev/null
+          UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl queue list --json --unfinished >/dev/null
 
   lint-app:
     runs-on: ubuntu-latest

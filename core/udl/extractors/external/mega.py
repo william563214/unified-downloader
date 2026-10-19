@@ -29,6 +29,7 @@ from urllib.parse import unquote, urlparse
 from udl.events import emitter
 from udl.extractors.base import extract_result, extracted_file
 from udl.extractors.external.base import external_extractor
+from udl.metadata import item_metadata
 
 # lowercase constants per project convention
 mega_tool_env = "UDL_MEGA_TOOL"
@@ -480,12 +481,22 @@ class mega_extractor(external_extractor):
         # ensure the external tool exists early so GUI/CLI get a clear event
         find_mega_tool(self.mega_tool_override)
         title = f"MEGA {info.kind} {info.handle}"
+        meta = item_metadata(
+            site=self.site,
+            item_id=info.handle,
+            canonical_url=info.url,
+            title=title,
+            collection=title if info.kind == "folder" else None,
+            collection_id=info.handle if info.kind == "folder" else None,
+            extra={"kind": info.kind, "tool": "external"},
+        )
         placeholder = extracted_file(
             url=info.url,
             name=title,
             relative_dir="",
             size=None,
             meta={"handle": info.handle, "kind": info.kind, "key": info.key},
+            metadata=meta,
         )
         return extract_result(
             site=self.site,
@@ -493,6 +504,7 @@ class mega_extractor(external_extractor):
             files=[placeholder],
             kind=info.kind,
             meta={"handle": info.handle, "tool": "external"},
+            metadata=meta,
         )
 
     def download(
@@ -505,9 +517,35 @@ class mega_extractor(external_extractor):
         workers: int = 3,
         retries: int = 5,
         job_id: str | None = None,
+        file_dest_overrides: dict[int, Path] | None = None,
+        skip_indexes: set[int] | None = None,
     ) -> tuple[int, int]:
-        del workers, retries
+        del workers, retries, file_dest_overrides
         job = job_id or result.site
+        meta_payload = (
+            result.metadata.to_dict(omit_empty=True) if result.metadata else None
+        )
+        if skip_indexes and 0 in skip_indexes:
+            dest = output_dir / (result.files[0].name if result.files else result.title)
+            if emit:
+                emit.file(
+                    job=job,
+                    id=f"{job}:0",
+                    name=result.files[0].name if result.files else result.title,
+                    path=str(dest),
+                    index=0,
+                    metadata=meta_payload,
+                    already_downloaded=True,
+                )
+                emit.done(
+                    job=job,
+                    file=f"{job}:0",
+                    path=str(dest),
+                    skipped=True,
+                    already_downloaded=True,
+                    metadata=meta_payload,
+                )
+            return 1, 0
         output_dir.mkdir(parents=True, exist_ok=True)
         tool = find_mega_tool(self.mega_tool_override)
         url = result.files[0].url if result.files else ""
@@ -541,6 +579,7 @@ class mega_extractor(external_extractor):
                         total=total,
                         path=str(dest),
                         index=idx,
+                        metadata=meta_payload,
                     )
             elif total is not None and file_totals.get(name) is None:
                 file_totals[name] = total

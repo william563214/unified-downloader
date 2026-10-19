@@ -1,4 +1,4 @@
-"""udl CLI — resolve, probe, and get with optional JSON-lines progress."""
+"""udl CLI — resolve, probe, get, history, queue with optional JSON-lines."""
 
 from __future__ import annotations
 
@@ -9,10 +9,20 @@ import sys
 import uuid
 from pathlib import Path
 from threading import Event
+from typing import Any
 
 from udl import __version__
 from udl.events import dump_schema, emitter
 from udl.router import get_extractor, resolve
+from udl.session import (
+    finalize_download,
+    metadata_payload,
+    open_store,
+    prepare_download,
+)
+from udl.store.duplicates import duplicate_mode
+from udl.store.history import delete_history, get_history, list_history
+from udl.store.queue import delete_queue_job, list_queue, load_queue_job, update_queue_status
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -21,6 +31,11 @@ def _build_parser() -> argparse.ArgumentParser:
         description="整合下載器 unified downloader core",
     )
     parser.add_argument("--version", action="version", version=f"udl {__version__}")
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="SQLite path (default: app data dir / udl.sqlite3 or UDL_DB)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_resolve = sub.add_parser("resolve", help="detect site for a URL")
@@ -107,6 +122,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="path to megatools or mega-get (default: PATH / UDL_MEGA_TOOL)",
     )
+    p_get.add_argument(
+        "--on-duplicate",
+        choices=("skip", "overwrite", "rename"),
+        default="skip",
+        help="when history/path already has this item (default: skip)",
+    )
+    p_get.add_argument(
+        "--no-history",
+        action="store_true",
+        help="do not write history / queue to SQLite",
+    )
 
     p_schema = sub.add_parser("schema", help="print JSON-lines event schema")
     p_schema.add_argument(
@@ -139,6 +165,64 @@ def _build_parser() -> argparse.ArgumentParser:
         help="install directory (default: platform app data /ffmpeg)",
     )
     p_ff_install.add_argument("--json", action="store_true")
+
+    p_history = sub.add_parser("history", help="search manage download history")
+    hist_sub = p_history.add_subparsers(dest="history_command", required=True)
+    p_hist_list = hist_sub.add_parser("list", help="list / search history entries")
+    p_hist_list.add_argument("--json", action="store_true")
+    p_hist_list.add_argument("--site", default=None)
+    p_hist_list.add_argument("--status", default=None)
+    p_hist_list.add_argument("--tag", default=None)
+    p_hist_list.add_argument("--query", "-q", default=None)
+    p_hist_list.add_argument("--from", dest="date_from", default=None)
+    p_hist_list.add_argument("--to", dest="date_to", default=None)
+    p_hist_list.add_argument("--sort", default="created_at")
+    p_hist_list.add_argument("--order", choices=("asc", "desc"), default="desc")
+    p_hist_list.add_argument("--limit", type=int, default=50)
+    p_hist_list.add_argument("--offset", type=int, default=0)
+    p_hist_list.add_argument("--no-files", action="store_true")
+
+    p_hist_show = hist_sub.add_parser("show", help="show one history job")
+    p_hist_show.add_argument("id", help="job id")
+    p_hist_show.add_argument("--json", action="store_true")
+
+    p_hist_delete = hist_sub.add_parser("delete", help="remove history entries")
+    p_hist_delete.add_argument("ids", nargs="+", help="job ids")
+    p_hist_delete.add_argument(
+        "--delete-files",
+        action="store_true",
+        help="also delete output files on disk",
+    )
+    p_hist_delete.add_argument("--json", action="store_true")
+
+    p_queue = sub.add_parser("queue", help="persistent task queue")
+    queue_sub = p_queue.add_subparsers(dest="queue_command", required=True)
+    p_q_list = queue_sub.add_parser("list", help="list queue jobs")
+    p_q_list.add_argument("--json", action="store_true")
+    p_q_list.add_argument("--status", default=None)
+    p_q_list.add_argument(
+        "--unfinished",
+        action="store_true",
+        help="only queued/running/paused jobs",
+    )
+    p_q_list.add_argument("--limit", type=int, default=200)
+
+    p_q_show = queue_sub.add_parser("show", help="show one queue job")
+    p_q_show.add_argument("id", help="job id")
+    p_q_show.add_argument("--json", action="store_true")
+
+    p_q_delete = queue_sub.add_parser("delete", help="remove queue jobs")
+    p_q_delete.add_argument("ids", nargs="+")
+    p_q_delete.add_argument("--json", action="store_true")
+
+    p_q_status = queue_sub.add_parser("set-status", help="update queue job status")
+    p_q_status.add_argument("id")
+    p_q_status.add_argument(
+        "status",
+        choices=("queued", "running", "paused", "done", "error", "cancelled", "skipped"),
+    )
+    p_q_status.add_argument("--message", default=None)
+    p_q_status.add_argument("--json", action="store_true")
 
     return parser
 
@@ -200,6 +284,9 @@ def cmd_probe(args: argparse.Namespace) -> int:
                     for f in result.files
                 ],
             }
+            meta = metadata_payload(result)
+            if meta:
+                payload["metadata"] = meta
     except Exception as exc:  # noqa: BLE001
         if args.json:
             emitter().error(message=str(exc), code="resolve_failed")
@@ -249,8 +336,12 @@ def cmd_get(args: argparse.Namespace) -> int:
 
     emit = emitter(enabled=args.json)
     job_id = args.job_id or str(uuid.uuid4())
+    on_dup: duplicate_mode = args.on_duplicate
+    conn = None if args.no_history else open_store(args.db)
 
     ext = None
+    skip_indexes: set[int] = set()
+    overrides: dict[int, Path] = {}
     try:
         if info.site == "bilibili":
             from udl.extractors.bilibili import bilibili_extractor
@@ -279,7 +370,27 @@ def cmd_get(args: argparse.Namespace) -> int:
             emit.error(job=job_id, message=str(exc), code=str(code))
         else:
             print(f"resolve failed: {exc}", file=sys.stderr)
+        if conn is not None:
+            conn.close()
         return 1
+
+    meta_dict = metadata_payload(result)
+    already_all = False
+    if conn is not None:
+        skip_indexes, overrides, already_all = prepare_download(
+            conn,
+            job_id=job_id,
+            url=args.url,
+            output_dir=out,
+            result=result,
+            on_duplicate=on_dup,
+            emit=emit if args.json else None,
+            quality=args.quality,
+            part=args.part,
+            cloudflare_bypass=bool(args.cloudflare_bypass),
+            workers=args.workers,
+            ffmpeg=args.ffmpeg,
+        )
 
     emit.job(
         id=job_id,
@@ -287,25 +398,70 @@ def cmd_get(args: argparse.Namespace) -> int:
         title=result.title,
         url=args.url,
         files=len(result.files),
+        metadata=meta_dict,
+        already_downloaded=already_all or None,
     )
     if not args.json:
         print(
             f"[{result.site}] {result.title} — {len(result.files)} file(s) → {out}",
             file=sys.stderr,
         )
+        if already_all:
+            print("already downloaded — skipping", file=sys.stderr)
 
+    ok = 0
+    failed = 0
     try:
-        ok, failed = ext.download(
-            result,
-            out,
-            emit=emit if args.json else None,
-            cancel=cancel,
-            workers=args.workers,
-            retries=args.retries,
-            job_id=job_id,
-        )
+        if already_all:
+            ok = len(result.files)
+            for idx, f in enumerate(result.files):
+                dest_dir = out / f.relative_dir if f.relative_dir else out
+                dest = overrides.get(idx, dest_dir / f.name)
+                file_meta = f.metadata or result.metadata
+                emit.file(
+                    job=job_id,
+                    id=f"{job_id}:{idx}",
+                    name=f.name,
+                    total=f.size,
+                    path=str(dest),
+                    index=idx,
+                    metadata=file_meta.to_dict(omit_empty=True) if file_meta else None,
+                    already_downloaded=True,
+                )
+                emit.done(
+                    job=job_id,
+                    file=f"{job_id}:{idx}",
+                    path=str(dest),
+                    skipped=True,
+                    already_downloaded=True,
+                )
+        else:
+            ok, failed = ext.download(
+                result,
+                out,
+                emit=emit if args.json else None,
+                cancel=cancel,
+                workers=args.workers,
+                retries=args.retries,
+                job_id=job_id,
+                file_dest_overrides=overrides or None,
+                skip_indexes=skip_indexes or None,
+            )
     except InterruptedError:
         emit.cancel(job=job_id)
+        if conn is not None:
+            finalize_download(
+                conn,
+                job_id=job_id,
+                result=result,
+                output_dir=out,
+                ok=ok,
+                failed=failed,
+                cancelled=True,
+                skip_indexes=skip_indexes,
+                file_dest_overrides=overrides,
+            )
+            conn.close()
         return 130
     except Exception as exc:  # noqa: BLE001
         code = getattr(exc, "code", None) or "download_failed"
@@ -313,13 +469,47 @@ def cmd_get(args: argparse.Namespace) -> int:
             emit.error(job=job_id, message=str(exc), code=str(code))
         else:
             print(f"download failed: {exc}", file=sys.stderr)
+        if conn is not None:
+            finalize_download(
+                conn,
+                job_id=job_id,
+                result=result,
+                output_dir=out,
+                ok=ok,
+                failed=max(failed, 1),
+                error_message=str(exc),
+                skip_indexes=skip_indexes,
+                file_dest_overrides=overrides,
+            )
+            conn.close()
         return 1
     finally:
         close = getattr(ext, "close", None)
         if callable(close):
             close()
 
-    emit.done(job=job_id, path=str(out.resolve()), ok=ok, failed=failed)
+    if conn is not None:
+        finalize_download(
+            conn,
+            job_id=job_id,
+            result=result,
+            output_dir=out,
+            ok=ok,
+            failed=failed,
+            cancelled=cancel.is_set(),
+            skip_indexes=skip_indexes,
+            file_dest_overrides=overrides,
+        )
+        conn.close()
+
+    emit.done(
+        job=job_id,
+        path=str(out.resolve()),
+        ok=ok,
+        failed=failed,
+        already_downloaded=already_all or None,
+        metadata=meta_dict,
+    )
     if not args.json:
         print(f"done: ok={ok} failed={failed}", file=sys.stderr)
 
@@ -420,6 +610,111 @@ def cmd_ffmpeg(args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_history(args: argparse.Namespace) -> int:
+    conn = open_store(args.db)
+    try:
+        if args.history_command == "list":
+            rows = list_history(
+                conn,
+                site=args.site,
+                status=args.status,
+                tag=args.tag,
+                date_from=args.date_from,
+                date_to=args.date_to,
+                query=args.query,
+                sort=args.sort,
+                order=args.order,
+                limit=args.limit,
+                offset=args.offset,
+                include_files=not args.no_files,
+            )
+            payload = [r.to_dict() for r in rows]
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False))
+            else:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+        if args.history_command == "show":
+            entry = get_history(conn, args.id)
+            if entry is None:
+                print(json.dumps({"error": "not found", "id": args.id}))
+                return 1
+            payload = entry.to_dict()
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False))
+            else:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+        if args.history_command == "delete":
+            result = delete_history(
+                conn,
+                list(args.ids),
+                delete_files=bool(args.delete_files),
+            )
+            if args.json:
+                print(json.dumps(result, ensure_ascii=False))
+            else:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+    finally:
+        conn.close()
+    return 2
+
+
+def cmd_queue(args: argparse.Namespace) -> int:
+    conn = open_store(args.db)
+    try:
+        if args.queue_command == "list":
+            rows = list_queue(
+                conn,
+                status=args.status,
+                unfinished_only=bool(args.unfinished),
+                limit=args.limit,
+            )
+            payload = [r.to_dict() for r in rows]
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False))
+            else:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+        if args.queue_command == "show":
+            job = load_queue_job(conn, args.id)
+            if job is None:
+                print(json.dumps({"error": "not found", "id": args.id}))
+                return 1
+            payload = job.to_dict()
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False))
+            else:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+        if args.queue_command == "delete":
+            removed = delete_queue_job(conn, list(args.ids))
+            payload: dict[str, Any] = {"removed": removed}
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False))
+            else:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+        if args.queue_command == "set-status":
+            update_queue_status(
+                conn,
+                args.id,
+                args.status,
+                error_message=args.message,
+            )
+            job = load_queue_job(conn, args.id)
+            payload = job.to_dict() if job else {"id": args.id, "status": args.status}
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False))
+            else:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+    finally:
+        conn.close()
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -435,6 +730,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_sites(args)
     if args.command == "ffmpeg":
         return cmd_ffmpeg(args)
+    if args.command == "history":
+        return cmd_history(args)
+    if args.command == "queue":
+        return cmd_queue(args)
     parser.error(f"unknown command {args.command}")
     return 2
 

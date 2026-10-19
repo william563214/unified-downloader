@@ -47,7 +47,8 @@ class my_extractor(extractor):
 | `relative_dir` | 相對輸出目錄的子路徑（相簿名等） |
 | `size` | 已知大小（位元組），未知則 `None` |
 | `headers` | 額外 request headers（例如 Bunkr Referer） |
-| `meta` | 自由 metadata，不進事件協定 |
+| `meta` | 實作細節（不進通用歷史篩選） |
+| `metadata` | 統一 `item_metadata`（見 `docs/metadata.md`） |
 
 ### `extract_result` 欄位
 
@@ -57,7 +58,10 @@ class my_extractor(extractor):
 | `title` | 任務標題（相簿／影片名） |
 | `files` | 非空列表 |
 | `kind` | 例如 `album` / `file` / `video` / `bangumi` |
-| `meta` | 自由 metadata |
+| `meta` | 實作細節 |
+| `metadata` | 整個 job 的統一 `item_metadata` |
+
+`download()` 可接受 `skip_indexes`／`file_dest_overrides`（去重 skip／rename）；覆寫時請一併支援。
 
 ## 槽位現況
 
