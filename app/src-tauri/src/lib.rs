@@ -1571,6 +1571,82 @@ async fn iwara_section_fetch(
     run_udl_json(&app, args).await
 }
 
+#[tauri::command]
+async fn iwara_login(
+    app: AppHandle,
+    email: String,
+    password: String,
+    cloudflare_bypass: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "iwara".into(),
+        "login".into(),
+        "--json".into(),
+        "--email".into(),
+        email,
+        "--password".into(),
+        password,
+    ];
+    if cloudflare_bypass.unwrap_or(false) {
+        args.push("--cloudflare-bypass".into());
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn iwara_logout(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec!["iwara".into(), "logout".into(), "--json".into()],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn iwara_whoami(
+    app: AppHandle,
+    cloudflare_bypass: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec!["iwara".into(), "whoami".into(), "--json".into()];
+    if cloudflare_bypass.unwrap_or(false) {
+        args.push("--cloudflare-bypass".into());
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn iwara_import_following(
+    app: AppHandle,
+    cloudflare_bypass: Option<bool>,
+    max_pages: Option<u32>,
+    sync: Option<bool>,
+    output: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let settings = load_settings_file(&app);
+    let mut args = vec![
+        "iwara".into(),
+        "import-following".into(),
+        "--json".into(),
+        "--max-pages".into(),
+        max_pages.unwrap_or(100).to_string(),
+    ];
+    if cloudflare_bypass.unwrap_or(settings.iwara_cloudflare_bypass) {
+        args.push("--cloudflare-bypass".into());
+    }
+    if sync.unwrap_or(false) {
+        args.push("--sync".into());
+        let out = output
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| settings.download_dir.clone());
+        if out.trim().is_empty() {
+            return Err("請先設定下載目錄再同步".into());
+        }
+        args.push("-o".into());
+        args.push(out);
+    }
+    run_udl_json(&app, args).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1614,7 +1690,11 @@ pub fn run() {
             iwara_sections,
             iwara_section_add,
             iwara_section_remove,
-            iwara_section_fetch
+            iwara_section_fetch,
+            iwara_login,
+            iwara_logout,
+            iwara_whoami,
+            iwara_import_following
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

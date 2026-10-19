@@ -288,7 +288,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_get.add_argument(
         "--token",
         default=None,
-        help="optional Iwara Bearer token (in-memory only not stored)",
+        help="optional Iwara Bearer override (else use keychain session)",
     )
     p_get.add_argument(
         "--mega-tool",

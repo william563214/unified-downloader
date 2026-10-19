@@ -23,6 +23,7 @@ import {
   site_ids,
 } from "./settings";
 import BilibiliParse from "./BilibiliParse";
+import { AccountSection } from "./iwara/AccountSection";
 import { BrowsePage } from "./iwara/BrowsePage";
 import { HomePage } from "./iwara/HomePage";
 import { SubscriptionsPage } from "./iwara/SubscriptionsPage";
@@ -1710,6 +1711,9 @@ export default function App() {
               />
               <span>Cloudflare 繞過（選用，預設關閉）</span>
             </label>
+            <AccountSection
+              cloudflareBypass={Boolean(settingsDraft.iwaraCloudflareBypass)}
+            />
           </div>
 
           <div className="settings-block">
