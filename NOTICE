@@ -51,13 +51,16 @@ upstream copyright and were adapted under compatible licenses.
   patterns adapted from upstream (`util/parse/parser/*`,
   `util/parse/additional/*`, `util/ffmpeg`). Qt UI was not ported.
   No paywall, VIP-only, or region-lock bypass — only streams the
-  current session is entitled to. Account-only lists (watch-later,
-  history, followed bangumi, subscribed collections) raise
-  `requires_login` until a follow-up PR adds QR/SMS/Cookie via
-  `udl.secrets`. Session cookies can be injected with
-  `set_session_cookies` / `--sessdata`. Upstream README also states
-  a non-commercial usage agreement; GPL itself does not forbid
-  commercial use — both are documented here.
+  current session is entitled to. v0.7-B adds QR / Cookie login
+  (SMS best-effort; GeeTest needs a browser) via `udl.secrets`
+  key `bilibili.session`, account-only lists (watch-later, history,
+  followed bangumi, subscribed collections, own favorite folders),
+  and CDN host preference / custom Host from `udl.network`.
+  Auth patterns adapted from upstream `util/auth/*` and CDN from
+  `util/network/cdn.py` without the Qt UI. Session cookies can also
+  be injected with `set_session_cookies` / `--sessdata`. Upstream
+  README also states a non-commercial usage agreement; GPL itself
+  does not forbid commercial use — both are documented here.
 
 ## External tools (subprocess only — not linked / not imported)
 

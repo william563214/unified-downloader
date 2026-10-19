@@ -914,3 +914,74 @@ button.compact {
     gap: 4px;
   }
 }
+
+.bilibili-account {
+  display: grid;
+  gap: 1rem;
+}
+
+.bilibili-account .account-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.bilibili-account .account-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--paper-2);
+}
+
+.bilibili-account .account-avatar.placeholder {
+  border: 1px dashed var(--line);
+}
+
+.bilibili-account .account-name {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+}
+
+.bilibili-account .tabs button.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.bilibili-account .login-block {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 420px;
+}
+
+.bilibili-account .qr-image {
+  width: 180px;
+  height: 180px;
+  image-rendering: pixelated;
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 8px;
+}
+
+.bilibili-account textarea {
+  width: 100%;
+  font-family: ui-monospace, "IBM Plex Mono", monospace;
+  font-size: 0.85rem;
+}
+
+.bilibili-account .warn {
+  color: var(--accent-2);
+}
+
+.bilibili-account .row.gap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+button.danger {
+  background: color-mix(in srgb, var(--danger) 12%, white);
+  border-color: color-mix(in srgb, var(--danger) 40%, white);
+  color: var(--danger);
+}

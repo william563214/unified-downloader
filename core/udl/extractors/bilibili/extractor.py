@@ -1,8 +1,8 @@
-"""Bilibili extractor — v0.7-A parity subset (no login).
+"""Bilibili extractor — v0.7 parity with Bili23-Downloader (GPL-3.0).
 
-Ported / adapted from ScottSloan/Bili23-Downloader (GPL-3.0).
-Decoupled from Qt. No paywall, VIP-only, or region-lock bypass.
-QR/cookie login is stubbed — see login.py / set_session_cookies.
+Decoupled from Qt. No paywall VIP-only or region-lock bypass —
+only streams the current session is entitled to. Login via login.py
+and udl.secrets (bilibili.session).
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from udl.download.http import (
 )
 from udl.events import emitter
 from udl.extractors.base import extract_result, extracted_file, extractor
+from udl.extractors.bilibili.cdn import candidate_urls, get_netloc, host_health, stream_headers
 from udl.extractors.bilibili.chapters import (
     to_ffmetadata,
     view_points_from_player,
@@ -39,7 +40,7 @@ from udl.extractors.bilibili.ids import (
     split_batch_urls,
     url_target,
 )
-from udl.extractors.bilibili.login import login_stub_note, requires_login
+from udl.extractors.bilibili.login import login_note, requires_login, session_cookies_from_store
 from udl.extractors.bilibili.options import bili_options
 from udl.extractors.bilibili.quality import (
     available_audio_qualities,
@@ -73,7 +74,19 @@ blocked_badges = frozenset(
 )
 
 list_kinds = frozenset(
-    {"space", "favlist", "popular", "collection", "series", "audio_menu"}
+    {
+        "space",
+        "favlist",
+        "popular",
+        "collection",
+        "series",
+        "audio_menu",
+        "watchlater",
+        "history",
+        "followed_bangumi",
+        "subscribed_collections",
+        "favorite_folders",
+    }
 )
 
 
@@ -197,7 +210,10 @@ class bilibili_extractor(extractor):
 
     def _cli(self) -> bilibili_client:
         if self._client is None:
-            self._client = bilibili_client(cookies=self.options.cookies)
+            cookies = self.options.cookies
+            if not cookies:
+                cookies = session_cookies_from_store()
+            self._client = bilibili_client(cookies=cookies)
             self._own_client = True
         elif self.options.cookies:
             self._client.set_session_cookies(self.options.cookies)
@@ -300,10 +316,11 @@ class bilibili_extractor(extractor):
                 "audio_qualities": probe.audio_qualities,
                 "default_part": probe.default_part,
                 "default_quality": probe.default_quality,
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "source_url": probe.url,
                 "naming_template": probe.naming_template,
                 "options": self.options.to_dict(),
+                "logged_in": bool(self._cli().has_session),
             },
             metadata=job_meta,
         )
@@ -312,7 +329,7 @@ class bilibili_extractor(extractor):
         cli = self._cli()
         cli.bootstrap()
         target, final_url = self._resolve_target(url)
-        if target.kind in login_kinds:
+        if target.kind in login_kinds and not cli.has_session:
             raise requires_login(target.kind)
         dispatch = {
             "video": self._probe_video,
@@ -325,6 +342,11 @@ class bilibili_extractor(extractor):
             "popular": self._probe_popular,
             "collection": self._probe_collection,
             "series": self._probe_series,
+            "watchlater": self._probe_watchlater,
+            "history": self._probe_history,
+            "followed_bangumi": self._probe_followed_bangumi,
+            "subscribed_collections": self._probe_subscribed_collections,
+            "favorite_folders": self._probe_favorite_folders,
         }
         handler = dispatch.get(target.kind)
         if handler is None:
@@ -579,7 +601,7 @@ class bilibili_extractor(extractor):
             default_part=default_part,
             default_quality=default_quality,
             meta={
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "aid": data.get("aid"),
                 "bvid": bvid,
                 "url_pinned_part": pinned is not None,
@@ -676,7 +698,7 @@ class bilibili_extractor(extractor):
             default_quality=qualities[0]["qn"] if qualities else None,
             message=f"interactive video — {len(parts)} graph nodes",
             meta={
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "bvid": bvid,
                 "graph_version": graph_version,
                 "author": owner.get("name"),
@@ -862,7 +884,7 @@ class bilibili_extractor(extractor):
             default_quality=default_quality,
             message=message,
             meta={
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "season_id": season_id,
                 "url_pinned_part": target.ep_id is not None,
                 "cover": cover,
@@ -965,7 +987,7 @@ class bilibili_extractor(extractor):
             default_quality=default_quality,
             message=message,
             meta={
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "season_id": data.get("season_id"),
                 "url_pinned_part": target.ep_id is not None,
                 "metadata": metadata.to_dict(omit_empty=True),
@@ -1017,7 +1039,7 @@ class bilibili_extractor(extractor):
             default_part=1,
             default_quality=None,
             meta={
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "author": author,
                 "metadata": metadata.to_dict(omit_empty=True),
             },
@@ -1077,7 +1099,7 @@ class bilibili_extractor(extractor):
             default_part=1,
             default_quality=None,
             meta={
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "metadata": metadata.to_dict(omit_empty=True),
             },
         )
@@ -1133,7 +1155,7 @@ class bilibili_extractor(extractor):
                 "current_page": pn,
             },
             meta={
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "mid": mid,
                 "keyword": keyword,
                 "author": uname,
@@ -1201,12 +1223,252 @@ class bilibili_extractor(extractor):
                 "current_page": self.options.page_num,
             },
             meta={
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "fid": fid,
                 "keyword": keyword,
                 "server_search": True,
                 "metadata": metadata.to_dict(omit_empty=True),
             },
+        )
+
+    def _probe_watchlater(
+        self,
+        cli: bilibili_client,
+        target: url_target,
+        final_url: str,
+    ) -> probe_info:
+        keyword = target.keyword or ""
+        data = cli.watchlater(pn=self.options.page_num, keyword=keyword)
+        lst = data.get("list") or []
+        parts: list[part_info] = []
+        for i, v in enumerate(lst, start=1):
+            if not isinstance(v, dict):
+                continue
+            bvid = str(v.get("bvid") or "")
+            if not bvid:
+                continue
+            parts.append(
+                part_info(
+                    page=i,
+                    cid=int(v.get("cid") or 0),
+                    title=str(v.get("title") or bvid),
+                    bvid=bvid,
+                    aid=int(v["aid"]) if v.get("aid") is not None else None,
+                    duration=_int_or_none(v.get("duration")),
+                    needs_expand=not v.get("cid"),
+                    kind="video",
+                )
+            )
+        total = int(data.get("count") or len(parts))
+        ps = 20
+        return probe_info(
+            site=self.site,
+            kind="watchlater",
+            title="稍後再看",
+            url=final_url,
+            parts=[_part_dict(p) for p in parts],
+            qualities=[],
+            default_part=1,
+            default_quality=None,
+            message="watch-later list" + (f" keyword={keyword}" if keyword else ""),
+            pagination={
+                "total_pages": max(1, (total + ps - 1) // ps),
+                "total_items": total,
+                "current_page": self.options.page_num,
+            },
+            meta={
+                "login_note": login_note,
+                "keyword": keyword,
+                "server_search": True,
+            },
+        )
+
+    def _probe_history(
+        self,
+        cli: bilibili_client,
+        target: url_target,
+        final_url: str,
+    ) -> probe_info:
+        keyword = target.keyword or ""
+        data = cli.history(pn=self.options.page_num, keyword=keyword)
+        lst = data.get("list") or []
+        parts: list[part_info] = []
+        for i, v in enumerate(lst, start=1):
+            if not isinstance(v, dict):
+                continue
+            history = v.get("history") or {}
+            bvid = str(history.get("bvid") or v.get("bvid") or "")
+            if not bvid:
+                continue
+            parts.append(
+                part_info(
+                    page=i,
+                    cid=int(history.get("cid") or 0),
+                    title=str(v.get("title") or bvid),
+                    bvid=bvid,
+                    aid=int(history["oid"]) if history.get("oid") is not None else None,
+                    duration=_int_or_none(v.get("duration")),
+                    needs_expand=not history.get("cid"),
+                    kind="video",
+                )
+            )
+        page = data.get("page") or {}
+        total = int(page.get("total") or len(parts))
+        ps = int(page.get("ps") or 20)
+        return probe_info(
+            site=self.site,
+            kind="history",
+            title="觀看歷史",
+            url=final_url,
+            parts=[_part_dict(p) for p in parts],
+            qualities=[],
+            default_part=1,
+            default_quality=None,
+            message="history list" + (f" keyword={keyword}" if keyword else ""),
+            pagination={
+                "total_pages": max(1, (total + ps - 1) // ps),
+                "total_items": total,
+                "current_page": self.options.page_num,
+            },
+            meta={
+                "login_note": login_note,
+                "keyword": keyword,
+                "server_search": True,
+            },
+        )
+
+    def _probe_followed_bangumi(
+        self,
+        cli: bilibili_client,
+        target: url_target,
+        final_url: str,
+    ) -> probe_info:
+        data = cli.followed_bangumi(pn=self.options.page_num)
+        lst = data.get("list") or []
+        parts: list[part_info] = []
+        for i, entry in enumerate(lst, start=1):
+            if not isinstance(entry, dict):
+                continue
+            season_id = entry.get("season_id")
+            if season_id is None:
+                continue
+            title = str(entry.get("title") or f"ss{season_id}")
+            parts.append(
+                part_info(
+                    page=i,
+                    cid=0,
+                    title=title,
+                    bvid="",
+                    ep_id=None,
+                    needs_expand=True,
+                    kind="bangumi",
+                )
+            )
+            parts[-1].aid = int(season_id)
+        total = int(data.get("total") or len(parts))
+        return probe_info(
+            site=self.site,
+            kind="followed_bangumi",
+            title="追番／追劇",
+            url=final_url,
+            parts=[_part_dict(p) for p in parts],
+            qualities=[],
+            default_part=1,
+            default_quality=None,
+            message="followed bangumi — expand each season on download",
+            pagination={
+                "total_pages": max(1, (total + 23) // 24),
+                "total_items": total,
+                "current_page": self.options.page_num,
+            },
+            meta={"login_note": login_note, "seasons": True},
+        )
+
+    def _probe_subscribed_collections(
+        self,
+        cli: bilibili_client,
+        target: url_target,
+        final_url: str,
+    ) -> probe_info:
+        data = cli.subscribed_collections(pn=self.options.page_num)
+        lst = data.get("list") or []
+        parts: list[part_info] = []
+        for i, entry in enumerate(lst, start=1):
+            if not isinstance(entry, dict):
+                continue
+            collection_id = entry.get("id")
+            mid = entry.get("mid")
+            title = str(entry.get("title") or collection_id or f"item{i}")
+            parts.append(
+                part_info(
+                    page=i,
+                    cid=0,
+                    title=title,
+                    bvid="",
+                    aid=int(collection_id) if collection_id is not None else None,
+                    needs_expand=True,
+                    kind="collection",
+                )
+            )
+            # stash mid in edge_id unused field for expand helpers
+            if mid is not None:
+                parts[-1].edge_id = int(mid)
+        total = int(data.get("count") or data.get("total") or len(parts))
+        return probe_info(
+            site=self.site,
+            kind="subscribed_collections",
+            title="訂閱合集",
+            url=final_url,
+            parts=[_part_dict(p) for p in parts],
+            qualities=[],
+            default_part=1,
+            default_quality=None,
+            message="subscribed collections — expand on download",
+            pagination={
+                "total_pages": max(1, (total + 49) // 50),
+                "total_items": total,
+                "current_page": self.options.page_num,
+            },
+            meta={"login_note": login_note},
+        )
+
+    def _probe_favorite_folders(
+        self,
+        cli: bilibili_client,
+        target: url_target,
+        final_url: str,
+    ) -> probe_info:
+        data = cli.favorite_folders()
+        lst = data.get("list") or []
+        parts: list[part_info] = []
+        for i, entry in enumerate(lst, start=1):
+            if not isinstance(entry, dict):
+                continue
+            fid = entry.get("id")
+            title = str(entry.get("title") or f"ml{fid}")
+            count = int(entry.get("media_count") or 0)
+            parts.append(
+                part_info(
+                    page=i,
+                    cid=0,
+                    title=f"{title} ({count})",
+                    bvid="",
+                    aid=int(fid) if fid is not None else None,
+                    needs_expand=True,
+                    kind="favlist",
+                )
+            )
+        return probe_info(
+            site=self.site,
+            kind="favorite_folders",
+            title="我的收藏夾",
+            url=final_url,
+            parts=[_part_dict(p) for p in parts],
+            qualities=[],
+            default_part=1,
+            default_quality=None,
+            message="own favorite folders — open each fid as favlist",
+            meta={"login_note": login_note, "folders": True},
         )
 
     def _probe_popular(
@@ -1255,7 +1517,7 @@ class bilibili_extractor(extractor):
             default_part=1,
             default_quality=None,
             meta={
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "weekly_number": config.get("number"),
                 "metadata": metadata.to_dict(omit_empty=True),
             },
@@ -1323,7 +1585,7 @@ class bilibili_extractor(extractor):
                 "current_page": self.options.page_num,
             },
             meta={
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "mid": mid,
                 "season_id": season_id,
                 "metadata": metadata.to_dict(omit_empty=True),
@@ -1397,7 +1659,7 @@ class bilibili_extractor(extractor):
                 "current_page": self.options.page_num,
             },
             meta={
-                "login_stub": login_stub_note,
+                "login_note": login_note,
                 "mid": mid,
                 "series_id": series_id,
                 "metadata": metadata.to_dict(omit_empty=True),
@@ -1425,7 +1687,7 @@ class bilibili_extractor(extractor):
             cover_url=_str_or_none(meta.get("cover_url") or meta.get("cover")),
             view_count=_int_or_none(meta.get("view_count") or meta.get("view")),
             like_count=_int_or_none(meta.get("like_count") or meta.get("like")),
-            extra={"kind": probe.kind, "login_stub": login_stub_note},
+            extra={"kind": probe.kind, "login_note": login_note},
         )
 
     def _download_one(
@@ -1500,7 +1762,7 @@ class bilibili_extractor(extractor):
                 dest=dest,
                 file_id=file_id,
                 name=f.name,
-                headers={"Referer": "https://www.bilibili.com/"},
+                headers=stream_headers(),
             )
             path = download_file(item, opts, job_id=job_id, emit=emit)
             self._write_extras(cli, meta, dest=path, emit=emit, job_id=job_id, file_id=file_id)
@@ -1510,10 +1772,12 @@ class bilibili_extractor(extractor):
             dash, quality=qn_int, codecid=codec_int
         )
         audio_stream = pick_audio_stream(dash, audio_quality=audio_int)
-        v_urls = stream_urls(video_stream)
+        v_urls = candidate_urls(stream_urls(video_stream))
         if not v_urls:
             raise RuntimeError("DASH video entry has no URL")
-        a_urls = stream_urls(audio_stream) if audio_stream else []
+        a_urls = (
+            candidate_urls(stream_urls(audio_stream)) if audio_stream else []
+        )
 
         work = dest.parent / f".udl-bili-{file_id.replace(':', '_')}"
         work.mkdir(parents=True, exist_ok=True)
@@ -1521,6 +1785,7 @@ class bilibili_extractor(extractor):
         audio_part = work / "audio.m4s" if a_urls else None
         chapters_path: Path | None = None
         embed_subs: list[tuple[Path, str | None]] = []
+        media_headers = stream_headers()
 
         try:
             self._download_with_fallbacks(
@@ -1531,6 +1796,7 @@ class bilibili_extractor(extractor):
                 opts=opts,
                 job_id=job_id,
                 emit=emit,
+                headers=media_headers,
             )
             if audio_part is not None and a_urls:
                 self._download_with_fallbacks(
@@ -1541,6 +1807,7 @@ class bilibili_extractor(extractor):
                     opts=opts,
                     job_id=job_id,
                     emit=emit,
+                    headers=media_headers,
                 )
             else:
                 audio_part = None
@@ -1651,19 +1918,23 @@ class bilibili_extractor(extractor):
         if dest.suffix.lower() not in {".m4a", ".mp3", ".flac"}:
             dest = dest.with_suffix(".m4a")
         last: Exception | None = None
-        for url in cdns:
+        headers = stream_headers()
+        for url in candidate_urls([str(u) for u in cdns if u]):
             try:
                 item = download_item(
                     url=str(url),
                     dest=dest,
                     file_id=file_id,
                     name=dest.name,
-                    headers={"Referer": "https://www.bilibili.com/"},
+                    headers=headers,
                 )
-                return download_file(item, opts, job_id=job_id, emit=emit)
+                path = download_file(item, opts, job_id=job_id, emit=emit)
+                host_health.report_success(get_netloc(str(url)))
+                return path
             except InterruptedError:
                 raise
             except Exception as exc:  # noqa: BLE001
+                host_health.report_failure(get_netloc(str(url)))
                 last = exc
         raise RuntimeError(f"audio download failed: {last}")
 
@@ -1764,8 +2035,10 @@ class bilibili_extractor(extractor):
         opts: download_options,
         job_id: str,
         emit: emitter | None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         last: Exception | None = None
+        hdrs = headers or stream_headers()
         for url in urls:
             try:
                 item = download_item(
@@ -1773,13 +2046,15 @@ class bilibili_extractor(extractor):
                     dest=dest,
                     file_id=file_id,
                     name=name,
-                    headers={"Referer": "https://www.bilibili.com/"},
+                    headers=hdrs,
                 )
                 download_file(item, opts, job_id=job_id, emit=emit)
+                host_health.report_success(get_netloc(url))
                 return
             except InterruptedError:
                 raise
             except Exception as exc:  # noqa: BLE001
+                host_health.report_failure(get_netloc(url))
                 last = exc
                 if dest.exists():
                     dest.unlink(missing_ok=True)

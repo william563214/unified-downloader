@@ -22,6 +22,7 @@ import {
   history_cover_path,
   site_ids,
 } from "./settings";
+import BilibiliAccount from "./BilibiliAccount";
 import BilibiliParse from "./BilibiliParse";
 import { AccountSection } from "./iwara/AccountSection";
 import { BrowsePage } from "./iwara/BrowsePage";
@@ -122,7 +123,16 @@ type UdlEventPayload = {
   line: Record<string, unknown>;
 };
 
-type Page = "download" | "bilibili" | "history" | "repair" | "settings" | "iwara" | "iwara-subs" | "iwara-home";
+type Page =
+  | "download"
+  | "bilibili"
+  | "account"
+  | "history"
+  | "repair"
+  | "settings"
+  | "iwara"
+  | "iwara-subs"
+  | "iwara-home";
 
 function formatBytes(n?: number): string {
   if (n == null || Number.isNaN(n)) return "—";
@@ -1123,6 +1133,13 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={page === "account" ? "nav active" : "nav"}
+            onClick={() => setPage("account")}
+          >
+            帳號
+          </button>
+          <button
+            type="button"
             className={page === "iwara" ? "nav active" : "nav"}
             onClick={() => setPage("iwara")}
           >
@@ -1201,6 +1218,8 @@ export default function App() {
           output={output || settings.downloadDir}
           onEnqueue={enqueueFromBilibiliParse}
         />
+      ) : page === "account" ? (
+        <BilibiliAccount />
       ) : page === "iwara" ? (
         <BrowsePage
           downloadDir={settings.downloadDir}
@@ -2263,6 +2282,51 @@ export default function App() {
                 </label>
               </div>
             )}
+            <h4>Bilibili CDN／Host</h4>
+            <p className="hint">
+              偏好 CDN 節點會改寫 playurl 主機名並依健康度排序；自訂 Host 僅加在媒體下載請求。不繞過區域鎖。
+            </p>
+            <label className="field">
+              <span>偏好 CDN 主機（逗號分隔）</span>
+              <input
+                value={settingsDraft.cdnHosts}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({ ...s, cdnHosts: e.target.value }));
+                  setSettingsDirty(true);
+                }}
+                placeholder="upos-sz-mirrorcos.bilivideo.com,upos-sz-mirrorhw.bilivideo.com"
+                spellCheck={false}
+              />
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.preferCdn}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    preferCdn: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>優先使用偏好 CDN（否則原始 playurl 在前）</span>
+            </label>
+            <label className="field compact">
+              <span>自訂 Host 標頭（選用）</span>
+              <input
+                value={settingsDraft.customHost}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    customHost: e.target.value,
+                  }));
+                  setSettingsDirty(true);
+                }}
+                placeholder="通常留空"
+                spellCheck={false}
+              />
+            </label>
           </div>
 
 

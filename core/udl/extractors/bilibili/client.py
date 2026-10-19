@@ -1,11 +1,7 @@
-"""Anonymous Bilibili HTTP client (no VIP/paywall/region bypass).
+"""Bilibili HTTP client (no VIP/paywall/region bypass).
 
-Session cookies can be injected later via set_session_cookies once
-udl.secrets lands — this PR stays anonymous by default.
-
-TODO(cdn/host): custom CDN node preference and Host header belong with
-PR #6 networking (UA/proxy/aria2). Defer until that merges to avoid
-colliding User-Agent / session wiring — see docs/bilibili.md.
+Session cookies load from udl.secrets (bilibili.session) or set_session_cookies.
+UA / proxy via udl.network; CDN host preference via udl.extractors.bilibili.cdn.
 """
 
 from __future__ import annotations
@@ -18,7 +14,7 @@ import requests
 from requests import Response, Session
 
 from udl.download.http import default_timeout
-from udl.extractors.bilibili.login import requires_login
+from udl.extractors.bilibili.login import requires_login, session_cookies_from_store
 from udl.extractors.bilibili.wbi import enc_wbi, store_wbi_keys
 from udl.network import active_network, apply_to_session, default_user_agent
 
@@ -92,27 +88,46 @@ class bilibili_client:
         self.session.headers["User-Agent"] = ua
         self._bootstrapped = False
         self._logged_in = False
+        self._mid: int | None = None
         if cookies:
             self.set_session_cookies(cookies)
+        elif cookies is None:
+            stored = session_cookies_from_store()
+            if stored:
+                self.set_session_cookies(stored)
 
     def set_session_cookies(self, cookies: dict[str, str]) -> None:
-        """inject session cookies (SESSDATA / bili_jct / DedeUserID…).
-
-        Designed for a later PR that loads credentials from udl.secrets.
-        """
+        """inject session cookies (SESSDATA / bili_jct / DedeUserID…)."""
         for name, value in cookies.items():
             if value:
                 self.session.cookies.set(str(name), str(value), domain=".bilibili.com")
         if cookies.get("SESSDATA"):
             self._logged_in = True
+        mid = cookies.get("DedeUserID")
+        if mid and str(mid).isdigit():
+            self._mid = int(mid)
 
     def set_user_agent(self, user_agent: str) -> None:
-        """update UA — preferred path after PR #6 network settings merge."""
+        """update UA from networking settings / CLI."""
         self.session.headers["User-Agent"] = user_agent
 
     @property
     def has_session(self) -> bool:
         return self._logged_in or bool(self.session.cookies.get("SESSDATA"))
+
+    @property
+    def mid(self) -> int | None:
+        if self._mid is not None:
+            return self._mid
+        raw = self.session.cookies.get("DedeUserID")
+        if raw and str(raw).isdigit():
+            self._mid = int(raw)
+            return self._mid
+        return None
+
+    def require_session(self, kind: str) -> None:
+        if not self.has_session:
+            raise requires_login(kind)
 
     def close(self) -> None:
         if self._own_session:
@@ -157,6 +172,9 @@ class bilibili_client:
             )
         if data.get("isLogin"):
             self._logged_in = True
+            mid = data.get("mid")
+            if mid is not None:
+                self._mid = int(mid)
 
     def resolve_short_link(self, url: str) -> str:
         """follow b23.tv / bili2233.cn redirects to the final URL."""
@@ -550,22 +568,133 @@ class bilibili_client:
             raise bilibili_api_error("audio playurl missing data")
         return data
 
-    # --- account-only stubs (login PR) ---
+    # --- account-only lists (require SESSDATA) ---
 
-    def watchlater(self, **_kwargs: Any) -> dict[str, Any]:
-        raise requires_login("watchlater")
+    def watchlater(
+        self,
+        *,
+        pn: int = 1,
+        ps: int = 20,
+        keyword: str = "",
+    ) -> dict[str, Any]:
+        self.require_session("watchlater")
+        self.bootstrap()
+        params: dict[str, object] = {
+            "pn": pn,
+            "ps": ps,
+            "viewed": 0,
+            "key": keyword or "",
+            "asc": False,
+            "need_split": True,
+            "web_location": "333.881",
+        }
+        query = enc_wbi(params)
+        payload = self._get_json(
+            f"{api_base}/x/v2/history/toview/web?{query}"
+        )
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("watchlater missing data")
+        return data
 
-    def history(self, **_kwargs: Any) -> dict[str, Any]:
-        raise requires_login("history")
+    def history(
+        self,
+        *,
+        pn: int = 1,
+        keyword: str = "",
+    ) -> dict[str, Any]:
+        self.require_session("history")
+        self.bootstrap()
+        params = {
+            "pn": pn,
+            "keyword": keyword or "",
+            "business": "archive",
+            "add_time_start": 0,
+            "add_time_end": 0,
+            "arc_max_duration": 0,
+            "arc_min_duration": 0,
+            "device_type": 0,
+            "web_location": "333.1391",
+        }
+        payload = self._get_json(
+            f"{api_base}/x/web-interface/history/search?{urlencode(params)}"
+        )
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("history missing data")
+        return data
 
-    def followed_bangumi(self, **_kwargs: Any) -> dict[str, Any]:
-        raise requires_login("followed_bangumi")
+    def followed_bangumi(
+        self,
+        *,
+        pn: int = 1,
+        ps: int = 24,
+        type_: int = 1,
+        follow_status: int = 0,
+    ) -> dict[str, Any]:
+        self.require_session("followed_bangumi")
+        self.bootstrap()
+        mid = self.mid
+        if mid is None:
+            raise requires_login("followed_bangumi", detail="missing DedeUserID / mid")
+        params: dict[str, object] = {
+            "vmid": mid,
+            "type": type_,
+            "pn": pn,
+            "ps": ps,
+            "follow_status": follow_status,
+            "web_location": "333.1387",
+        }
+        query = enc_wbi(params)
+        payload = self._get_json(
+            f"{api_base}/x/space/bangumi/follow/list?{query}"
+        )
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("followed bangumi missing data")
+        return data
 
-    def subscribed_collections(self, **_kwargs: Any) -> dict[str, Any]:
-        raise requires_login("subscribed_collections")
+    def subscribed_collections(
+        self,
+        *,
+        pn: int = 1,
+        ps: int = 50,
+    ) -> dict[str, Any]:
+        self.require_session("subscribed_collections")
+        self.bootstrap()
+        mid = self.mid
+        if mid is None:
+            raise requires_login(
+                "subscribed_collections", detail="missing DedeUserID / mid"
+            )
+        params = {
+            "pn": pn,
+            "ps": ps,
+            "up_mid": mid,
+            "platform": "web",
+            "web_location": "333.1387",
+        }
+        payload = self._get_json(
+            f"{api_base}/x/v3/fav/folder/collected/list?{urlencode(params)}"
+        )
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("subscribed collections missing data")
+        return data
 
-    def favorite_folders(self, **_kwargs: Any) -> dict[str, Any]:
-        raise requires_login("favorite_folders")
+    def favorite_folders(self) -> dict[str, Any]:
+        self.require_session("favorite_folders")
+        self.bootstrap()
+        mid = self.mid
+        if mid is None:
+            raise requires_login("favorite_folders", detail="missing DedeUserID / mid")
+        payload = self._get_json(
+            f"{api_base}/x/v3/fav/folder/created/list-all?up_mid={mid}"
+        )
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("favorite folders missing data")
+        return data
 
     def get_bytes(self, url: str) -> bytes:
         try:
@@ -628,11 +757,11 @@ class bilibili_client:
         if "登录" in message or "login" in message.lower():
             return (
                 f"login required (code {code}): {message} "
-                "— QR/cookie login is stubbed for a later release"
+                "— use QR/Cookie login (udl bili login) or --sessdata"
             )
         if "会员" in message or "大會員" in message or "大会员" in message:
             return (
                 f"VIP-only content (code {code}): {message} "
-                "— udl does not bypass VIP restrictions"
+                "— udl only uses streams the current account is entitled to"
             )
         return f"bilibili API error {code}: {message}"

@@ -75,6 +75,10 @@ export type AppSettings = {
   aria2Enabled: boolean;
   aria2RpcUrl: string;
   aria2RpcSecret: string;
+  // bilibili CDN / Host (v0.7-B)
+  cdnHosts: string;
+  preferCdn: boolean;
+  customHost: string;
 };
 
 export const default_site_flags = (): Record<SiteId, boolean> => ({
@@ -115,6 +119,9 @@ export const default_settings: AppSettings = {
   aria2Enabled: false,
   aria2RpcUrl: "http://127.0.0.1:6800/jsonrpc",
   aria2RpcSecret: "",
+  cdnHosts: "",
+  preferCdn: false,
+  customHost: "",
 };
 
 export type FfmpegStatus = {

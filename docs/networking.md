@@ -14,6 +14,9 @@
 | 代理密碼 | OS keychain | 經 `udl.secrets`（`keyring`）存放，不寫入 settings.json |
 | User-Agent | 內建 Chrome UA | 共用引擎與各 extractor session |
 | aria2 RPC | 關閉 | 啟用後檔案下載交給 aria2；連不上則回退內建引擎 |
+| Bilibili CDN 主機 | 空 | 逗號分隔偏好 CDN hostname；改寫 playurl netloc |
+| 優先偏好 CDN | 關閉 | 開啟後置換節點排在原始 URL 前 |
+| 自訂 Host | 空 | 媒體下載可選 Host 標頭（通常留空） |
 
 ## 代理模式
 

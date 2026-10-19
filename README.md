@@ -1,4 +1,4 @@
-# 整合下載器（unified-downloader）v0.7-A
+# 整合下載器（unified-downloader）v0.7-B
 
 桌面應用：貼上網址 → 辨識站點 → 用統一 Python 核心下載。  
 授權：**GPL-3.0-or-later**（見 `LICENSE`、`NOTICE`）。
@@ -36,7 +36,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 | Gofile | ✅ | ltsdw/gofile-downloader（訪客 token，公開連結） |
 | Bunkr | ✅ | Lysagxra/BunkrDownloader（相簿／單檔） |
 | Iwara | ✅ v0.6-B | Moeary/IwaraTool（瀏覽／訂閱／登入／私有片；見 `docs/iwara-browse.md`） |
-| Bilibili | ✅ v0.7-A | ScottSloan/Bili23-Downloader（多類型解析、彈幕字幕、codec；無登入；見 `docs/bilibili.md`） |
+| Bilibili | ✅ v0.7-B | ScottSloan/Bili23-Downloader（解析／登入／帳號清單／CDN；見 `docs/bilibili.md`） |
 | MEGA | ✅ 外部工具 | **megatools**（優先）／MEGAcmd `mega-get`（備援）；子行程，不移植 MegaBasterd |
 
 上游 commit 與授權細節見 `NOTICE`。介面約定見 `docs/extractor-interface.md`。路線圖見 `ROADMAP.md`。
@@ -50,12 +50,14 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - `X-Version` salt 在 `core/udl/extractors/iwara_xversion.py`；全部失敗會拋清楚錯誤
 - **v0.6：** `udl iwara search|tag|…|sync|login|import-following`；GUI「Iwara／首頁／訂閱」＋設定帳號區。詳見 `docs/iwara-browse.md`
 
-### Bilibili 備註（v0.7-A）
+### Bilibili 備註（v0.7-B）
 
-- 類型：BV／多 P、bangumi、cheese、互動節點、au／am、UP 空間、公開收藏夾、每周必看、合集／系列；帳號清單 → `requires_login`。
-- 畫質／`--codec avc|hevc|av1`／`--audio-quality`；僅 session 可得流，**不**繞過 VIP／付費／區域。
+- 類型：BV／多 P、bangumi、cheese、互動節點、au／am、UP 空間、公開收藏夾、每周必看、合集／系列；登入後：稍後再看／歷史／追番／訂閱合集／自己的收藏夾。
+- 登入：`udl bili login`（QR／Cookie 完整；SMS 需 GeeTest 瀏覽器，best-effort）；session 進 OS keychain（`bilibili.session`）。
+- 畫質／`--codec avc|hevc|av1`／`--audio-quality`；登入後可取得帳號有權之 8K／4K／HDR 等，**不**繞過 VIP／付費／區域。
+- CDN／Host：`--cdn-hosts`／`--prefer-cdn`／`--custom-host`（與全域 UA／代理共用）。
 - `--danmaku`／`--subtitle`／章節／`--container mp4|mkv`；詳見 `docs/bilibili.md`。
-- GUI「Bilibili」解析頁：多連結樹狀勾選 → 佇列。登入（QR／Cookie）與 `udl.secrets` 另 PR。
+- GUI「Bilibili」解析頁＋「帳號」頁（QR／狀態／登出）。
 - 需要 FFmpeg（PATH、`UDL_FFMPEG`、`--ffmpeg`，或 GUI 首次下載）。
 
 ### MEGA 備註（v0.4）

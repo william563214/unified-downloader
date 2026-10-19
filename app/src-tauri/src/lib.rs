@@ -109,6 +109,13 @@ struct AppSettings {
     aria2_rpc_url: String,
     #[serde(default)]
     aria2_rpc_secret: String,
+    // bilibili CDN / Host (v0.7-B networking)
+    #[serde(default)]
+    cdn_hosts: String,
+    #[serde(default)]
+    prefer_cdn: bool,
+    #[serde(default)]
+    custom_host: String,
 }
 
 fn default_on_duplicate() -> String {
@@ -199,6 +206,9 @@ impl Default for AppSettings {
             aria2_enabled: false,
             aria2_rpc_url: default_aria2_rpc_url(),
             aria2_rpc_secret: String::new(),
+            cdn_hosts: String::new(),
+            prefer_cdn: false,
+            custom_host: String::new(),
         }
     }
 }
@@ -313,6 +323,19 @@ fn append_network_args(args: &mut Vec<String>, settings: &AppSettings) {
             args.push("--aria2-secret".into());
             args.push(secret.to_string());
         }
+    }
+    let cdn = settings.cdn_hosts.trim();
+    if !cdn.is_empty() {
+        args.push("--cdn-hosts".into());
+        args.push(cdn.to_string());
+    }
+    if settings.prefer_cdn {
+        args.push("--prefer-cdn".into());
+    }
+    let host = settings.custom_host.trim();
+    if !host.is_empty() {
+        args.push("--custom-host".into());
+        args.push(host.to_string());
     }
 }
 
@@ -463,6 +486,79 @@ async fn clear_proxy_password(app: AppHandle) -> Result<(), String> {
     let (mut rx, _child) = spawn_udl(&app, args)?;
     let (_stdout, _stderr, _code) = collect_stdout_json(&mut rx).await?;
     Ok(())
+}
+
+async fn run_bili_login_json(
+    app: &AppHandle,
+    mut extra: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec!["bili".into(), "login".into()];
+    args.append(&mut extra);
+    args.push("--json".into());
+    let settings = load_settings_file(app);
+    append_proxy_ua_args(&mut args, &settings);
+    let (mut rx, _child) = spawn_udl(app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 && stdout.trim().is_empty() {
+        return Err(format!("udl bili login exited {:?}: {stderr}", code));
+    }
+    let value: serde_json::Value = serde_json::from_str(stdout.trim()).map_err(|e| {
+        format!("parse bili login JSON: {e}; raw={stdout}; err={stderr}")
+    })?;
+    if let Some(err) = value.get("error").and_then(|v| v.as_str()) {
+        return Err(err.to_string());
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+async fn bili_login_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    // status exit 1 when logged out is OK — still return JSON profile
+    let mut args = vec![
+        "bili".into(),
+        "login".into(),
+        "status".into(),
+        "--json".into(),
+    ];
+    let settings = load_settings_file(&app);
+    append_proxy_ua_args(&mut args, &settings);
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, _code) = collect_stdout_json(&mut rx).await?;
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse login status: {e}; raw={stdout}; err={stderr}"))
+}
+
+#[tauri::command]
+async fn bili_login_qr(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_bili_login_json(&app, vec!["qr".into()]).await
+}
+
+#[tauri::command]
+async fn bili_login_qr_poll(app: AppHandle, key: String) -> Result<serde_json::Value, String> {
+    run_bili_login_json(
+        &app,
+        vec!["qr-poll".into(), "--key".into(), key],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn bili_login_cookie(app: AppHandle, text: String) -> Result<serde_json::Value, String> {
+    run_bili_login_json(
+        &app,
+        vec!["cookie".into(), "--text".into(), text],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn bili_login_refresh(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_bili_login_json(&app, vec!["refresh".into()]).await
+}
+
+#[tauri::command]
+async fn bili_login_logout(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_bili_login_json(&app, vec!["logout".into()]).await
 }
 
 #[tauri::command]
@@ -1665,6 +1761,12 @@ pub fn run() {
             resolve_url,
             probe_url,
             probe_bilibili,
+            bili_login_status,
+            bili_login_qr,
+            bili_login_qr_poll,
+            bili_login_cookie,
+            bili_login_refresh,
+            bili_login_logout,
             ffmpeg_status,
             install_ffmpeg,
             start_download,
