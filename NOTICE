@@ -35,14 +35,18 @@ upstream copyright and were adapted under compatible licenses.
   README also lists extra packaging usage terms outside the MIT LICENSE
   file; those are not part of the MIT grant and are noted here only.
 
-## Planned ports (stubs only)
-
-### Bilibili — `core/udl/extractors/bilibili.py` (stub)
+### Bilibili — `core/udl/extractors/bilibili/`
 - Upstream: https://github.com/ScottSloan/Bili23-Downloader
 - License: GPL-3.0
-- Commit: TBD when ported
-- Upstream README also states a non-commercial usage agreement; GPL itself
-  does not forbid commercial use — document both when shipping.
+- Ported from commit: e3d6aff32fffca88b249412b92b40448321418c4
+- Notes: Subset only — BV/av multi-part video, b23.tv short links,
+  bangumi/episode when freely accessible. WBI signing, playurl DASH
+  selection, and FFmpeg merge patterns adapted from upstream
+  (`util/parse/parser/*`, `util/ffmpeg`). Qt worker/thread model was
+  not ported. No paywall, VIP-only, or region-lock bypass.
+  Upstream README also states a non-commercial usage agreement; GPL
+  itself does not forbid commercial use — both are documented here.
+  QR/cookie login is stubbed for a later release (OS keychain).
 
 ## Intentionally not ported
 - gallery-dl (GPL-2.0-only) — incompatible with GPL-3.0; do not import or copy.

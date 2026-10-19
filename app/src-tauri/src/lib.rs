@@ -31,6 +31,19 @@ struct ResolveResult {
     message: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+struct ProbeResult {
+    site: Option<String>,
+    kind: Option<String>,
+    title: Option<String>,
+    url: String,
+    parts: Vec<serde_json::Value>,
+    qualities: Vec<serde_json::Value>,
+    default_part: Option<i64>,
+    default_quality: Option<i64>,
+    message: Option<String>,
+}
+
 fn core_dir(app: &AppHandle) -> PathBuf {
     // repo layout: app/src-tauri -> ../../core
     if let Ok(cwd) = std::env::current_dir() {
@@ -157,12 +170,81 @@ async fn resolve_url(app: AppHandle, url: String) -> Result<ResolveResult, Strin
 }
 
 #[tauri::command]
+async fn probe_url(app: AppHandle, url: String) -> Result<ProbeResult, String> {
+    let (mut rx, _child) = spawn_udl(&app, vec!["probe".into(), url.clone()])?;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line) => {
+                stdout.push_str(&String::from_utf8_lossy(&line));
+            }
+            CommandEvent::Stderr(line) => {
+                stderr.push_str(&String::from_utf8_lossy(&line));
+            }
+            CommandEvent::Error(err) => return Err(err),
+            CommandEvent::Terminated(payload) => {
+                if payload.code.unwrap_or(1) != 0 {
+                    return Err(format!(
+                        "udl probe exited {:?}: {stderr}",
+                        payload.code
+                    ));
+                }
+                break;
+            }
+            _ => {}
+        }
+    }
+    let value: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse probe JSON: {e}; raw={stdout}; err={stderr}"))?;
+    Ok(ProbeResult {
+        site: value
+            .get("site")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        kind: value
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        title: value
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        url: value
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&url)
+            .to_string(),
+        parts: value
+            .get("parts")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        qualities: value
+            .get("qualities")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        default_part: value.get("default_part").and_then(|v| v.as_i64()),
+        default_quality: value.get("default_quality").and_then(|v| v.as_i64()),
+        message: value.get("message").and_then(|v| {
+            if v.is_null() {
+                None
+            } else {
+                v.as_str().map(str::to_string)
+            }
+        }),
+    })
+}
+
+#[tauri::command]
 async fn start_download(
     app: AppHandle,
     state: State<'_, JobState>,
     url: String,
     output: String,
     quality: Option<String>,
+    part: Option<String>,
     cloudflare_bypass: Option<bool>,
 ) -> Result<String, String> {
     let job_id = Uuid::new_v4().to_string();
@@ -180,6 +262,13 @@ async fn start_download(
         if !q.is_empty() {
             args.push("--quality".into());
             args.push(q.to_string());
+        }
+    }
+    if let Some(p) = part {
+        let p = p.trim();
+        if !p.is_empty() {
+            args.push("--part".into());
+            args.push(p.to_string());
         }
     }
     if cloudflare_bypass.unwrap_or(false) {
@@ -279,6 +368,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             resolve_url,
+            probe_url,
             start_download,
             cancel_download,
             open_path

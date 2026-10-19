@@ -1,4 +1,4 @@
-"""udl CLI — resolve and get with optional JSON-lines progress."""
+"""udl CLI — resolve, probe, and get with optional JSON-lines progress."""
 
 from __future__ import annotations
 
@@ -29,6 +29,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="emit a JSON-lines resolve event (default: pretty JSON object)",
+    )
+
+    p_probe = sub.add_parser(
+        "probe",
+        help="fetch site metadata (parts / qualities) without downloading",
+    )
+    p_probe.add_argument("url", help="content URL")
+    p_probe.add_argument(
+        "--json",
+        action="store_true",
+        help="emit a JSON-lines probe event (default: pretty JSON object)",
     )
 
     p_get = sub.add_parser("get", help="download a URL")
@@ -66,7 +77,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p_get.add_argument(
         "--quality",
         default=None,
-        help="Iwara preferred quality: Source (best) 540 or 360 (default Source)",
+        help=(
+            "site quality: Iwara Source|540|360; "
+            "Bilibili qn number (e.g. 64) or omit for best available without login"
+        ),
+    )
+    p_get.add_argument(
+        "--part",
+        default=None,
+        help="bilibili part/page number (1-based) or 'all'",
+    )
+    p_get.add_argument(
+        "--ffmpeg",
+        default=None,
+        help="path to ffmpeg binary (default: PATH or UDL_FFMPEG)",
     )
     p_get.add_argument(
         "--cloudflare-bypass",
@@ -117,6 +141,64 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return 0 if info.supported or info.status == "stub" else 2
 
 
+def cmd_probe(args: argparse.Namespace) -> int:
+    info = resolve(args.url)
+    if not info.supported:
+        msg = info.message or "unsupported URL"
+        if args.json:
+            emitter().error(message=msg, code="unsupported")
+        else:
+            print(msg, file=sys.stderr)
+        return 2
+
+    ext = None
+    try:
+        ext = get_extractor(args.url)
+        if hasattr(ext, "probe"):
+            probe = ext.probe(args.url)
+            payload = probe.to_dict() if hasattr(probe, "to_dict") else dict(probe)
+        else:
+            result = ext.resolve(args.url)
+            payload = {
+                "site": result.site,
+                "kind": result.kind,
+                "title": result.title,
+                "url": args.url,
+                "parts": result.meta.get("parts") or [],
+                "qualities": result.meta.get("qualities") or [],
+                "default_part": result.meta.get("default_part"),
+                "default_quality": result.meta.get("default_quality"),
+                "message": None,
+                "files": [
+                    {"name": f.name, "size": f.size, "path": f.relative_dir}
+                    for f in result.files
+                ],
+            }
+    except Exception as exc:  # noqa: BLE001
+        if args.json:
+            emitter().error(message=str(exc), code="resolve_failed")
+        else:
+            print(f"probe failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if ext is not None:
+            close = getattr(ext, "close", None)
+            if callable(close):
+                close()
+
+    if args.json:
+        emitter().probe(**payload)
+    else:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _parse_quality(raw: str | None) -> int | None:
+    if raw is None or raw == "" or raw.lower() in {"auto", "best"}:
+        return None
+    return int(raw)
+
+
 def cmd_get(args: argparse.Namespace) -> int:
     out: Path = args.output
     out.mkdir(parents=True, exist_ok=True)
@@ -142,9 +224,28 @@ def cmd_get(args: argparse.Namespace) -> int:
     emit = emitter(enabled=args.json)
     job_id = args.job_id or str(uuid.uuid4())
 
+    ext = None
     try:
-        ext = get_extractor(args.url)
-        _apply_site_options(ext, args)
+        if info.site == "bilibili":
+            from udl.extractors.bilibili import bilibili_extractor
+
+            try:
+                quality = _parse_quality(args.quality)
+            except ValueError:
+                msg = f"invalid bilibili --quality (expect qn int): {args.quality}"
+                if args.json:
+                    emit.error(job=job_id, message=msg, code="resolve_failed")
+                else:
+                    print(msg, file=sys.stderr)
+                return 1
+            ext = bilibili_extractor(
+                quality=quality,
+                part=args.part,
+                ffmpeg=args.ffmpeg,
+            )
+        else:
+            ext = get_extractor(args.url)
+            _apply_site_options(ext, args)
         result = ext.resolve(args.url, password=args.password)
     except Exception as exc:  # noqa: BLE001
         if args.json:
@@ -180,11 +281,16 @@ def cmd_get(args: argparse.Namespace) -> int:
         emit.cancel(job=job_id)
         return 130
     except Exception as exc:  # noqa: BLE001
+        code = getattr(exc, "code", None) or "download_failed"
         if args.json:
-            emit.error(job=job_id, message=str(exc), code="download_failed")
+            emit.error(job=job_id, message=str(exc), code=str(code))
         else:
             print(f"download failed: {exc}", file=sys.stderr)
         return 1
+    finally:
+        close = getattr(ext, "close", None)
+        if callable(close):
+            close()
 
     emit.done(job=job_id, path=str(out.resolve()), ok=ok, failed=failed)
     if not args.json:
@@ -241,6 +347,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "resolve":
         return cmd_resolve(args)
+    if args.command == "probe":
+        return cmd_probe(args)
     if args.command == "get":
         return cmd_get(args)
     if args.command == "schema":

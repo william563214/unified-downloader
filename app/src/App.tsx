@@ -14,6 +14,30 @@ type ResolveResult = {
   message: string | null;
 };
 
+type ProbePart = {
+  page: number;
+  title: string;
+  cid?: number;
+  badge?: string;
+};
+
+type ProbeQuality = {
+  qn: number;
+  label: string;
+};
+
+type ProbeResult = {
+  site: string | null;
+  kind: string | null;
+  title: string | null;
+  url: string;
+  parts: ProbePart[];
+  qualities: ProbeQuality[];
+  default_part: number | null;
+  default_quality: number | null;
+  message: string | null;
+};
+
 type FileRow = {
   id: string;
   name: string;
@@ -21,7 +45,7 @@ type FileRow = {
   total?: number;
   bytes: number;
   bps: number;
-  status: "queued" | "active" | "done" | "error" | "cancelled";
+  status: "queued" | "active" | "merging" | "done" | "error" | "cancelled";
   message?: string;
 };
 
@@ -74,25 +98,33 @@ export default function App() {
   const [url, setUrl] = useState("");
   const [output, setOutput] = useState("");
   const [resolveInfo, setResolveInfo] = useState<ResolveResult | null>(null);
+  const [probeInfo, setProbeInfo] = useState<ProbeResult | null>(null);
+  const [selectedPart, setSelectedPart] = useState<string>("all");
+  const [selectedQuality, setSelectedQuality] = useState<string>("");
   const [resolving, setResolving] = useState(false);
+  const [probing, setProbing] = useState(false);
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [iwaraQuality, setIwaraQuality] = useState("Source");
   const [iwaraCloudflareBypass, setIwaraCloudflareBypass] = useState(false);
+
+  const isBilibili = resolveInfo?.site === "bilibili" && resolveInfo.supported;
 
   const canDownload = useMemo(
     () =>
       Boolean(url.trim()) &&
       Boolean(output) &&
       resolveInfo?.supported === true &&
-      !resolving,
-    [url, output, resolveInfo, resolving],
+      !resolving &&
+      !probing,
+    [url, output, resolveInfo, resolving, probing],
   );
 
   const runResolve = useCallback(async (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) {
       setResolveInfo(null);
+      setProbeInfo(null);
       return;
     }
     setResolving(true);
@@ -100,11 +132,52 @@ export default function App() {
     try {
       const result = await invoke<ResolveResult>("resolve_url", { url: trimmed });
       setResolveInfo(result);
+      if (!(result.site === "bilibili" && result.supported)) {
+        setProbeInfo(null);
+      }
     } catch (e) {
       setResolveInfo(null);
+      setProbeInfo(null);
       setError(String(e));
     } finally {
       setResolving(false);
+    }
+  }, []);
+
+  const runProbe = useCallback(async (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setProbeInfo(null);
+      return;
+    }
+    setProbing(true);
+    setError(null);
+    try {
+      const result = await invoke<ProbeResult>("probe_url", { url: trimmed });
+      const parts = (result.parts || []).map((p) => ({
+        page: Number((p as ProbePart).page),
+        title: String((p as ProbePart).title ?? ""),
+        cid: (p as ProbePart).cid,
+        badge: (p as ProbePart).badge,
+      }));
+      const qualities = (result.qualities || []).map((q) => ({
+        qn: Number((q as ProbeQuality).qn),
+        label: String((q as ProbeQuality).label ?? `qn${(q as ProbeQuality).qn}`),
+      }));
+      setProbeInfo({ ...result, parts, qualities });
+      if (result.kind === "bangumi" || parts.length <= 1) {
+        setSelectedPart(String(result.default_part ?? parts[0]?.page ?? 1));
+      } else {
+        setSelectedPart("all");
+      }
+      setSelectedQuality(
+        result.default_quality != null ? String(result.default_quality) : "",
+      );
+    } catch (e) {
+      setProbeInfo(null);
+      setError(String(e));
+    } finally {
+      setProbing(false);
     }
   }, []);
 
@@ -114,6 +187,14 @@ export default function App() {
     }, 350);
     return () => window.clearTimeout(handle);
   }, [url, runResolve]);
+
+  useEffect(() => {
+    if (!isBilibili) return;
+    const handle = window.setTimeout(() => {
+      void runProbe(url);
+    }, 450);
+    return () => window.clearTimeout(handle);
+  }, [url, isBilibili, runProbe]);
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
@@ -155,7 +236,8 @@ export default function App() {
             return {
               ...job,
               files: job.files.map((f) =>
-                f.id === fid
+                f.id === fid ||
+                fid.startsWith(`${f.id}:`)
                   ? {
                       ...f,
                       bytes: Number(line.bytes ?? f.bytes),
@@ -163,6 +245,23 @@ export default function App() {
                         typeof line.total === "number" ? line.total : f.total,
                       bps: Number(line.bps ?? f.bps),
                       status: "active",
+                    }
+                  : f,
+              ),
+            };
+          }
+          if (ev === "merging") {
+            const fid = line.file ? String(line.file) : null;
+            return {
+              ...job,
+              files: job.files.map((f) =>
+                fid && (f.id === fid || fid.startsWith(`${f.id}`))
+                  ? {
+                      ...f,
+                      status: "merging",
+                      message: line.message
+                        ? String(line.message)
+                        : "合併影音中…",
                     }
                   : f,
               ),
@@ -180,6 +279,7 @@ export default function App() {
                         status: "done",
                         path: line.path ? String(line.path) : f.path,
                         bytes: f.total ?? f.bytes,
+                        message: undefined,
                       }
                     : f,
                 ),
@@ -198,7 +298,7 @@ export default function App() {
               return {
                 ...job,
                 files: job.files.map((f) =>
-                  f.id === fid
+                  f.id === fid || fid.startsWith(`${f.id}:`)
                     ? {
                         ...f,
                         status: "error",
@@ -265,7 +365,12 @@ export default function App() {
       const jobId = await invoke<string>("start_download", {
         url: url.trim(),
         output,
-        quality: resolveInfo?.site === "iwara" ? iwaraQuality : null,
+        quality: isBilibili
+          ? selectedQuality || null
+          : resolveInfo?.site === "iwara"
+            ? iwaraQuality
+            : null,
+        part: isBilibili ? selectedPart : null,
         cloudflareBypass:
           resolveInfo?.site === "iwara" ? iwaraCloudflareBypass : null,
       });
@@ -274,7 +379,7 @@ export default function App() {
           id: jobId,
           url: url.trim(),
           site: resolveInfo?.site ?? "unknown",
-          title: resolveInfo?.label ?? "下載中",
+          title: probeInfo?.title ?? resolveInfo?.label ?? "下載中",
           output,
           files: [],
           status: "running",
@@ -315,7 +420,7 @@ export default function App() {
           <p className="brand">整合下載器</p>
           <h1>貼上網址，辨識站點，一次下載</h1>
           <p className="lede">
-            統一核心支援 Gofile、Bunkr 與 Iwara；Bilibili 槽位已預留。
+            統一核心支援 Gofile、Bunkr、Iwara 與 Bilibili。
           </p>
         </div>
       </header>
@@ -327,7 +432,7 @@ export default function App() {
             <input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://gofile.io/d/…、bunkr、或 iwara.tv/video/…"
+              placeholder="gofile / bunkr / iwara.tv / bilibili.com 連結"
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
@@ -371,6 +476,49 @@ export default function App() {
           </div>
         )}
 
+        {isBilibili && (
+          <div className="bili-options" aria-label="Bilibili 選項">
+            <label className="field">
+              <span>分 P / 集數</span>
+              <select
+                value={selectedPart}
+                onChange={(e) => setSelectedPart(e.target.value)}
+                disabled={probing || !probeInfo}
+              >
+                {probeInfo && probeInfo.parts.length > 1 && (
+                  <option value="all">全部（{probeInfo.parts.length}）</option>
+                )}
+                {(probeInfo?.parts ?? []).map((p) => (
+                  <option key={p.page} value={String(p.page)}>
+                    P{p.page} · {p.title}
+                    {p.badge ? ` （${p.badge}）` : ""}
+                  </option>
+                ))}
+                {!probeInfo && <option value="all">{probing ? "解析中…" : "—"}</option>}
+              </select>
+            </label>
+            <label className="field">
+              <span>畫質</span>
+              <select
+                value={selectedQuality}
+                onChange={(e) => setSelectedQuality(e.target.value)}
+                disabled={probing || !probeInfo?.qualities?.length}
+              >
+                {(probeInfo?.qualities ?? []).map((q) => (
+                  <option key={q.qn} value={String(q.qn)}>
+                    {q.label}（qn {q.qn}）
+                  </option>
+                ))}
+                {!probeInfo?.qualities?.length && (
+                  <option value="">
+                    {probing ? "偵測可匿名畫質…" : "尚無可用畫質"}
+                  </option>
+                )}
+              </select>
+            </label>
+          </div>
+        )}
+
         <label className="field">
           <span>輸出資料夾</span>
           <div className="folder-row">
@@ -385,8 +533,14 @@ export default function App() {
           </div>
         </label>
 
-        {resolveInfo?.message && (
-          <p className="hint">{resolveInfo.message}</p>
+        {probeInfo?.title && isBilibili && (
+          <p className="hint">
+            {probeInfo.title}
+            {probing ? " · 更新中…" : ""}
+          </p>
+        )}
+        {(probeInfo?.message || resolveInfo?.message) && (
+          <p className="hint">{probeInfo?.message || resolveInfo?.message}</p>
         )}
         {error && <p className="error">{error}</p>}
 
@@ -452,7 +606,9 @@ export default function App() {
                         ? Math.min(100, (file.bytes / file.total) * 100)
                         : file.status === "done"
                           ? 100
-                          : 0;
+                          : file.status === "merging"
+                            ? 95
+                            : 0;
                     return (
                       <li key={file.id} className="file">
                         <div className="file-meta">
@@ -463,7 +619,7 @@ export default function App() {
                             {" · "}
                             {formatSpeed(file.bps)}
                             {" · "}
-                            {file.status}
+                            {file.status === "merging" ? "合併中" : file.status}
                           </span>
                         </div>
                         <div className="bar" aria-hidden>

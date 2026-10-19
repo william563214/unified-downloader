@@ -10,6 +10,9 @@ uv sync
 uv run udl resolve "https://gofile.io/d/XXXX"
 uv run udl get "https://gofile.io/d/XXXX" -o ./out --json
 uv run udl get "https://www.iwara.tv/video/XXXX" -o ./out --json --quality Source
+uv run udl resolve "https://www.bilibili.com/video/BV…"
+uv run udl probe "https://www.bilibili.com/video/BV…"
+uv run udl get "https://www.bilibili.com/video/BV…" -o ./out --json
 ```
 
-詳見倉庫根目錄 `README.md`。
+Bilibili 需要系統 FFmpeg（或 `--ffmpeg` / `UDL_FFMPEG`）。詳見倉庫根目錄 `README.md`。

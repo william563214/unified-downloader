@@ -225,6 +225,28 @@ input:focus {
   border-color: #d5d5cf;
 }
 
+.bili-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.bili-options select {
+  width: 100%;
+  font: inherit;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 11px 12px;
+}
+
+@media (max-width: 640px) {
+  .bili-options {
+    grid-template-columns: 1fr;
+  }
+}
+
 .actions {
   display: flex;
   gap: 10px;
