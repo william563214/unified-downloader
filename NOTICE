@@ -21,19 +21,25 @@ upstream copyright and were adapted under compatible licenses.
   (`glb-apisign.cdn.cr/sign`), download API (`dl.bunkr.cr/api/_001_v2`).
   Domains rotate; keep FALLBACK_DOMAIN and URL patterns maintainable.
 
-## Planned ports (stubs only in v0.1)
+### Bilibili — `core/udl/extractors/bilibili/`
+- Upstream: https://github.com/ScottSloan/Bili23-Downloader
+- License: GPL-3.0
+- Ported from commit: e3d6aff32fffca88b249412b92b40448321418c4
+- Notes: Subset only — BV/av multi-part video, b23.tv short links,
+  bangumi/episode when freely accessible. WBI signing, playurl DASH
+  selection, and FFmpeg merge patterns adapted from upstream
+  (`util/parse/parser/*`, `util/ffmpeg`). Qt worker/thread model was
+  not ported. No paywall, VIP-only, or region-lock bypass.
+  Upstream README also states a non-commercial usage agreement; GPL
+  itself does not forbid commercial use — both are documented here.
+  QR/cookie login is stubbed for a later release (OS keychain).
+
+## Planned ports (stubs only)
 
 ### Iwara — `core/udl/extractors/iwara.py` (stub)
 - Upstream: https://github.com/Moeary/IwaraTool
 - License: MIT
 - Commit: TBD when ported
-
-### Bilibili — `core/udl/extractors/bilibili.py` (stub)
-- Upstream: https://github.com/ScottSloan/Bili23-Downloader
-- License: GPL-3.0
-- Commit: TBD when ported
-- Upstream README also states a non-commercial usage agreement; GPL itself
-  does not forbid commercial use — document both when shipping.
 
 ## Intentionally not ported
 - gallery-dl (GPL-2.0-only) — incompatible with GPL-3.0; do not import or copy.

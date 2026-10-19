@@ -61,8 +61,8 @@ registry: list[site_entry] = [
         label="Bilibili",
         match=bilibili_mod.matches,
         factory=bilibili_mod.bilibili_extractor,
-        status="stub",
-        kind_hint="video",
+        status="implemented",
+        kind_hint="video|bangumi",
     ),
 ]
 

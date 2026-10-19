@@ -11,10 +11,12 @@ from typing import Any, TextIO
 ev_job = "job"
 ev_file = "file"
 ev_progress = "progress"
+ev_merging = "merging"
 ev_done = "done"
 ev_error = "error"
 ev_cancel = "cancel"
 ev_resolve = "resolve"
+ev_probe = "probe"
 
 
 @dataclass
@@ -99,6 +101,28 @@ class emitter:
         if bps is not None:
             payload["bps"] = round(bps, 1)
         self.emit(ev_progress, **payload)
+
+    def merging(
+        self,
+        *,
+        job: str,
+        file: str | None = None,
+        path: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        """DASH / postprocess merge phase (e.g. FFmpeg video+audio)."""
+        payload: dict[str, Any] = {"job": job}
+        if file is not None:
+            payload["file"] = file
+        if path is not None:
+            payload["path"] = path
+        if message is not None:
+            payload["message"] = message
+        self.emit(ev_merging, **payload)
+
+    def probe(self, **fields: Any) -> None:
+        """rich metadata for GUI selectors (parts / qualities)."""
+        self.emit(ev_probe, **fields)
 
     def done(
         self,
@@ -193,6 +217,23 @@ def dump_schema() -> dict[str, Any]:
                 "bytes": "int",
                 "total": "int?",
                 "bps": "float?",
+            },
+            ev_merging: {
+                "job": "str",
+                "file": "str?",
+                "path": "str?",
+                "message": "str?",
+            },
+            ev_probe: {
+                "site": "str",
+                "kind": "str",
+                "title": "str",
+                "url": "str",
+                "parts": "list?",
+                "qualities": "list?",
+                "default_part": "int?",
+                "default_quality": "int?",
+                "message": "str?",
             },
             ev_done: {
                 "job": "str",

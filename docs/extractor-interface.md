@@ -1,17 +1,18 @@
 # Extractor 介面（給後續代理）
 
-本文件說明如何為 `udl` 新增站點模組。v0.1 已實作 **Gofile**、**Bunkr**；**Iwara**、**Bilibili** 僅保留 registry 槽位。
+本文件說明如何為 `udl` 新增站點模組。已實作 **Gofile**、**Bunkr**、**Bilibili**；**Iwara** 僅保留 registry 槽位。
 
 ## 設計原則
 
 - 仿 gallery-dl「每站一個 extractor + URL pattern 集中註冊」的**概念**，**禁止**複製或 `import gallery-dl`（GPL-2.0-only，與本專案 GPL-3.0-or-later 不相容）。
 - 共用下載邏輯放在 `udl.download.http`（續傳、重試、並行、取消、JSON-lines 進度）。
-- Extractor 只負責：**辨識 URL → 解析遠端結構 → 產出直接下載連結清單**。
-- 不要實作付費牆／配額／ToS 繞過（見研究報告與 README）。
+- 影音合併等後處理放在 `udl.postprocess`（目前 `ffmpeg.py`）。
+- Extractor 只負責：**辨識 URL → 解析遠端結構 → 產出直接下載連結清單**（或覆寫 `download()` 做特殊傳輸）。
+- 不要實作付費牆／配額／ToS／VIP／區域繞過（見研究報告與 README）。
 
 ## 必做步驟
 
-1. 在 `core/udl/extractors/<site>.py` 實作：
+1. 在 `core/udl/extractors/<site>.py`（或套件目錄）實作：
    - `matches(url: str) -> bool`
    - `class <site>_extractor(extractor)`，設定 `site`、`label`，實作 `resolve()`
 2. 在 `core/udl/router.py` 的 `registry` 把 `status` 從 `"stub"` 改成 `"implemented"`（或新增 entry）。
@@ -32,13 +33,15 @@ class my_extractor(extractor):
         ...
 ```
 
-預設的 `extractor.download()` 已足夠：把 `extracted_file` 轉成 `download_item` 並呼叫共用引擎。若站點需要特殊傳輸（例如 Bilibili DASH + FFmpeg），可覆寫 `download()`，但仍須透過 `emitter` 發出相同事件。
+預設的 `extractor.download()` 已足夠：把 `extracted_file` 轉成 `download_item` 並呼叫共用引擎。若站點需要特殊傳輸（例如 Bilibili DASH + FFmpeg），可覆寫 `download()`，但仍須透過 `emitter` 發出相同事件；合併階段請發 `merging`。
+
+可選：實作 `probe(url) -> probe_info`（或相容物件）供 `udl probe`／GUI 選項使用。
 
 ### `extracted_file` 欄位
 
 | 欄位 | 說明 |
 |------|------|
-| `url` | 可 GET 的直接連結（含簽章 query） |
+| `url` | 可 GET 的直接連結（含簽章 query）；特殊協定可用 placeholder |
 | `name` | 安全檔名 |
 | `relative_dir` | 相對輸出目錄的子路徑（相簿名等） |
 | `size` | 已知大小（位元組），未知則 `None` |
@@ -52,7 +55,7 @@ class my_extractor(extractor):
 | `site` | 必須等於 `self.site` |
 | `title` | 任務標題（相簿／影片名） |
 | `files` | 非空列表 |
-| `kind` | 例如 `album` / `file` / `video` |
+| `kind` | 例如 `album` / `file` / `video` / `bangumi` |
 | `meta` | 自由 metadata |
 
 ## 槽位現況
@@ -61,8 +64,8 @@ class my_extractor(extractor):
 |------|------|--------|------|
 | gofile | `gofile.py` | implemented | ltsdw/gofile-downloader GPL-3.0 |
 | bunkr | `bunkr.py` | implemented | Lysagxra/BunkrDownloader GPL-3.0 |
+| bilibili | `bilibili/` | implemented | ScottSloan/Bili23-Downloader GPL-3.0 |
 | iwara | `iwara.py` | stub | Moeary/IwaraTool MIT |
-| bilibili | `bilibili.py` | stub | ScottSloan/Bili23-Downloader GPL-3.0 |
 
 ## Iwara 移植提示（v0.2）
 
@@ -71,11 +74,14 @@ class my_extractor(extractor):
 - `X-Version` salt 會輪替，失效時要有清楚錯誤。
 - **不要**預設開啟 cloudscraper Cloudflare 挑戰繞過。
 
-## Bilibili 移植提示（v0.3）
+## Bilibili 移植提示（v0.3，已完成子集）
 
-- 只取 BV/av 單一影片、匿名畫質、DASH + FFmpeg 合併子集。
-- **不要**移植大會員／付費／區域繞過；cheese 僅已購買帳號。
-- Qt worker／thread 模型不要搬，改用共用 `download` 或子行程 FFmpeg。
+- 套件布局：`core/udl/extractors/bilibili/`（client / wbi / ids / quality / extractor）。
+- FFmpeg：`udl/postprocess/ffmpeg.py`（可供其他 extractor 重用）。
+- 已支援：BV/av、多分 P、b23、可匿名 bangumi／ep；匿名最佳畫質；DASH+FFmpeg。
+- **不要**移植大會員／付費／區域繞過；cheese 僅已購買帳號（本版未做 cheese）。
+- Qt worker／thread 模型不要搬。
+- QR 登入可 stub，不要求本版完成。
 
 ## 測試建議（本版暫略）
 
