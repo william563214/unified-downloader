@@ -61,12 +61,17 @@
 - [x] 下載前去重：`(site,item_id)` → URL → size／hash；`--on-duplicate skip|overwrite|rename`；GUI 顯示已下載
 - [x] 持久化任務佇列（SQLite）；重啟後未完成 job 自動恢復；HTTP Range 續傳沿用既有引擎
 
+### 本 PR（naming／rules／repair）
+
+- [x] 命名模板引擎：per-site／per-type、統一 metadata 欄位、跨平台檔名清理、多層目錄、衝突處理；CLI `--name-template`／config；GUI 設定即時預覽
+- [x] 分類規則引擎：有序規則（site／author／tags／title regex／duration／size／media type）→ 資料夾／模板覆寫／skip；JSON／TOML config；GUI 編輯與 URL 測試
+- [x] 修復中心：掃描歷史 DB vs 檔案系統（缺檔、`.part`、大小／hash 不符、orphan）；`udl repair scan|fix`（JSON）；GUI 修復頁
+- [x] 文件：`docs/naming-rules.md`
+
 ### 後續 follow-ups（仍屬 v0.5 範圍，可分 PR）
 
-- [ ] 命名／分類規則引擎（依 metadata 產生路徑與檔名）
 - [x] NFO／sidecar 資訊檔輸出（`udl/postprocess/nfo.py`；CLI／GUI 全域＋站點開關）
 - [x] 封面／縮圖下載（`udl/postprocess/cover.py`；poster／folder.jpg；可選 FFmpeg 嵌入）
-- [ ] 修復中心（缺檔、hash 不符、半成品 `.part`；可讀 history `role`／`cover_path`）
 - [ ] aria2 RPC 後端（與另一代理的下載引擎工作協調；本 foundation 不改引擎內部）
 - [ ] 全域限速／Proxy（同上，下載引擎平行工作）
 

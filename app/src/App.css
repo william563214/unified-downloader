@@ -118,6 +118,16 @@ button.nav.active {
   gap: 12px;
 }
 
+.rule-editor {
+  margin: 12px 0 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.45);
+  display: grid;
+  gap: 10px;
+}
+
 .settings-block {
   margin: 8px 0 16px;
   padding: 12px 14px;

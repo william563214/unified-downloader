@@ -5,13 +5,19 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { humanizeError, statusLabel } from "./errors";
 import {
   type AppSettings,
+  type ClassifyRule,
   type CoverNaming,
   type DuplicateMode,
   type FfmpegStatus,
   type HistoryEntry,
+  type NameConflictMode,
+  type NamingPreview,
   type QueueEntry,
+  type RepairIssue,
+  type RepairScanResult,
   default_settings,
   default_site_flags,
+  emptyRule,
   extractUrl,
   history_cover_path,
   site_ids,
@@ -101,7 +107,7 @@ type UdlEventPayload = {
   line: Record<string, unknown>;
 };
 
-type Page = "download" | "history" | "settings";
+type Page = "download" | "history" | "repair" | "settings";
 
 function formatBytes(n?: number): string {
   if (n == null || Number.isNaN(n)) return "—";
@@ -164,6 +170,16 @@ export default function App() {
   const [historyBusy, setHistoryBusy] = useState(false);
   const [historyCovers, setHistoryCovers] = useState<Record<string, string>>({});
   const [selectedHistory, setSelectedHistory] = useState<Set<string>>(new Set());
+  const [namingPreview, setNamingPreview] = useState<string>("");
+  const [namingPreviewBusy, setNamingPreviewBusy] = useState(false);
+  const [rulesTestUrl, setRulesTestUrl] = useState("");
+  const [rulesTestResult, setRulesTestResult] = useState<string>("");
+  const [rulesTestBusy, setRulesTestBusy] = useState(false);
+  const [repairResult, setRepairResult] = useState<RepairScanResult | null>(null);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [selectedRepair, setSelectedRepair] = useState<Set<string>>(new Set());
+  const [repairVerifyHash, setRepairVerifyHash] = useState(false);
+  const [relinkPath, setRelinkPath] = useState("");
   const startingRef = useRef(false);
   const resumedRef = useRef(false);
 
@@ -214,6 +230,13 @@ export default function App() {
           writeNfo: Boolean(loaded.writeNfo),
           writeCover: Boolean(loaded.writeCover),
           embedCover: Boolean(loaded.embedCover),
+          nameTemplate: loaded.nameTemplate ?? default_settings.nameTemplate,
+          siteTemplates: loaded.siteTemplates || {},
+          typeTemplates: loaded.typeTemplates || {},
+          nameConflict: loaded.nameConflict || default_settings.nameConflict,
+          classificationRules: Array.isArray(loaded.classificationRules)
+            ? loaded.classificationRules
+            : [],
         };
         setSettings(merged);
         setSettingsDraft(merged);
@@ -831,6 +854,138 @@ export default function App() {
     }
   }
 
+  async function refreshNamingPreview(template?: string) {
+    const tpl =
+      template ??
+      (settingsDraft.nameTemplate ||
+        "{site}/{author}/{date:%Y-%m}/{title} [{id}].{ext}");
+    setNamingPreviewBusy(true);
+    try {
+      const result = await invoke<NamingPreview>("naming_preview", {
+        template: tpl,
+        name: "example.mp4",
+      });
+      setNamingPreview(result.relative || "");
+    } catch (e) {
+      setNamingPreview(humanizeError(String(e)));
+    } finally {
+      setNamingPreviewBusy(false);
+    }
+  }
+
+  async function runRulesTest() {
+    const target = rulesTestUrl.trim() || url.trim();
+    if (!target) {
+      setRulesTestResult("請輸入要測試的 URL");
+      return;
+    }
+    setRulesTestBusy(true);
+    try {
+      // persist draft rules first so core config matches editor
+      await invoke("save_settings", { settings: settingsDraft });
+      const result = await invoke<{
+        decision?: { matched?: boolean; rule_name?: string; skip?: boolean; folder?: string; template?: string; message?: string };
+        evaluated?: Array<{ name?: string; matches?: boolean }>;
+      }>("rules_test", { url: target });
+      const d = result.decision;
+      if (!d?.matched) {
+        setRulesTestResult("沒有規則命中");
+      } else {
+        setRulesTestResult(
+          [
+            d.message || `命中：${d.rule_name || ""}`,
+            d.skip ? "動作：略過" : null,
+            d.folder ? `資料夾：${d.folder}` : null,
+            d.template ? `模板：${d.template}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        );
+      }
+    } catch (e) {
+      setRulesTestResult(humanizeError(String(e)));
+    } finally {
+      setRulesTestBusy(false);
+    }
+  }
+
+  function updateRule(index: number, patch: Partial<ClassifyRule>) {
+    setSettingsDraft((s) => {
+      const rules = [...(s.classificationRules || [])];
+      rules[index] = { ...rules[index], ...patch };
+      return { ...s, classificationRules: rules };
+    });
+    setSettingsDirty(true);
+  }
+
+  function moveRule(index: number, delta: number) {
+    setSettingsDraft((s) => {
+      const rules = [...(s.classificationRules || [])];
+      const next = index + delta;
+      if (next < 0 || next >= rules.length) return s;
+      const tmp = rules[index];
+      rules[index] = rules[next];
+      rules[next] = tmp;
+      return { ...s, classificationRules: rules };
+    });
+    setSettingsDirty(true);
+  }
+
+  async function runRepairScan() {
+    setRepairBusy(true);
+    setError(null);
+    try {
+      const result = await invoke<RepairScanResult>("repair_scan", {
+        verifyHash: repairVerifyHash,
+        noOrphans: false,
+        dirs: settings.downloadDir ? [settings.downloadDir] : [],
+      });
+      setRepairResult(result);
+      setSelectedRepair(new Set());
+    } catch (e) {
+      setError(humanizeError(String(e)));
+    } finally {
+      setRepairBusy(false);
+    }
+  }
+
+  async function runRepairFix(action: string) {
+    if (!repairResult) return;
+    const selected = repairResult.issues.filter((i) => selectedRepair.has(i.id));
+    if (selected.length === 0) {
+      setError("請先勾選要處理的項目");
+      return;
+    }
+    setRepairBusy(true);
+    setError(null);
+    try {
+      await invoke("repair_fix", {
+        action,
+        issues: selected,
+        jobIds: selected.map((i) => i.job_id).filter(Boolean),
+        fileRowIds: selected
+          .map((i) => i.file_row_id)
+          .filter((v): v is number => typeof v === "number"),
+        relinkPath: action === "relink" ? relinkPath : undefined,
+        output: settings.downloadDir || output || undefined,
+      });
+      await runRepairScan();
+    } catch (e) {
+      setError(humanizeError(String(e)));
+    } finally {
+      setRepairBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (page !== "settings") return;
+    const handle = window.setTimeout(() => {
+      void refreshNamingPreview();
+    }, 280);
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, settingsDraft.nameTemplate]);
+
   async function installFfmpegNow() {
     setFfmpegBusy(true);
     setError(null);
@@ -880,6 +1035,13 @@ export default function App() {
             onClick={() => setPage("history")}
           >
             歷史
+          </button>
+          <button
+            type="button"
+            className={page === "repair" ? "nav active" : "nav"}
+            onClick={() => setPage("repair")}
+          >
+            修復
           </button>
           <button
             type="button"
@@ -1080,6 +1242,126 @@ export default function App() {
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+      ) : page === "repair" ? (
+        <section className="composer settings" aria-label="修復中心">
+          <div className="queue-head">
+            <h2>修復中心</h2>
+            <p>比對歷史資料庫與檔案系統：缺檔、半成品、大小／hash 不符、orphan</p>
+          </div>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={repairVerifyHash}
+              onChange={(e) => setRepairVerifyHash(e.target.checked)}
+            />
+            <span>掃描時驗證 sha256（較慢）</span>
+          </label>
+          <div className="actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={repairBusy}
+              onClick={() => void runRepairScan()}
+            >
+              {repairBusy ? "掃描中…" : "開始掃描"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              disabled={repairBusy || selectedRepair.size === 0}
+              onClick={() => void runRepairFix("requeue")}
+            >
+              重新排隊
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              disabled={repairBusy || selectedRepair.size === 0}
+              onClick={() => void runRepairFix("cleanup-partials")}
+            >
+              清理 .part
+            </button>
+            <button
+              type="button"
+              className="ghost danger"
+              disabled={repairBusy || selectedRepair.size === 0}
+              onClick={() => void runRepairFix("remove-stale")}
+            >
+              移除過期紀錄
+            </button>
+          </div>
+          <label className="field">
+            <span>重新連結路徑（relink）</span>
+            <div className="folder-row">
+              <input
+                value={relinkPath}
+                onChange={(e) => setRelinkPath(e.target.value)}
+                placeholder="選取後填入實際檔案路徑"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className="ghost"
+                disabled={repairBusy || selectedRepair.size === 0 || !relinkPath.trim()}
+                onClick={() => void runRepairFix("relink")}
+              >
+                重新連結
+              </button>
+            </div>
+          </label>
+          {error && <p className="error">{error}</p>}
+          {repairResult ? (
+            <>
+              <p className="hint">
+                掃描 jobs={repairResult.scanned_jobs}、files=
+                {repairResult.scanned_files}、問題={repairResult.issue_count}
+              </p>
+              {repairResult.issues.length === 0 ? (
+                <div className="empty">
+                  <p>沒有發現問題。</p>
+                </div>
+              ) : (
+                <ul className="jobs">
+                  {repairResult.issues.map((issue: RepairIssue) => (
+                    <li key={issue.id} className="job">
+                      <div className="job-top">
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={selectedRepair.has(issue.id)}
+                            onChange={(e) => {
+                              setSelectedRepair((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(issue.id);
+                                else next.delete(issue.id);
+                                return next;
+                              });
+                            }}
+                          />
+                        </label>
+                        <span className={`badge ${siteTone(issue.site)}`}>
+                          {issue.kind}
+                        </span>
+                        <div className="job-title">
+                          <strong>{issue.title || issue.path || issue.id}</strong>
+                          <span>
+                            {issue.site ? `${issue.site} · ` : ""}
+                            {issue.message || ""}
+                          </span>
+                          <span>{issue.path || issue.source_url || ""}</span>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : (
+            <div className="empty">
+              <p>尚未掃描。點「開始掃描」檢查歷史與檔案是否一致。</p>
+            </div>
           )}
         </section>
       ) : page === "settings" ? (
@@ -1372,6 +1654,295 @@ export default function App() {
                 重新偵測
               </button>
             </div>
+          </div>
+
+          <div className="settings-block">
+            <h3>命名模板</h3>
+            <p className="hint">
+              使用 metadata 欄位，例如{" "}
+              {"{site}/{author}/{date:%Y-%m}/{title} [{id}].{ext}"}；空白＝沿用站點預設檔名
+            </p>
+            <label className="field">
+              <span>預設模板</span>
+              <input
+                value={settingsDraft.nameTemplate}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    nameTemplate: e.target.value,
+                  }));
+                  setSettingsDirty(true);
+                }}
+                placeholder="{site}/{author}/{title}.{ext}"
+                spellCheck={false}
+              />
+            </label>
+            <label className="field compact">
+              <span>檔名衝突</span>
+              <select
+                value={settingsDraft.nameConflict}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    nameConflict: e.target.value as NameConflictMode,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="rename">重新命名（加序號）</option>
+                <option value="overwrite">覆蓋</option>
+                <option value="error">視為錯誤</option>
+              </select>
+            </label>
+            <p className="hint">
+              預覽：{namingPreviewBusy ? "計算中…" : namingPreview || "—"}
+            </p>
+            <div className="settings-grid">
+              <label className="field compact">
+                <span>Iwara 模板</span>
+                <input
+                  value={settingsDraft.siteTemplates?.iwara || ""}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      siteTemplates: {
+                        ...s.siteTemplates,
+                        iwara: e.target.value,
+                      },
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="可空白"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="field compact">
+                <span>Bilibili 模板</span>
+                <input
+                  value={settingsDraft.siteTemplates?.bilibili || ""}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      siteTemplates: {
+                        ...s.siteTemplates,
+                        bilibili: e.target.value,
+                      },
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="可空白"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="field compact">
+                <span>video 類型模板</span>
+                <input
+                  value={settingsDraft.typeTemplates?.video || ""}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      typeTemplates: {
+                        ...s.typeTemplates,
+                        video: e.target.value,
+                      },
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="可空白"
+                  spellCheck={false}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="settings-block">
+            <h3>分類規則</h3>
+            <p className="hint">由上到下比對，第一個命中的規則生效（資料夾／模板／略過）</p>
+            {(settingsDraft.classificationRules || []).map((rule, index) => (
+              <div key={rule.id} className="rule-editor">
+                <div className="settings-grid">
+                  <label className="field compact">
+                    <span>名稱</span>
+                    <input
+                      value={rule.name}
+                      onChange={(e) => updateRule(index, { name: e.target.value })}
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>站點</span>
+                    <input
+                      value={rule.match?.site || ""}
+                      onChange={(e) =>
+                        updateRule(index, {
+                          match: { ...rule.match, site: e.target.value },
+                        })
+                      }
+                      placeholder="iwara / bunkr / …"
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>動作</span>
+                    <select
+                      value={rule.action?.type || "folder"}
+                      onChange={(e) =>
+                        updateRule(index, {
+                          action: {
+                            ...rule.action,
+                            type: e.target.value as ClassifyRule["action"]["type"],
+                          },
+                        })
+                      }
+                    >
+                      <option value="folder">資料夾</option>
+                      <option value="template">模板</option>
+                      <option value="folder_and_template">資料夾＋模板</option>
+                      <option value="skip">略過</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="settings-grid">
+                  <label className="field compact">
+                    <span>標題 regex</span>
+                    <input
+                      value={rule.match?.title_regex || ""}
+                      onChange={(e) =>
+                        updateRule(index, {
+                          match: { ...rule.match, title_regex: e.target.value },
+                        })
+                      }
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>作者</span>
+                    <input
+                      value={rule.match?.author || ""}
+                      onChange={(e) =>
+                        updateRule(index, {
+                          match: { ...rule.match, author: e.target.value },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>媒體類型</span>
+                    <input
+                      value={rule.match?.media_type || ""}
+                      onChange={(e) =>
+                        updateRule(index, {
+                          match: { ...rule.match, media_type: e.target.value },
+                        })
+                      }
+                      placeholder="video / image"
+                    />
+                  </label>
+                </div>
+                <div className="settings-grid">
+                  <label className="field compact">
+                    <span>目標資料夾</span>
+                    <input
+                      value={rule.action?.folder || ""}
+                      onChange={(e) =>
+                        updateRule(index, {
+                          action: { ...rule.action, folder: e.target.value },
+                        })
+                      }
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>覆寫模板</span>
+                    <input
+                      value={rule.action?.template || ""}
+                      onChange={(e) =>
+                        updateRule(index, {
+                          action: { ...rule.action, template: e.target.value },
+                        })
+                      }
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={rule.enabled !== false}
+                      onChange={(e) => updateRule(index, { enabled: e.target.checked })}
+                    />
+                    <span>啟用</span>
+                  </label>
+                </div>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => moveRule(index, -1)}
+                    disabled={index === 0}
+                  >
+                    上移
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => moveRule(index, 1)}
+                    disabled={
+                      index >= (settingsDraft.classificationRules || []).length - 1
+                    }
+                  >
+                    下移
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost danger"
+                    onClick={() => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        classificationRules: (s.classificationRules || []).filter(
+                          (_, i) => i !== index,
+                        ),
+                      }));
+                      setSettingsDirty(true);
+                    }}
+                  >
+                    刪除
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div className="actions">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    classificationRules: [...(s.classificationRules || []), emptyRule()],
+                  }));
+                  setSettingsDirty(true);
+                }}
+              >
+                新增規則
+              </button>
+            </div>
+            <label className="field">
+              <span>以 URL 測試規則</span>
+              <div className="folder-row">
+                <input
+                  value={rulesTestUrl}
+                  onChange={(e) => setRulesTestUrl(e.target.value)}
+                  placeholder="貼上內容網址"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={rulesTestBusy}
+                  onClick={() => void runRulesTest()}
+                >
+                  {rulesTestBusy ? "測試中…" : "測試"}
+                </button>
+              </div>
+            </label>
+            {rulesTestResult && <p className="hint">{rulesTestResult}</p>}
           </div>
 
           <div className="actions">

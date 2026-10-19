@@ -70,6 +70,16 @@ struct AppSettings {
     nfo_sites: HashMap<String, bool>,
     #[serde(default = "default_site_flags")]
     cover_sites: HashMap<String, bool>,
+    #[serde(default)]
+    name_template: String,
+    #[serde(default)]
+    site_templates: HashMap<String, String>,
+    #[serde(default)]
+    type_templates: HashMap<String, String>,
+    #[serde(default = "default_name_conflict")]
+    name_conflict: String,
+    #[serde(default)]
+    classification_rules: Vec<serde_json::Value>,
 }
 
 fn default_on_duplicate() -> String {
@@ -78,6 +88,10 @@ fn default_on_duplicate() -> String {
 
 fn default_cover_naming() -> String {
     "poster".into()
+}
+
+fn default_name_conflict() -> String {
+    "rename".into()
 }
 
 fn default_site_flags() -> HashMap<String, bool> {
@@ -134,6 +148,11 @@ impl Default for AppSettings {
             cover_naming: default_cover_naming(),
             nfo_sites: default_site_flags(),
             cover_sites: default_site_flags(),
+            name_template: String::new(),
+            site_templates: HashMap::new(),
+            type_templates: HashMap::new(),
+            name_conflict: default_name_conflict(),
+            classification_rules: Vec::new(),
         }
     }
 }
@@ -265,6 +284,20 @@ fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
     Ok(load_settings_file(&app))
 }
 
+fn naming_config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("udl.config.json"))
+}
+
+fn settings_to_udl_config(settings: &AppSettings) -> serde_json::Value {
+    serde_json::json!({
+        "name_template": settings.name_template,
+        "site_templates": settings.site_templates,
+        "type_templates": settings.type_templates,
+        "name_conflict": settings.name_conflict,
+        "rules": settings.classification_rules,
+    })
+}
+
 #[tauri::command]
 fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
     let mut settings = settings;
@@ -280,12 +313,22 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, S
     if settings.workers > 16 {
         settings.workers = 16;
     }
+    let conflict = settings.name_conflict.trim();
+    settings.name_conflict = match conflict {
+        "overwrite" | "error" | "rename" => conflict.to_string(),
+        _ => default_name_conflict(),
+    };
     let path = settings_path(&app)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let raw = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     fs::write(&path, raw).map_err(|e| e.to_string())?;
+    // mirror naming/rules into core config for CLI parity
+    let cfg_path = naming_config_path(&app)?;
+    let cfg_raw =
+        serde_json::to_string_pretty(&settings_to_udl_config(&settings)).map_err(|e| e.to_string())?;
+    fs::write(&cfg_path, cfg_raw).map_err(|e| e.to_string())?;
     Ok(settings)
 }
 
@@ -561,6 +604,17 @@ async fn start_download(
     if settings.embed_cover {
         args.push("--embed-cover".into());
     }
+    let name_tpl = settings.name_template.trim();
+    if !name_tpl.is_empty() {
+        args.push("--name-template".into());
+        args.push(name_tpl.to_string());
+    }
+    if let Ok(cfg_path) = naming_config_path(&app) {
+        if cfg_path.is_file() {
+            args.push("--config".into());
+            args.push(cfg_path.to_string_lossy().into_owned());
+        }
+    }
     let (mut rx, child) = spawn_udl(&app, args)?;
 
     state
@@ -804,6 +858,154 @@ async fn queue_list(
         .map_err(|e| format!("parse queue JSON: {e}; raw={stdout}; err={stderr}"))
 }
 
+#[tauri::command]
+async fn naming_preview(
+    app: AppHandle,
+    template: String,
+    metadata: Option<serde_json::Value>,
+    name: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let meta = metadata.unwrap_or_else(|| {
+        serde_json::json!({
+            "site": "iwara",
+            "author": "作者",
+            "title": "範例標題",
+            "item_id": "abc123",
+            "upload_date": "2026-03-15",
+            "tags": ["demo", "tag"]
+        })
+    });
+    let mut args = vec![
+        "naming".into(),
+        "preview".into(),
+        "--json".into(),
+        "--template".into(),
+        template,
+        "--metadata".into(),
+        meta.to_string(),
+    ];
+    if let Some(n) = name.filter(|s| !s.trim().is_empty()) {
+        args.push("--name".into());
+        args.push(n);
+    }
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("udl naming preview exited {:?}: {stderr}", code));
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse naming preview: {e}; raw={stdout}; err={stderr}"))
+}
+
+#[tauri::command]
+async fn rules_test(
+    app: AppHandle,
+    url: Option<String>,
+    metadata: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let cfg = naming_config_path(&app)?;
+    let mut args = vec!["rules".into(), "test".into(), "--json".into()];
+    if cfg.is_file() {
+        args.push("--config".into());
+        args.push(cfg.to_string_lossy().into_owned());
+    }
+    if let Some(u) = url.filter(|s| !s.trim().is_empty()) {
+        args.push(u);
+    } else if let Some(meta) = metadata {
+        args.push("--metadata".into());
+        args.push(meta.to_string());
+    } else {
+        return Err("請提供 URL 或 metadata".into());
+    }
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("udl rules test exited {:?}: {stderr}", code));
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse rules test: {e}; raw={stdout}; err={stderr}"))
+}
+
+#[tauri::command]
+async fn repair_scan(
+    app: AppHandle,
+    verify_hash: Option<bool>,
+    no_orphans: Option<bool>,
+    dirs: Option<Vec<String>>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec!["repair".into(), "scan".into(), "--json".into()];
+    if verify_hash.unwrap_or(false) {
+        args.push("--verify-hash".into());
+    }
+    if no_orphans.unwrap_or(false) {
+        args.push("--no-orphans".into());
+    }
+    if let Some(list) = dirs {
+        for d in list {
+            if !d.trim().is_empty() {
+                args.push("--dir".into());
+                args.push(d);
+            }
+        }
+    }
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("udl repair scan exited {:?}: {stderr}", code));
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse repair scan: {e}; raw={stdout}; err={stderr}"))
+}
+
+#[tauri::command]
+async fn repair_fix(
+    app: AppHandle,
+    action: String,
+    job_ids: Option<Vec<String>>,
+    file_row_ids: Option<Vec<i64>>,
+    relink_path: Option<String>,
+    output: Option<String>,
+    issues: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "repair".into(),
+        "fix".into(),
+        action,
+        "--json".into(),
+    ];
+    if let Some(ids) = job_ids {
+        for id in ids {
+            args.push("--job-id".into());
+            args.push(id);
+        }
+    }
+    if let Some(ids) = file_row_ids {
+        for id in ids {
+            args.push("--file-row-id".into());
+            args.push(id.to_string());
+        }
+    }
+    if let Some(path) = relink_path.filter(|s| !s.trim().is_empty()) {
+        args.push("--relink-path".into());
+        args.push(path);
+    }
+    if let Some(out) = output.filter(|s| !s.trim().is_empty()) {
+        args.push("--output".into());
+        args.push(out);
+    }
+    if let Some(iss) = issues {
+        args.push("--issues".into());
+        args.push(iss.to_string());
+    }
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("udl repair fix exited {:?}: {stderr}", code));
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse repair fix: {e}; raw={stdout}; err={stderr}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -827,7 +1029,11 @@ pub fn run() {
             read_local_image,
             history_list,
             history_delete,
-            queue_list
+            queue_list,
+            naming_preview,
+            rules_test,
+            repair_scan,
+            repair_fix
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

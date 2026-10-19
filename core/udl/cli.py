@@ -12,14 +12,20 @@ from threading import Event
 from typing import Any
 
 from udl import __version__
+from udl.config import load_config, save_config, udl_config
 from udl.events import dump_schema, emitter
+from udl.metadata import item_metadata
+from udl.naming import preview_template
 from udl.postprocess.artifacts import run_postprocess
 from udl.postprocess.options import parse_site_toggle_list, postprocess_options
+from udl.repair import apply_repair_actions, scan_repair
 from udl.router import get_extractor, resolve
+from udl.rules import parse_rules, test_rules_against_metadata
 from udl.session import (
     finalize_download,
     metadata_payload,
     open_store,
+    plan_file_destinations,
     prepare_download,
 )
 from udl.store.duplicates import duplicate_mode
@@ -172,6 +178,19 @@ def _build_parser() -> argparse.ArgumentParser:
             "(all|none|comma list; prefix - to disable)"
         ),
     )
+    p_get.add_argument(
+        "--name-template",
+        default=None,
+        help=(
+            "output path template using metadata fields "
+            "e.g. '{site}/{author}/{date:%Y-%m}/{title} [{id}].{ext}'"
+        ),
+    )
+    p_get.add_argument(
+        "--config",
+        default=None,
+        help="path to udl.config.json / .toml (naming templates + classification rules)",
+    )
 
     p_schema = sub.add_parser("schema", help="print JSON-lines event schema")
     p_schema.add_argument(
@@ -262,6 +281,92 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_q_status.add_argument("--message", default=None)
     p_q_status.add_argument("--json", action="store_true")
+
+    p_naming = sub.add_parser("naming", help="name template preview helpers")
+    naming_sub = p_naming.add_subparsers(dest="naming_command", required=True)
+    p_naming_preview = naming_sub.add_parser("preview", help="preview a name template")
+    p_naming_preview.add_argument(
+        "--template",
+        required=True,
+        help="template string with {field} / {date:%Y-%m} placeholders",
+    )
+    p_naming_preview.add_argument(
+        "--metadata",
+        default="{}",
+        help="JSON object of item_metadata fields",
+    )
+    p_naming_preview.add_argument(
+        "--name",
+        default="example.mp4",
+        help="original filename used for {ext} / {name}",
+    )
+    p_naming_preview.add_argument("--json", action="store_true")
+
+    p_rules = sub.add_parser("rules", help="classification rules")
+    rules_sub = p_rules.add_subparsers(dest="rules_command", required=True)
+    p_rules_list = rules_sub.add_parser("list", help="list rules from config")
+    p_rules_list.add_argument("--config", default=None)
+    p_rules_list.add_argument("--json", action="store_true")
+    p_rules_test = rules_sub.add_parser("test", help="test rules against a URL or metadata")
+    p_rules_test.add_argument("url", nargs="?", default=None, help="optional URL to probe")
+    p_rules_test.add_argument("--config", default=None)
+    p_rules_test.add_argument("--metadata", default=None, help="JSON metadata override")
+    p_rules_test.add_argument("--name", default=None, help="original filename hint")
+    p_rules_test.add_argument("--size", type=int, default=None)
+    p_rules_test.add_argument("--json", action="store_true")
+
+    p_config = sub.add_parser("config", help="show or write naming/rules config")
+    config_sub = p_config.add_subparsers(dest="config_command", required=True)
+    p_cfg_show = config_sub.add_parser("show", help="print effective config")
+    p_cfg_show.add_argument("--config", default=None)
+    p_cfg_show.add_argument("--json", action="store_true")
+    p_cfg_save = config_sub.add_parser("save", help="write config JSON from stdin or --data")
+    p_cfg_save.add_argument("--config", default=None)
+    p_cfg_save.add_argument("--data", default=None, help="JSON config payload")
+    p_cfg_save.add_argument("--json", action="store_true")
+
+    p_repair = sub.add_parser("repair", help="scan / fix history vs filesystem")
+    repair_sub = p_repair.add_subparsers(dest="repair_command", required=True)
+    p_repair_scan = repair_sub.add_parser("scan", help="scan for missing/partial/mismatch")
+    p_repair_scan.add_argument("--json", action="store_true")
+    p_repair_scan.add_argument(
+        "--dir",
+        action="append",
+        dest="dirs",
+        default=None,
+        help="extra output dir to scan for orphans (repeatable)",
+    )
+    p_repair_scan.add_argument(
+        "--verify-hash",
+        action="store_true",
+        help="recompute sha256 (slower)",
+    )
+    p_repair_scan.add_argument(
+        "--no-orphans",
+        action="store_true",
+        help="skip orphan file discovery under output dirs",
+    )
+    p_repair_fix = repair_sub.add_parser("fix", help="apply a repair action")
+    p_repair_fix.add_argument(
+        "action",
+        choices=("requeue", "relink", "remove-stale", "cleanup-partials"),
+    )
+    p_repair_fix.add_argument("--json", action="store_true")
+    p_repair_fix.add_argument("--job-id", action="append", dest="job_ids", default=None)
+    p_repair_fix.add_argument(
+        "--file-row-id",
+        action="append",
+        dest="file_row_ids",
+        type=int,
+        default=None,
+    )
+    p_repair_fix.add_argument("--relink-path", default=None)
+    p_repair_fix.add_argument("--output", default=None, help="output dir for requeue")
+    p_repair_fix.add_argument(
+        "--issues",
+        default=None,
+        help="JSON array of issue objects from repair scan",
+    )
 
     return parser
 
@@ -377,6 +482,7 @@ def cmd_get(args: argparse.Namespace) -> int:
     job_id = args.job_id or str(uuid.uuid4())
     on_dup: duplicate_mode = args.on_duplicate
     conn = None if args.no_history else open_store(args.db)
+    cfg = load_config(getattr(args, "config", None))
 
     ext = None
     skip_indexes: set[int] = set()
@@ -415,6 +521,7 @@ def cmd_get(args: argparse.Namespace) -> int:
 
     meta_dict = metadata_payload(result)
     already_all = False
+    name_tpl = getattr(args, "name_template", None)
     if conn is not None:
         skip_indexes, overrides, already_all = prepare_download(
             conn,
@@ -429,6 +536,16 @@ def cmd_get(args: argparse.Namespace) -> int:
             cloudflare_bypass=bool(args.cloudflare_bypass),
             workers=args.workers,
             ffmpeg=args.ffmpeg,
+            config=cfg,
+            name_template=name_tpl,
+        )
+    else:
+        skip_indexes, overrides, _decisions = plan_file_destinations(
+            result,
+            out,
+            config=cfg,
+            name_template=name_tpl,
+            on_duplicate=on_dup,
         )
 
     emit.job(
@@ -795,6 +912,156 @@ def cmd_queue(args: argparse.Namespace) -> int:
     return 2
 
 
+def _print_json(payload: Any, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def cmd_naming(args: argparse.Namespace) -> int:
+    if args.naming_command == "preview":
+        try:
+            meta_raw = json.loads(args.metadata or "{}")
+        except json.JSONDecodeError as exc:
+            print(json.dumps({"error": f"invalid metadata JSON: {exc}"}))
+            return 1
+        if not isinstance(meta_raw, dict):
+            print(json.dumps({"error": "metadata must be a JSON object"}))
+            return 1
+        if "site" not in meta_raw:
+            meta_raw["site"] = "example"
+        payload = preview_template(
+            args.template,
+            meta_raw,
+            original_name=args.name,
+        )
+        _print_json(payload, bool(args.json))
+        return 0
+    return 2
+
+
+def cmd_rules(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    if args.rules_command == "list":
+        payload = {"rules": [r.to_dict() for r in cfg.rules]}
+        _print_json(payload, bool(args.json))
+        return 0
+    if args.rules_command == "test":
+        meta: dict[str, Any] | item_metadata
+        original_name = args.name
+        size = args.size
+        if args.metadata:
+            try:
+                meta = json.loads(args.metadata)
+            except json.JSONDecodeError as exc:
+                print(json.dumps({"error": f"invalid metadata JSON: {exc}"}))
+                return 1
+            if not isinstance(meta, dict):
+                print(json.dumps({"error": "metadata must be a JSON object"}))
+                return 1
+        elif args.url:
+            info = resolve(args.url)
+            if not info.supported:
+                print(json.dumps({"error": info.message or "unsupported URL"}))
+                return 2
+            ext = None
+            try:
+                ext = get_extractor(args.url)
+                result = ext.resolve(args.url)
+                meta = result.metadata or item_metadata(site=result.site, title=result.title)
+                if result.files:
+                    original_name = original_name or result.files[0].name
+                    size = size if size is not None else result.files[0].size
+            except Exception as exc:  # noqa: BLE001
+                print(json.dumps({"error": str(exc)}))
+                return 1
+            finally:
+                if ext is not None:
+                    close = getattr(ext, "close", None)
+                    if callable(close):
+                        close()
+        else:
+            print(json.dumps({"error": "provide url or --metadata"}))
+            return 2
+        payload = test_rules_against_metadata(
+            cfg.rules,
+            meta,
+            size=size,
+            original_name=original_name,
+        )
+        _print_json(payload, bool(args.json))
+        return 0
+    return 2
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    if args.config_command == "show":
+        cfg = load_config(args.config)
+        _print_json(cfg.to_dict(), bool(args.json))
+        return 0
+    if args.config_command == "save":
+        raw = args.data
+        if raw is None:
+            raw = sys.stdin.read()
+        try:
+            data = json.loads(raw or "{}")
+        except json.JSONDecodeError as exc:
+            print(json.dumps({"error": f"invalid JSON: {exc}"}))
+            return 1
+        if not isinstance(data, dict):
+            print(json.dumps({"error": "config must be a JSON object"}))
+            return 1
+        cfg = udl_config.from_dict(data)
+        # ensure rules parse even if only rules key present
+        if "rules" in data:
+            cfg.rules = parse_rules(data)
+        path = save_config(cfg, args.config)
+        payload = {"ok": True, "path": str(path), "config": cfg.to_dict()}
+        _print_json(payload, bool(args.json))
+        return 0
+    return 2
+
+
+def cmd_repair(args: argparse.Namespace) -> int:
+    conn = open_store(args.db)
+    try:
+        if args.repair_command == "scan":
+            result = scan_repair(
+                conn,
+                output_dirs=args.dirs,
+                verify_hash=bool(args.verify_hash),
+                include_orphans=not bool(args.no_orphans),
+            )
+            _print_json(result.to_dict(), bool(args.json))
+            return 0
+        if args.repair_command == "fix":
+            issues = None
+            if args.issues:
+                try:
+                    issues = json.loads(args.issues)
+                except json.JSONDecodeError as exc:
+                    print(json.dumps({"error": f"invalid --issues JSON: {exc}"}))
+                    return 1
+                if not isinstance(issues, list):
+                    print(json.dumps({"error": "--issues must be a JSON array"}))
+                    return 1
+            payload = apply_repair_actions(
+                conn,
+                action=args.action,
+                issues=issues,
+                job_ids=args.job_ids,
+                file_row_ids=args.file_row_ids,
+                relink_path=args.relink_path,
+                output_dir=args.output,
+            )
+            _print_json(payload, bool(args.json))
+            return 0 if not payload.get("errors") else 1
+    finally:
+        conn.close()
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -814,6 +1081,14 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_history(args)
     if args.command == "queue":
         return cmd_queue(args)
+    if args.command == "naming":
+        return cmd_naming(args)
+    if args.command == "rules":
+        return cmd_rules(args)
+    if args.command == "config":
+        return cmd_config(args)
+    if args.command == "repair":
+        return cmd_repair(args)
     parser.error(f"unknown command {args.command}")
     return 2
 
