@@ -30,7 +30,7 @@
 - [x] `merging` JSON-lines 事件 + `udl probe`（分 P／畫質）
 - [x] GUI Bilibili 徽章＋分 P／畫質選擇
 - [x] 明確拒絕付費牆／大會員／區域繞過（清楚錯誤碼／訊息）
-- [ ] QR／Cookie 登入（stub／設計註解；憑證進 OS keychain — 延後至 v0.7）
+- [x] QR／Cookie 登入（v0.7-B；憑證進 OS keychain）
 - [x] 首次執行可下載 FFmpeg（checksum；macOS arm64 / Windows x64）
 - [x] GUI 設定頁（下載目錄、並發、站點選項、FFmpeg 路徑）
 - [x] 佇列打磨（並發／暫停／取消／重試／zh-TW 錯誤／開檔／剪貼簿）
@@ -108,22 +108,30 @@
 
 ## v0.7 — Bilibili 對齊 Bili23-Downloader
 
-### v0.7-A（本版／匿名＋可插 session cookie）
+### v0.7-A（匿名＋可插 session cookie）
 
 - [x] 解析類型：普通多 P、bangumi ep/ss/md、cheese、互動 graph、au/am、UP 空間、公開收藏夾、每周必看、合集／系列
-- [x] 帳號專屬清單（稍後再看／歷史／追番／訂閱合集）→ `requires_login` stub（等登入 PR）
+- [x] 帳號專屬清單 stub → `requires_login`（由 v0.7-B 接上）
 - [x] 批次多連結、UP／收藏夾 keyword、條件自動勾選（日期／時長／標題／P 範圍）
 - [x] 畫質列表＋AVC／HEVC／AV1、音訊品質（含 Hi-Res／Dolby **僅 API 有提供時**）
 - [x] 彈幕 xml／ass／json、字幕 srt／lrc／txt／ass／json、章節、mp4／mkv、可選 ASS 嵌入
 - [x] 統一 metadata＋per-type 命名模板預設；接入 NFO／封面／規則／去重
 - [x] GUI「Bilibili」解析頁（樹狀勾選 → 佇列）
-- [x] CDN／自訂 Host：TODO（避開與 PR #6 UA／代理衝突；見 `docs/bilibili.md`）
-- [ ] QR／SMS／Cookie 登入（憑證進 OS keychain；設計已預留 `set_session_cookies`／`--sessdata`）
+
+### v0.7-B（本版／登入＋帳號清單＋CDN）
+
+- [x] QR 掃碼登入（poll）＋手動 Cookie 貼上；session 進 `udl.secrets`（`bilibili.session`）
+- [x] 簡訊登入 best-effort（GeeTest 需瀏覽器；文件與 GUI 標明）
+- [x] 驗證／重新整理／登出；GUI「帳號」頁（QR、使用者名稱、VIP）
+- [x] session 接入所有 Bilibili API；帳號清單：稍後再看／歷史／追番／訂閱合集／自己的收藏夾＋keyword
+- [x] 登入後暴露帳號有權之畫質（8K／4K／HDR／DV／Hi-Res／Atmos）— **不**繞過 VIP／付費／區域
+- [x] CDN 節點偏好＋自訂 UA／Host（接 PR #6 `udl.network`）
+- [x] 更新 `docs/bilibili.md`／本 ROADMAP；保留 NOTICE
 
 ### 仍屬 v0.7 follow-up
 
-- [ ] 登入後帳號清單與更高畫質（仍不繞過大會員／付費／區域）
 - [ ] protobuf 分段彈幕（目前走經典 XML comment API）
+- [ ] 簡訊登入內嵌 GeeTest（目前需外部瀏覽器完成驗證）
 
 ## 不做／延後
 

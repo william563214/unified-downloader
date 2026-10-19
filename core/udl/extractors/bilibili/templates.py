@@ -15,6 +15,11 @@ default_type_templates: dict[str, str] = {
     "bilibili.popular": "weekly/{collection}/{title}.{ext}",
     "bilibili.collection": "collection/{collection}/{title}.{ext}",
     "bilibili.series": "series/{collection}/{title}.{ext}",
+    "bilibili.watchlater": "watchlater/{title}.{ext}",
+    "bilibili.history": "history/{title}.{ext}",
+    "bilibili.followed_bangumi": "bangumi/{title}.{ext}",
+    "bilibili.subscribed_collections": "collection/{collection}/{title}.{ext}",
+    "bilibili.favorite_folders": "fav/{collection}/{title}.{ext}",
 }
 
 # simpler single-file defaults when only one part
@@ -30,6 +35,11 @@ default_single_templates: dict[str, str] = {
     "bilibili.popular": "weekly/{title}.{ext}",
     "bilibili.collection": "collection/{collection}/{title}.{ext}",
     "bilibili.series": "series/{collection}/{title}.{ext}",
+    "bilibili.watchlater": "watchlater/{title}.{ext}",
+    "bilibili.history": "history/{title}.{ext}",
+    "bilibili.followed_bangumi": "bangumi/{title}.{ext}",
+    "bilibili.subscribed_collections": "collection/{title}.{ext}",
+    "bilibili.favorite_folders": "fav/{title}.{ext}",
 }
 
 

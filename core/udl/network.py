@@ -49,6 +49,13 @@ class network_settings:
     aria2_enabled: bool = False
     aria2_rpc_url: str = "http://127.0.0.1:6800/jsonrpc"
     aria2_rpc_secret: str | None = None
+    # bilibili CDN / Host (shared networking settings; used by bili stream download)
+    # preferred CDN hostnames e.g. upos-sz-mirrorcos.bilivideo.com
+    cdn_hosts: list[str] = field(default_factory=list)
+    # when True put replaced CDN URLs ahead of original playurl hosts
+    prefer_cdn_replace: bool = False
+    # optional Host header override for media downloads (empty = unset)
+    custom_host: str | None = None
 
 
 _active: network_settings = network_settings()
@@ -261,6 +268,14 @@ def settings_from_cli_args(args: Any) -> network_settings:
     aria2_enabled = bool(getattr(args, "aria2", False))
     aria2_url = getattr(args, "aria2_rpc", None) or "http://127.0.0.1:6800/jsonrpc"
     aria2_secret = getattr(args, "aria2_secret", None)
+    cdn_raw = getattr(args, "cdn_hosts", None) or getattr(args, "bili_cdn", None)
+    cdn_hosts: list[str] = []
+    if cdn_raw:
+        cdn_hosts = [p.strip() for p in str(cdn_raw).split(",") if p.strip()]
+    custom_host = getattr(args, "custom_host", None) or getattr(args, "bili_host", None)
+    prefer_cdn = bool(
+        getattr(args, "prefer_cdn", False) or getattr(args, "bili_prefer_cdn", False)
+    )
     return network_settings(
         user_agent=str(ua),
         proxy_mode=proxy_mode,
@@ -272,4 +287,7 @@ def settings_from_cli_args(args: Any) -> network_settings:
         aria2_enabled=aria2_enabled,
         aria2_rpc_url=str(aria2_url),
         aria2_rpc_secret=str(aria2_secret) if aria2_secret else None,
+        cdn_hosts=cdn_hosts,
+        prefer_cdn_replace=prefer_cdn or bool(cdn_hosts),
+        custom_host=str(custom_host).strip() if custom_host else None,
     )

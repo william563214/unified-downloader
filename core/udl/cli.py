@@ -86,6 +86,24 @@ def _add_network_args(parser: argparse.ArgumentParser, *, download: bool = False
             default=None,
             help="aria2 RPC secret token (or store via udl secrets aria2.rpc_secret)",
         )
+    parser.add_argument(
+        "--cdn-hosts",
+        default=None,
+        help=(
+            "comma-separated preferred Bilibili CDN hostnames "
+            "(e.g. upos-sz-mirrorcos.bilivideo.com)"
+        ),
+    )
+    parser.add_argument(
+        "--prefer-cdn",
+        action="store_true",
+        help="prefer replaced CDN hosts ahead of original playurl URLs",
+    )
+    parser.add_argument(
+        "--custom-host",
+        default=None,
+        help="optional Host header override for media downloads",
+    )
 
 
 def _apply_network(args: argparse.Namespace) -> None:
@@ -271,8 +289,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--sessdata",
         default=None,
         help=(
-            "optional Bilibili SESSDATA cookie (in-memory only; "
-            "login UX deferred — plug-in for later udl.secrets PR)"
+            "optional Bilibili SESSDATA for this run (in-memory). "
+            "Prefer `udl bili login` which stores session in OS keychain"
         ),
     )
     p_get.add_argument(
@@ -534,10 +552,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="JSON array of issue objects from repair scan",
     )
 
-    p_secrets = sub.add_parser("secrets", help="OS keychain helpers for proxy / future login")
+    p_secrets = sub.add_parser(
+        "secrets", help="OS keychain helpers for proxy / login tokens"
+    )
     sec_sub = p_secrets.add_subparsers(dest="secrets_command", required=True)
     p_sec_set = sec_sub.add_parser("set", help="store a secret")
-    p_sec_set.add_argument("key", help="secret key e.g. proxy.custom")
+    p_sec_set.add_argument("key", help="secret key e.g. proxy.custom bilibili.session")
     p_sec_set.add_argument("value", nargs="?", default=None, help="value (or read stdin)")
     p_sec_get = sec_sub.add_parser("get", help="read a secret (prints nothing if missing)")
     p_sec_get.add_argument("key", help="secret key")
@@ -547,6 +567,74 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sec_del.add_argument("--json", action="store_true")
 
     add_iwara_parser(sub)
+
+    p_bili = sub.add_parser("bili", help="Bilibili account login / session")
+    bili_sub = p_bili.add_subparsers(dest="bili_command", required=True)
+    p_bili_login = bili_sub.add_parser("login", help="QR Cookie SMS login helpers")
+    login_sub = p_bili_login.add_subparsers(dest="login_command", required=True)
+
+    p_login_status = login_sub.add_parser("status", help="validate stored session")
+    p_login_status.add_argument("--json", action="store_true")
+    _add_network_args(p_login_status)
+
+    p_login_refresh = login_sub.add_parser("refresh", help="refresh / re-validate session")
+    p_login_refresh.add_argument("--json", action="store_true")
+    _add_network_args(p_login_refresh)
+
+    p_login_logout = login_sub.add_parser("logout", help="clear session from keychain")
+    p_login_logout.add_argument("--json", action="store_true")
+    _add_network_args(p_login_logout)
+
+    p_login_qr = login_sub.add_parser("qr", help="generate QR code for scan login")
+    p_login_qr.add_argument("--json", action="store_true")
+    p_login_qr.add_argument(
+        "--no-image",
+        action="store_true",
+        help="omit PNG base64 in JSON (url/key only)",
+    )
+    _add_network_args(p_login_qr)
+
+    p_login_qr_poll = login_sub.add_parser("qr-poll", help="poll QR scan status")
+    p_login_qr_poll.add_argument("--key", required=True, help="qrcode_key from qr")
+    p_login_qr_poll.add_argument("--json", action="store_true")
+    _add_network_args(p_login_qr_poll)
+
+    p_login_cookie = login_sub.add_parser("cookie", help="login by pasting Cookie text")
+    p_login_cookie.add_argument(
+        "--text",
+        default=None,
+        help="cookie header or JSON (default: read stdin)",
+    )
+    p_login_cookie.add_argument("--json", action="store_true")
+    _add_network_args(p_login_cookie)
+
+    p_login_sms_cap = login_sub.add_parser(
+        "sms-captcha",
+        help="init GeeTest captcha for SMS (best-effort; needs browser solve)",
+    )
+    p_login_sms_cap.add_argument("--json", action="store_true")
+    _add_network_args(p_login_sms_cap)
+
+    p_login_sms_send = login_sub.add_parser(
+        "sms-send",
+        help="send SMS code after external GeeTest (best-effort)",
+    )
+    p_login_sms_send.add_argument("--tel", required=True)
+    p_login_sms_send.add_argument("--cid", default="86")
+    p_login_sms_send.add_argument("--token", required=True)
+    p_login_sms_send.add_argument("--challenge", required=True)
+    p_login_sms_send.add_argument("--validate", required=True)
+    p_login_sms_send.add_argument("--seccode", required=True)
+    p_login_sms_send.add_argument("--json", action="store_true")
+    _add_network_args(p_login_sms_send)
+
+    p_login_sms = login_sub.add_parser("sms", help="complete SMS login (best-effort)")
+    p_login_sms.add_argument("--tel", required=True)
+    p_login_sms.add_argument("--cid", default="86")
+    p_login_sms.add_argument("--code", required=True, help="SMS verification code")
+    p_login_sms.add_argument("--captcha-key", required=True)
+    p_login_sms.add_argument("--json", action="store_true")
+    _add_network_args(p_login_sms)
 
     return parser
 
@@ -1064,9 +1152,14 @@ def cmd_secrets(args: argparse.Namespace) -> int:
         return 0
     if args.secrets_command == "get":
         value = get_secret(args.key)
+        # never echo bilibili.session cookie blob to stdout unless explicitly asked
+        # --json only reports presence
         if args.json:
             print(json.dumps({"key": args.key, "found": value is not None}, ensure_ascii=False))
         elif value is not None:
+            if args.key.strip() == "bilibili.session":
+                print("(redacted — use --json to check presence)", file=sys.stderr)
+                return 0
             print(value)
         return 0 if value is not None else 1
     if args.secrets_command == "delete":
@@ -1076,6 +1169,117 @@ def cmd_secrets(args: argparse.Namespace) -> int:
         else:
             print("deleted" if removed else "missing", file=sys.stderr)
         return 0 if removed else 1
+    return 2
+
+
+def cmd_bili(args: argparse.Namespace) -> int:
+    if args.bili_command != "login":
+        return 2
+    try:
+        _apply_network(args)
+    except ValueError as exc:
+        print(f"invalid network option: {exc}", file=sys.stderr)
+        return 2
+    from udl.extractors.bilibili import login as bili_login
+
+    cmd = args.login_command
+    as_json = bool(getattr(args, "json", False))
+    try:
+        if cmd == "status":
+            profile = bili_login.validate_session(persist=False)
+            if as_json:
+                print(json.dumps(profile.to_dict(), ensure_ascii=False))
+            elif profile.logged_in:
+                vip = profile.vip_label or (
+                    f"vipType={profile.vip_type}" if profile.vip_type else "非大會員"
+                )
+                print(
+                    f"已登入：{profile.uname} (mid={profile.mid}) "
+                    f"Lv{profile.level} {vip}"
+                )
+            else:
+                print(profile.message or "未登入")
+            return 0 if profile.logged_in else 1
+        if cmd == "refresh":
+            profile = bili_login.refresh_session()
+            if as_json:
+                print(json.dumps(profile.to_dict(), ensure_ascii=False))
+            else:
+                print("已重新驗證" if profile.logged_in else (profile.message or "未登入"))
+            return 0 if profile.logged_in else 1
+        if cmd == "logout":
+            profile = bili_login.logout_session()
+            if as_json:
+                print(json.dumps(profile.to_dict(), ensure_ascii=False))
+            else:
+                print("已登出")
+            return 0
+        if cmd == "qr":
+            challenge = bili_login.qr_generate(with_image=not bool(args.no_image))
+            if as_json:
+                print(json.dumps(challenge.to_dict(), ensure_ascii=False))
+            else:
+                print(f"qrcode_key={challenge.qrcode_key}")
+                print(challenge.url)
+                print("用手機 B 站 App 掃描後執行: udl bili login qr-poll --key <key>")
+            return 0
+        if cmd == "qr-poll":
+            result = bili_login.qr_poll(args.key)
+            if as_json:
+                print(json.dumps(result.to_dict(), ensure_ascii=False))
+            else:
+                print(f"{result.message} ({result.code})")
+                if result.profile and result.profile.logged_in:
+                    print(f"已登入：{result.profile.uname}")
+            return 0 if result.code == bili_login.qr_code_success else 1
+        if cmd == "cookie":
+            text = args.text
+            if text is None:
+                text = sys.stdin.read()
+            profile = bili_login.login_with_cookies(text)
+            if as_json:
+                print(json.dumps(profile.to_dict(), ensure_ascii=False))
+            else:
+                print(f"已登入：{profile.uname} (mid={profile.mid})")
+            return 0
+        if cmd == "sms-captcha":
+            payload = bili_login.sms_captcha_init()
+            print(json.dumps(payload, ensure_ascii=False, indent=None if as_json else 2))
+            if not as_json:
+                print(bili_login.sms_geetest_note, file=sys.stderr)
+            return 0
+        if cmd == "sms-send":
+            payload = bili_login.sms_send(
+                tel=args.tel,
+                cid=args.cid,
+                token=args.token,
+                challenge=args.challenge,
+                validate=args.validate,
+                seccode=args.seccode,
+            )
+            if as_json:
+                print(json.dumps(payload, ensure_ascii=False))
+            else:
+                print(f"captcha_key={payload.get('captcha_key')}")
+            return 0
+        if cmd == "sms":
+            profile = bili_login.sms_login(
+                tel=args.tel,
+                cid=args.cid,
+                code=args.code,
+                captcha_key=args.captcha_key,
+            )
+            if as_json:
+                print(json.dumps(profile.to_dict(), ensure_ascii=False))
+            else:
+                print(f"已登入：{profile.uname} (mid={profile.mid})")
+            return 0
+    except bili_login.login_error as exc:
+        if as_json:
+            print(json.dumps({"error": str(exc), "code": exc.code}, ensure_ascii=False))
+        else:
+            print(f"login error: {exc}", file=sys.stderr)
+        return 1
     return 2
 
 
@@ -1415,6 +1619,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "iwara":
         _apply_network(args)
         return cmd_iwara(args)
+    if args.command == "bili":
+        return cmd_bili(args)
     parser.error(f"unknown command {args.command}")
     return 2
 
