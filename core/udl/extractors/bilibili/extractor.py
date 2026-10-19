@@ -15,7 +15,12 @@ from threading import Event
 from typing import Any
 from urllib.parse import urlparse
 
-from udl.download.http import download_file, download_item, download_options
+from udl.download.http import (
+    download_file,
+    download_item,
+    download_options,
+    options_from_network,
+)
 from udl.events import emitter
 from udl.extractors.base import extract_result, extracted_file, extractor
 from udl.extractors.bilibili.chapters import (
@@ -366,8 +371,8 @@ class bilibili_extractor(extractor):
             find_ffmpeg(self.ffmpeg)
 
         cli = self._cli()
-        opts = download_options(
-            output_dir=output_dir,
+        opts = options_from_network(
+            output_dir,
             workers=1,
             retries=retries,
             cancel=cancel,

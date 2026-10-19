@@ -10,14 +10,16 @@ unified-downloader/
 ├─ core/udl/              # Python 核心套件
 │  ├─ router.py           # URL → extractor 註冊表
 │  ├─ extractors/         # gofile、bunkr、iwara、bilibili/、external/mega
-│  ├─ download/http.py    # 共用 HTTP：續傳、重試、並行、取消
+│  ├─ download/http.py    # 共用 HTTP：續傳、重試、並行、取消、限速、aria2
+│  ├─ network.py          # 代理／UA／限速設定
+│  ├─ secrets.py          # OS keychain（keyring）
 │  ├─ postprocess/        # FFmpeg 合併／佈建；NFO／封面（v0.5-D）
 │  ├─ metadata.py         # 統一 item_metadata（全站）
 │  ├─ store/              # SQLite 歷史／佇列／去重（migrations）
 │  ├─ events.py           # JSON-lines 事件（含 metadata / duplicate / postprocess）
-│  └─ cli.py              # resolve / probe / get / history / queue / …
+│  └─ cli.py              # resolve / probe / get / history / queue / secrets / …
 ├─ app/                   # Tauri v2 + React/TS GUI（sidecar 叫 udl）
-├─ docs/                  # 事件協定、metadata、extractor 介面
+├─ docs/                  # 事件協定、metadata、networking、extractor 介面
 ├─ packaging/             # PyInstaller spec
 └─ scripts/               # sidecar 建置腳本
 ```
@@ -66,11 +68,12 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 
 ### GUI 設定與佇列
 
-- **設定頁**：預設下載資料夾、同時任務數、單一任務檔案並發、重複檔策略（skip／overwrite／rename）、命名模板（即時預覽）／分類規則、NFO／封面後處理（全域＋站點）、Iwara 畫質／Cloudflare（預設關）、Bilibili 分 P／畫質、FFmpeg 路徑；寫入應用資料目錄 `settings.json`（並同步 `udl.config.json`）。
+- **設定頁**：預設下載資料夾、同時任務數、單一任務檔案並發、重複檔策略（skip／overwrite／rename）、命名模板（即時預覽）／分類規則、NFO／封面後處理（全域＋站點）、Iwara 畫質／Cloudflare（預設關）、Bilibili 分 P／畫質、FFmpeg 路徑、**網路**（限速／代理／UA／aria2）；寫入應用資料目錄 `settings.json`（並同步 `udl.config.json`；代理密碼進 OS keychain）。
 - **佇列**：並發下載、暫停／取消／重試、zh-TW 錯誤訊息、開啟檔案／資料夾、焦點時偵測剪貼簿連結；狀態寫入 SQLite，重啟後未完成任務自動恢復。
 - **歷史頁**：搜尋、站點／狀態／日期／標籤篩選、排序、刪除條目（可選刪檔）；有本機封面時顯示縮圖。
 - **修復頁**：掃描缺檔／`.part`／大小／hash／orphan，可重新排隊、重新連結、清殘檔、刪過期紀錄。
 - **FFmpeg 首次佈建**：偵測不到時可下載目前 OS／arch 靜態建置並驗證 checksum（見 `NOTICE`）。CLI：`udl ffmpeg status` / `udl ffmpeg install`。
+- **網路**：見 `docs/networking.md`（全域限速、代理三模式、可選 aria2 RPC、自訂 UA）。
 
 ### 命名／規則／修復 CLI（v0.5）
 

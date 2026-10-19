@@ -51,7 +51,7 @@
 
 本版為**跨站**基礎設施（含外部工具 extractor），非單一站點功能。
 
-### 本 PR（foundation）
+### foundation（metadata／history／queue）
 
 - [x] 統一 `item_metadata` 模型；所有既有 extractor（Gofile／Bunkr／Iwara／Bilibili／MEGA）填入可取得欄位
 - [x] JSON-lines 事件攜帶 `metadata`；新增 `duplicate` 事件（見 `docs/metadata.md`、`docs/events.md`）
@@ -61,19 +61,27 @@
 - [x] 下載前去重：`(site,item_id)` → URL → size／hash；`--on-duplicate skip|overwrite|rename`；GUI 顯示已下載
 - [x] 持久化任務佇列（SQLite）；重啟後未完成 job 自動恢復；HTTP Range 續傳沿用既有引擎
 
-### 本 PR（naming／rules／repair）
+### naming／rules／repair
 
 - [x] 命名模板引擎：per-site／per-type、統一 metadata 欄位、跨平台檔名清理、多層目錄、衝突處理；CLI `--name-template`／config；GUI 設定即時預覽
 - [x] 分類規則引擎：有序規則（site／author／tags／title regex／duration／size／media type）→ 資料夾／模板覆寫／skip；JSON／TOML config；GUI 編輯與 URL 測試
 - [x] 修復中心：掃描歷史 DB vs 檔案系統（缺檔、`.part`、大小／hash 不符、orphan）；`udl repair scan|fix`（JSON）；GUI 修復頁
 - [x] 文件：`docs/naming-rules.md`
 
-### 後續 follow-ups（仍屬 v0.5 範圍，可分 PR）
+### NFO／cover
 
 - [x] NFO／sidecar 資訊檔輸出（`udl/postprocess/nfo.py`；CLI／GUI 全域＋站點開關）
 - [x] 封面／縮圖下載（`udl/postprocess/cover.py`；poster／folder.jpg；可選 FFmpeg 嵌入）
-- [ ] aria2 RPC 後端（與 PR #6 下載引擎工作協調）
-- [ ] 全域限速／Proxy（PR #6）
+
+### 網路（下載引擎）
+
+- [x] 全域／可選 per-job 限速（共用引擎；megatools `--limit-speed`）
+- [x] 代理三模式：none／system／custom（HTTP／HTTPS／SOCKS5＋可選帳密）
+- [x] `udl.secrets`（keyring）存放代理密碼，供日後登入重用
+- [x] 可選 aria2 JSON-RPC 後端（headers／cookies、進度事件、取消；連不上回退內建）
+- [x] 全域自訂 User-Agent
+- [x] GUI 設定「網路」區塊（zh-TW）＋ `docs/networking.md`
+
 
 ## v0.6 — Iwara 對齊 Moeary／IwaraTool
 

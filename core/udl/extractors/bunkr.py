@@ -24,6 +24,7 @@ from requests import Session
 
 from udl.extractors.base import extract_result, extracted_file, extractor
 from udl.metadata import item_metadata
+from udl.network import apply_to_session
 
 # from upstream config
 bunkr_api = "https://glb-apisign.cdn.cr/sign"
@@ -194,6 +195,7 @@ class bunkr_extractor(extractor):
     def __init__(self) -> None:
         self._session = Session()
         self._session.headers.update(default_headers)
+        apply_to_session(self._session)
 
     def resolve(
         self,

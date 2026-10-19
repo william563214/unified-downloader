@@ -30,6 +30,15 @@ from udl.events import emitter
 from udl.extractors.base import extract_result, extracted_file
 from udl.extractors.external.base import external_extractor
 from udl.metadata import item_metadata
+from udl.network import (
+    active_network,
+    build_proxy_url,
+    effective_job_limit_bps,
+    external_env,
+    format_speed_kib,
+    proxy_mode_custom,
+    proxy_mode_none,
+)
 
 # lowercase constants per project convention
 mega_tool_env = "UDL_MEGA_TOOL"
@@ -373,6 +382,8 @@ def parse_tool_line(line: str, *, tool_kind: str) -> progress_update | None:
 
 
 def _build_command(tool: mega_tool, url: str, output_dir: Path) -> list[str]:
+    net = active_network()
+    limit_kib = format_speed_kib(effective_job_limit_bps())
     if tool.kind == "megatools":
         cmd = [str(tool.path)]
         # multi-call binary needs the dl subcommand; megadl does not
@@ -384,11 +395,20 @@ def _build_command(tool: mega_tool, url: str, output_dir: Path) -> list[str]:
                 str(output_dir),
                 "--print-names",
                 "--no-ask-password",
-                url,
             ]
         )
+        if limit_kib is not None:
+            cmd.extend(["--limit-speed", str(limit_kib)])
+        mode = (net.proxy_mode or proxy_mode_none).lower()
+        if mode == proxy_mode_none:
+            cmd.extend(["--proxy", "none"])
+        elif mode == proxy_mode_custom:
+            proxy = build_proxy_url(net)
+            if proxy:
+                cmd.extend(["--proxy", proxy])
+        cmd.append(url)
         return cmd
-    # mega-get <link> <localdir>
+    # mega-get <link> <localdir> — proxy/speed via env (see external_env)
     return [str(tool.path), url, str(output_dir)]
 
 
@@ -658,6 +678,7 @@ class mega_extractor(external_extractor):
             "stderr": subprocess.PIPE,
             "text": True,
             "bufsize": 1,
+            "env": external_env(),
         }
         if sys.platform != "win32":
             popen_kwargs["start_new_session"] = True
