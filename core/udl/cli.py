@@ -1,0 +1,223 @@
+"""udl CLI — resolve and get with optional JSON-lines progress."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import signal
+import sys
+import uuid
+from pathlib import Path
+from threading import Event
+
+from udl import __version__
+from udl.events import dump_schema, emitter
+from udl.router import get_extractor, resolve
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="udl",
+        description="整合下載器 unified downloader core",
+    )
+    parser.add_argument("--version", action="version", version=f"udl {__version__}")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_resolve = sub.add_parser("resolve", help="detect site for a URL")
+    p_resolve.add_argument("url", help="content URL")
+    p_resolve.add_argument(
+        "--json",
+        action="store_true",
+        help="emit a JSON-lines resolve event (default: pretty JSON object)",
+    )
+
+    p_get = sub.add_parser("get", help="download a URL")
+    p_get.add_argument("url", help="content URL")
+    p_get.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        type=Path,
+        help="output directory",
+    )
+    p_get.add_argument(
+        "--json",
+        action="store_true",
+        help="emit JSON-lines progress events on stdout",
+    )
+    p_get.add_argument("--password", default=None, help="content password if required")
+    p_get.add_argument(
+        "--workers",
+        type=int,
+        default=3,
+        help="concurrent file downloads (default 3)",
+    )
+    p_get.add_argument(
+        "--retries",
+        type=int,
+        default=5,
+        help="per-file retry count (default 5)",
+    )
+    p_get.add_argument(
+        "--job-id",
+        default=None,
+        help="optional job id for events (default: random)",
+    )
+
+    p_schema = sub.add_parser("schema", help="print JSON-lines event schema")
+    p_schema.add_argument(
+        "--json",
+        action="store_true",
+        default=True,
+        help="print schema as JSON (default)",
+    )
+
+    p_sites = sub.add_parser("sites", help="list registered sites")
+    p_sites.add_argument("--json", action="store_true")
+
+    return parser
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    info = resolve(args.url)
+    payload = {
+        "site": info.site,
+        "label": info.label,
+        "kind": info.kind,
+        "url": info.url,
+        "supported": info.supported,
+        "status": info.status,
+        "message": info.message,
+    }
+    if args.json:
+        emitter().resolve(
+            site=info.site,
+            kind=info.kind,
+            url=info.url,
+            supported=info.supported,
+            message=info.message,
+        )
+    else:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if info.supported or info.status == "stub" else 2
+
+
+def cmd_get(args: argparse.Namespace) -> int:
+    out: Path = args.output
+    out.mkdir(parents=True, exist_ok=True)
+
+    info = resolve(args.url)
+    if not info.supported:
+        msg = info.message or "unsupported URL"
+        if args.json:
+            emitter().error(message=msg, code="unsupported")
+        else:
+            print(msg, file=sys.stderr)
+        return 2
+
+    cancel = Event()
+
+    def _on_sigint(_signum: int, _frame: object) -> None:
+        cancel.set()
+
+    signal.signal(signal.SIGINT, _on_sigint)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _on_sigint)
+
+    emit = emitter(enabled=args.json)
+    job_id = args.job_id or str(uuid.uuid4())
+
+    try:
+        ext = get_extractor(args.url)
+        result = ext.resolve(args.url, password=args.password)
+    except Exception as exc:  # noqa: BLE001
+        if args.json:
+            emit.error(job=job_id, message=str(exc), code="resolve_failed")
+        else:
+            print(f"resolve failed: {exc}", file=sys.stderr)
+        return 1
+
+    emit.job(
+        id=job_id,
+        site=result.site,
+        title=result.title,
+        url=args.url,
+        files=len(result.files),
+    )
+    if not args.json:
+        print(
+            f"[{result.site}] {result.title} — {len(result.files)} file(s) → {out}",
+            file=sys.stderr,
+        )
+
+    try:
+        ok, failed = ext.download(
+            result,
+            out,
+            emit=emit if args.json else None,
+            cancel=cancel,
+            workers=args.workers,
+            retries=args.retries,
+            job_id=job_id,
+        )
+    except InterruptedError:
+        emit.cancel(job=job_id)
+        return 130
+    except Exception as exc:  # noqa: BLE001
+        if args.json:
+            emit.error(job=job_id, message=str(exc), code="download_failed")
+        else:
+            print(f"download failed: {exc}", file=sys.stderr)
+        return 1
+
+    emit.done(job=job_id, path=str(out.resolve()), ok=ok, failed=failed)
+    if not args.json:
+        print(f"done: ok={ok} failed={failed}", file=sys.stderr)
+
+    if cancel.is_set():
+        return 130
+    return 0 if failed == 0 else 1
+
+
+def cmd_schema(_args: argparse.Namespace) -> int:
+    print(json.dumps(dump_schema(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_sites(args: argparse.Namespace) -> int:
+    from udl.router import registry
+
+    rows = [
+        {
+            "site": e.site,
+            "label": e.label,
+            "status": e.status,
+            "kind": e.kind_hint,
+        }
+        for e in registry
+    ]
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+    else:
+        for r in rows:
+            print(f"{r['site']:12} {r['status']:12} {r['label']} ({r['kind']})")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "resolve":
+        return cmd_resolve(args)
+    if args.command == "get":
+        return cmd_get(args)
+    if args.command == "schema":
+        return cmd_schema(args)
+    if args.command == "sites":
+        return cmd_sites(args)
+    parser.error(f"unknown command {args.command}")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
