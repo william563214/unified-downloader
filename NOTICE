@@ -21,12 +21,21 @@ upstream copyright and were adapted under compatible licenses.
   (`glb-apisign.cdn.cr/sign`), download API (`dl.bunkr.cr/api/_001_v2`).
   Domains rotate; keep FALLBACK_DOMAIN and URL patterns maintainable.
 
-## Planned ports (stubs only in v0.1)
-
-### Iwara — `core/udl/extractors/iwara.py` (stub)
+### Iwara — `core/udl/extractors/iwara.py`, `iwara_xversion.py`
 - Upstream: https://github.com/Moeary/IwaraTool
 - License: MIT
-- Commit: TBD when ported
+- Ported from commit: 1e98c96c422a169699c0d16bcab49b8a7f5238d5
+- Copyright: retain MIT attribution from Moeary/IwaraTool
+- Notes: Ported API client pieces from `app/core/api/` (videos, listings,
+  users, endpoints, auth_tokens X-Version) without PySide6 / QSettings.
+  `X-Version` salts live in `iwara_xversion.py` as documented constants and
+  raise a clear error when all salts are rejected (site rotation).
+  Cloudflare challenge bypass (`cloudscraper`) is **opt-in / off by default**.
+  Optional Bearer token is accepted in-memory only (not stored). Upstream
+  README also lists extra packaging usage terms outside the MIT LICENSE
+  file; those are not part of the MIT grant and are noted here only.
+
+## Planned ports (stubs only)
 
 ### Bilibili — `core/udl/extractors/bilibili.py` (stub)
 - Upstream: https://github.com/ScottSloan/Bili23-Downloader

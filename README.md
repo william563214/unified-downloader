@@ -1,4 +1,4 @@
-# 整合下載器（unified-downloader）v0.1
+# 整合下載器（unified-downloader）v0.2
 
 桌面應用：貼上網址 → 辨識站點 → 用統一 Python 核心下載。  
 授權：**GPL-3.0-or-later**（見 `LICENSE`、`NOTICE`）。
@@ -9,7 +9,7 @@
 unified-downloader/
 ├─ core/udl/              # Python 核心套件
 │  ├─ router.py           # URL → extractor 註冊表
-│  ├─ extractors/         # gofile、bunkr（已實作）；iwara、bilibili（槽位）
+│  ├─ extractors/         # gofile、bunkr、iwara；bilibili（槽位）
 │  ├─ download/http.py    # 共用 HTTP：續傳、重試、並行、取消
 │  ├─ events.py           # JSON-lines 事件
 │  └─ cli.py              # udl resolve / get / sites / schema
@@ -21,7 +21,7 @@ unified-downloader/
 
 GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-lines（見 `docs/events.md`）。
 
-**不做：** gallery-dl 程式碼／import（GPL-2.0-only 衝突）、通用任意站 fallback、付費牆／配額繞過、登入、簽章。
+**不做：** gallery-dl 程式碼／import（GPL-2.0-only 衝突）、通用任意站 fallback、付費牆／配額繞過、完整登入保管、簽章。
 
 ## 目前支援
 
@@ -29,11 +29,19 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 |------|------|------|
 | Gofile | ✅ | ltsdw/gofile-downloader（訪客 token，公開連結） |
 | Bunkr | ✅ | Lysagxra/BunkrDownloader（相簿／單檔） |
-| Iwara | 槽位 | v0.2 |
+| Iwara | ✅ | Moeary/IwaraTool（公開影片／播放清單／作者頁） |
 | Bilibili | 槽位 | v0.3 |
 | MEGA | 延後 | v0.4 外部工具 |
 
 上游 commit 與授權細節見 `NOTICE`。介面約定見 `docs/extractor-interface.md`。路線圖見 `ROADMAP.md`。
+
+### Iwara 備註
+
+- URL：`/video/<id>`、`/playlist/<id>`、`/profile/<user>`（含 `/videos`）
+- 畫質：`--quality Source|540|360`（預設 Source，自動往下回退）
+- 公開內容匿名可抓；`--token` 僅記憶體暫存（尚未實作帳密登入／keychain）
+- **不**預設開 Cloudflare 繞過。需要時：`udl get … --cloudflare-bypass`（需 `uv sync --extra iwara` 或安裝 cloudscraper），GUI 有對應核取方塊且預設關閉
+- `X-Version` salt 在 `core/udl/extractors/iwara_xversion.py`；全部失敗會拋清楚錯誤
 
 ## 開發環境
 
@@ -48,9 +56,11 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 ```bash
 cd core
 uv sync --extra dev
+# 可選：Iwara Cloudflare 繞過
+# uv sync --extra iwara
 uv run udl sites
-uv run udl resolve "https://gofile.io/d/<id>"
-uv run udl get "https://gofile.io/d/<id>" -o ./out --json
+uv run udl resolve "https://www.iwara.tv/video/<id>"
+uv run udl get "https://www.iwara.tv/video/<id>" -o ./out --json --quality Source
 ```
 
 ### GUI
@@ -84,7 +94,8 @@ cd app && npm run tauri build
 - 僅下載你有權存取的內容，並遵守各站服務條款。
 - Gofile 訪客帳號與 `X-Website-Token` 沿用上游公開連結行為；salt 可能失效。
 - Bunkr 網域與簽章 API 常變，需追上游。
-- v0.1 刻意不寫自動化測試（維護者決定）。
+- Iwara `X-Version` salt 與 Cloudflare 策略會變；預設不用 cloudscraper。
+- 自動化測試仍刻意延後。
 
 ## 授權
 

@@ -63,6 +63,21 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="optional job id for events (default: random)",
     )
+    p_get.add_argument(
+        "--quality",
+        default=None,
+        help="Iwara preferred quality: Source (best) 540 or 360 (default Source)",
+    )
+    p_get.add_argument(
+        "--cloudflare-bypass",
+        action="store_true",
+        help="Iwara opt-in Cloudflare bypass via cloudscraper (disabled by default)",
+    )
+    p_get.add_argument(
+        "--token",
+        default=None,
+        help="optional Iwara Bearer token (in-memory only not stored)",
+    )
 
     p_schema = sub.add_parser("schema", help="print JSON-lines event schema")
     p_schema.add_argument(
@@ -129,6 +144,7 @@ def cmd_get(args: argparse.Namespace) -> int:
 
     try:
         ext = get_extractor(args.url)
+        _apply_site_options(ext, args)
         result = ext.resolve(args.url, password=args.password)
     except Exception as exc:  # noqa: BLE001
         if args.json:
@@ -177,6 +193,22 @@ def cmd_get(args: argparse.Namespace) -> int:
     if cancel.is_set():
         return 130
     return 0 if failed == 0 else 1
+
+
+def _apply_site_options(ext: object, args: argparse.Namespace) -> None:
+    """pass optional CLI flags to site extractors that understand them."""
+    configure = getattr(ext, "configure", None)
+    if not callable(configure):
+        return
+    kwargs: dict[str, object] = {}
+    if getattr(args, "quality", None):
+        kwargs["quality"] = args.quality
+    if getattr(args, "token", None) is not None:
+        kwargs["token"] = args.token
+    if getattr(args, "cloudflare_bypass", False):
+        kwargs["cloudflare_bypass"] = True
+    if kwargs:
+        configure(**kwargs)
 
 
 def cmd_schema(_args: argparse.Namespace) -> int:

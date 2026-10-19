@@ -1,6 +1,6 @@
 # ROADMAP — 整合下載器
 
-## v0.1（本版）
+## v0.1
 
 - [x] GPL-3.0-or-later + NOTICE（上游 commit）
 - [x] Python 核心套件 `udl`：router、共用 HTTP 引擎、JSON-lines 事件
@@ -12,13 +12,13 @@
 - [x] PyInstaller sidecar＋GitHub Actions（macOS arm64、Windows x64，未簽章）
 - [ ] 自動化測試（刻意延後）
 
-## v0.2 — Iwara
+## v0.2 — Iwara（本版）
 
-- [ ] 移植 Moeary/IwaraTool API／下載邏輯（拆 Qt）
-- [ ] 匿名公開影片、畫質回退 Source→540→360
-- [ ] X-Version salt 失效錯誤提示
-- [ ] 不預設 Cloudflare 繞過
-- [ ] 登入延後
+- [x] 移植 Moeary/IwaraTool API／下載邏輯（拆 Qt）
+- [x] 匿名公開影片、播放清單、作者頁；畫質回退 Source→540→360
+- [x] X-Version salt 失效錯誤提示（`iwara_xversion.py`）
+- [x] 不預設 Cloudflare 繞過（`--cloudflare-bypass` / GUI 選用）
+- [x] 登入延後（可選 Bearer token stub，不寫入磁碟）
 
 ## v0.3 — Bilibili
 
@@ -40,4 +40,4 @@
 - gallery-dl 當 library（授權衝突）；若備援只允許獨立子行程
 - 通用「任意網站」fallback
 - 程式碼簽章／公證（v0.1 明確跳過）
-- 登入流程（v0.1 無）
+- 完整 Iwara 帳號登入流程與憑證保管（僅 token stub）
