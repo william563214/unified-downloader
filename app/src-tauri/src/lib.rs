@@ -56,6 +56,12 @@ struct AppSettings {
     iwara_cloudflare_bypass: bool,
     bilibili_quality: String,
     bilibili_part: String,
+    #[serde(default = "default_on_duplicate")]
+    on_duplicate: String,
+}
+
+fn default_on_duplicate() -> String {
+    "skip".into()
 }
 
 impl Default for AppSettings {
@@ -69,6 +75,7 @@ impl Default for AppSettings {
             iwara_cloudflare_bypass: false,
             bilibili_quality: String::new(),
             bilibili_part: "all".into(),
+            on_duplicate: default_on_duplicate(),
         }
     }
 }
@@ -414,9 +421,13 @@ async fn start_download(
     cloudflare_bypass: Option<bool>,
     workers: Option<u32>,
     ffmpeg: Option<String>,
+    on_duplicate: Option<String>,
+    job_id: Option<String>,
 ) -> Result<String, String> {
     let settings = load_settings_file(&app);
-    let job_id = Uuid::new_v4().to_string();
+    let job_id = job_id
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let mut args = vec![
         "get".into(),
         url,
@@ -428,6 +439,17 @@ async fn start_download(
         "--workers".into(),
         workers.unwrap_or(settings.workers).max(1).to_string(),
     ];
+    let dup = on_duplicate
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(settings.on_duplicate.trim());
+    let dup = match dup {
+        "overwrite" | "rename" | "skip" => dup,
+        _ => "skip",
+    };
+    args.push("--on-duplicate".into());
+    args.push(dup.to_string());
     if let Some(q) = quality {
         let q = q.trim();
         if !q.is_empty() {
@@ -544,6 +566,109 @@ fn open_path(app: AppHandle, path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn history_list(
+    app: AppHandle,
+    site: Option<String>,
+    status: Option<String>,
+    tag: Option<String>,
+    query: Option<String>,
+    date_from: Option<String>,
+    date_to: Option<String>,
+    sort: Option<String>,
+    order: Option<String>,
+    limit: Option<u32>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec!["history".into(), "list".into(), "--json".into()];
+    if let Some(v) = site.filter(|s| !s.trim().is_empty()) {
+        args.push("--site".into());
+        args.push(v);
+    }
+    if let Some(v) = status.filter(|s| !s.trim().is_empty()) {
+        args.push("--status".into());
+        args.push(v);
+    }
+    if let Some(v) = tag.filter(|s| !s.trim().is_empty()) {
+        args.push("--tag".into());
+        args.push(v);
+    }
+    if let Some(v) = query.filter(|s| !s.trim().is_empty()) {
+        args.push("--query".into());
+        args.push(v);
+    }
+    if let Some(v) = date_from.filter(|s| !s.trim().is_empty()) {
+        args.push("--from".into());
+        args.push(v);
+    }
+    if let Some(v) = date_to.filter(|s| !s.trim().is_empty()) {
+        args.push("--to".into());
+        args.push(v);
+    }
+    if let Some(v) = sort.filter(|s| !s.trim().is_empty()) {
+        args.push("--sort".into());
+        args.push(v);
+    }
+    if let Some(v) = order.filter(|s| !s.trim().is_empty()) {
+        args.push("--order".into());
+        args.push(v);
+    }
+    args.push("--limit".into());
+    args.push(limit.unwrap_or(100).to_string());
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("udl history list exited {:?}: {stderr}", code));
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse history JSON: {e}; raw={stdout}; err={stderr}"))
+}
+
+#[tauri::command]
+async fn history_delete(
+    app: AppHandle,
+    ids: Vec<String>,
+    delete_files: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    if ids.is_empty() {
+        return Ok(serde_json::json!({"removed_entries": 0, "removed_files": [], "missing_files": []}));
+    }
+    let mut args = vec!["history".into(), "delete".into(), "--json".into()];
+    if delete_files.unwrap_or(false) {
+        args.push("--delete-files".into());
+    }
+    args.extend(ids);
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("udl history delete exited {:?}: {stderr}", code));
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse history delete JSON: {e}; raw={stdout}; err={stderr}"))
+}
+
+#[tauri::command]
+async fn queue_list(
+    app: AppHandle,
+    unfinished: Option<bool>,
+    status: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec!["queue".into(), "list".into(), "--json".into()];
+    if unfinished.unwrap_or(false) {
+        args.push("--unfinished".into());
+    }
+    if let Some(v) = status.filter(|s| !s.trim().is_empty()) {
+        args.push("--status".into());
+        args.push(v);
+    }
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("udl queue list exited {:?}: {stderr}", code));
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse queue JSON: {e}; raw={stdout}; err={stderr}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -563,7 +688,10 @@ pub fn run() {
             install_ffmpeg,
             start_download,
             cancel_download,
-            open_path
+            open_path,
+            history_list,
+            history_delete,
+            queue_list
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

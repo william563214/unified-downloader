@@ -22,6 +22,7 @@ import requests
 from requests import Session
 
 from udl.extractors.base import extract_result, extracted_file, extractor
+from udl.metadata import item_metadata
 
 # upstream-compatible defaults
 gofile_api = "https://api.gofile.io"
@@ -102,12 +103,23 @@ class gofile_extractor(extractor):
             merged = dict(auth_headers)
             merged.update(f.headers)
             f.headers = merged
+        kind = "folder" if len(files) > 1 else "file"
+        job_meta = item_metadata(
+            site=self.site,
+            item_id=content_id,
+            canonical_url=f"{gofile_origin}/d/{content_id}",
+            title=title_holder[0],
+            collection=title_holder[0] if kind == "folder" else None,
+            collection_id=content_id if kind == "folder" else None,
+            extra={"content_id": content_id, "file_count": len(files)},
+        )
         return extract_result(
             site=self.site,
             title=title_holder[0],
             files=files,
-            kind="folder" if len(files) > 1 else "file",
+            kind=kind,
             meta={"content_id": content_id},
+            metadata=job_meta,
         )
 
     def _ensure_guest_token(self) -> None:
@@ -187,6 +199,7 @@ class gofile_extractor(extractor):
 
         if data["type"] != "folder":
             name = self._unique_name(pathing, parent_rel, data["name"])
+            file_id = str(data.get("id") or "")
             files.append(
                 extracted_file(
                     url=data["link"],
@@ -194,6 +207,12 @@ class gofile_extractor(extractor):
                     relative_dir=parent_rel,
                     size=data.get("size"),
                     meta={"id": data.get("id")},
+                    metadata=item_metadata(
+                        site=self.site,
+                        item_id=file_id or None,
+                        title=data.get("name"),
+                        extra={"md5": data.get("md5"), "mimetype": data.get("mimetype")},
+                    ),
                 )
             )
             next(file_index)
@@ -224,6 +243,7 @@ class gofile_extractor(extractor):
                 )
             else:
                 name = self._unique_name(pathing, rel, child["name"])
+                child_id = str(child.get("id") or "")
                 files.append(
                     extracted_file(
                         url=child["link"],
@@ -231,6 +251,17 @@ class gofile_extractor(extractor):
                         relative_dir=rel,
                         size=child.get("size"),
                         meta={"id": child.get("id")},
+                        metadata=item_metadata(
+                            site=self.site,
+                            item_id=child_id or None,
+                            title=child.get("name"),
+                            collection=folder_name,
+                            collection_id=content_id,
+                            extra={
+                                "md5": child.get("md5"),
+                                "mimetype": child.get("mimetype"),
+                            },
+                        ),
                     )
                 )
                 next(file_index)

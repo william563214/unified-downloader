@@ -5,7 +5,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { humanizeError, statusLabel } from "./errors";
 import {
   type AppSettings,
+  type DuplicateMode,
   type FfmpegStatus,
+  type HistoryEntry,
+  type QueueEntry,
   default_settings,
   extractUrl,
 } from "./settings";
@@ -52,8 +55,16 @@ type FileRow = {
   total?: number;
   bytes: number;
   bps: number;
-  status: "queued" | "active" | "merging" | "done" | "error" | "cancelled";
+  status:
+    | "queued"
+    | "active"
+    | "merging"
+    | "done"
+    | "error"
+    | "cancelled"
+    | "skipped";
   message?: string;
+  alreadyDownloaded?: boolean;
 };
 
 type JobStatus =
@@ -86,7 +97,7 @@ type UdlEventPayload = {
   line: Record<string, unknown>;
 };
 
-type Page = "download" | "settings";
+type Page = "download" | "history" | "settings";
 
 function formatBytes(n?: number): string {
   if (n == null || Number.isNaN(n)) return "—";
@@ -141,7 +152,15 @@ export default function App() {
   const [ffmpegBusy, setFfmpegBusy] = useState(false);
   const [ffmpegPrompt, setFfmpegPrompt] = useState(false);
   const [clipboardHint, setClipboardHint] = useState<string | null>(null);
+  const [historyRows, setHistoryRows] = useState<HistoryEntry[]>([]);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historySite, setHistorySite] = useState("");
+  const [historyStatus, setHistoryStatus] = useState("");
+  const [historyTag, setHistoryTag] = useState("");
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [selectedHistory, setSelectedHistory] = useState<Set<string>>(new Set());
   const startingRef = useRef(false);
+  const resumedRef = useRef(false);
 
   const isBilibili = resolveInfo?.site === "bilibili" && resolveInfo.supported;
 
@@ -180,8 +199,13 @@ export default function App() {
     void (async () => {
       try {
         const loaded = await invoke<AppSettings>("get_settings");
-        setSettings(loaded);
-        setSettingsDraft(loaded);
+        const merged = {
+          ...default_settings,
+          ...loaded,
+          onDuplicate: loaded.onDuplicate || default_settings.onDuplicate,
+        };
+        setSettings(merged);
+        setSettingsDraft(merged);
         if (loaded.downloadDir) {
           setOutput(loaded.downloadDir);
         }
@@ -295,6 +319,7 @@ export default function App() {
           if (ev === "file") {
             const id = String(line.id);
             if (job.files.some((f) => f.id === id)) return job;
+            const already = line.already_downloaded === true;
             return {
               ...job,
               files: [
@@ -306,7 +331,9 @@ export default function App() {
                   total: typeof line.total === "number" ? line.total : undefined,
                   bytes: 0,
                   bps: 0,
-                  status: "queued",
+                  status: already ? "skipped" : "queued",
+                  alreadyDownloaded: already,
+                  message: already ? "已下載" : undefined,
                 },
               ],
             };
@@ -346,19 +373,49 @@ export default function App() {
               ),
             };
           }
+          if (ev === "duplicate") {
+            const fid = line.file ? String(line.file) : null;
+            const message =
+              line.already_downloaded === true
+                ? "已下載"
+                : line.message
+                  ? String(line.message)
+                  : "重複項目";
+            if (!fid) {
+              return { ...job, message };
+            }
+            return {
+              ...job,
+              message,
+              files: job.files.map((f) =>
+                f.id === fid || fid.startsWith(`${f.id}:`)
+                  ? {
+                      ...f,
+                      status:
+                        line.action === "skip" ? "skipped" : f.status,
+                      path: line.path ? String(line.path) : f.path,
+                      alreadyDownloaded: Boolean(line.already_downloaded),
+                      message,
+                    }
+                  : f,
+              ),
+            };
+          }
           if (ev === "done") {
             if (line.file) {
               const fid = String(line.file);
+              const skipped = line.skipped === true || line.already_downloaded === true;
               return {
                 ...job,
                 files: job.files.map((f) =>
                   f.id === fid
                     ? {
                         ...f,
-                        status: "done",
+                        status: skipped ? "skipped" : "done",
                         path: line.path ? String(line.path) : f.path,
                         bytes: f.total ?? f.bytes,
-                        message: undefined,
+                        alreadyDownloaded: Boolean(line.already_downloaded),
+                        message: skipped ? "已下載" : undefined,
                       }
                     : f,
                 ),
@@ -369,6 +426,10 @@ export default function App() {
               status: "done",
               ok: typeof line.ok === "number" ? line.ok : job.ok,
               failed: typeof line.failed === "number" ? line.failed : job.failed,
+              message:
+                line.already_downloaded === true
+                  ? "已下載（略過）"
+                  : job.message,
             };
           }
           if (ev === "error") {
@@ -457,6 +518,8 @@ export default function App() {
           cloudflareBypass: job.cloudflareBypass,
           workers: settings.workers,
           ffmpeg: settings.ffmpegPath || null,
+          onDuplicate: settings.onDuplicate || "skip",
+          jobId: job.id || null,
         });
         setJobs((prev) =>
           prev.map((j) =>
@@ -477,8 +540,70 @@ export default function App() {
         );
       }
     },
-    [settings.ffmpegPath, settings.workers],
+    [settings.ffmpegPath, settings.workers, settings.onDuplicate],
   );
+
+  useEffect(() => {
+    if (resumedRef.current) return;
+    resumedRef.current = true;
+    void (async () => {
+      try {
+        const rows = await invoke<QueueEntry[]>("queue_list", {
+          unfinished: true,
+        });
+        if (!Array.isArray(rows) || rows.length === 0) return;
+        setJobs((prev) => {
+          const existing = new Set(prev.map((j) => j.id).filter(Boolean));
+          const restored: JobRow[] = rows
+            .filter((r) => r.url && r.output_dir && !existing.has(r.id))
+            .map((r) => ({
+              id: r.id,
+              clientId: newClientId(),
+              url: r.url,
+              site: r.site || "unknown",
+              title: r.title || r.site || "恢復任務",
+              output: r.output_dir,
+              quality: r.quality || null,
+              part: r.part || null,
+              cloudflareBypass: r.cloudflare_bypass ?? null,
+              files: [],
+              status: "queued",
+              message: "應用重啟後自動恢復",
+            }));
+          return restored.length ? [...restored, ...prev] : prev;
+        });
+      } catch {
+        /* queue restore optional when sidecar missing */
+      }
+    })();
+  }, []);
+
+  const refreshHistory = useCallback(async () => {
+    setHistoryBusy(true);
+    setError(null);
+    try {
+      const rows = await invoke<HistoryEntry[]>("history_list", {
+        site: historySite || null,
+        status: historyStatus || null,
+        tag: historyTag || null,
+        query: historyQuery || null,
+        sort: "created_at",
+        order: "desc",
+        limit: 200,
+      });
+      setHistoryRows(Array.isArray(rows) ? rows : []);
+      setSelectedHistory(new Set());
+    } catch (e) {
+      setError(humanizeError(String(e)));
+    } finally {
+      setHistoryBusy(false);
+    }
+  }, [historyQuery, historySite, historyStatus, historyTag]);
+
+  useEffect(() => {
+    if (page !== "history") return;
+    void refreshHistory();
+  }, [page, refreshHistory]);
 
   useEffect(() => {
     const running = jobs.filter((j) => j.status === "running").length;
@@ -658,6 +783,22 @@ export default function App() {
     }
   }
 
+  async function deleteSelectedHistory(deleteFiles: boolean) {
+    if (selectedHistory.size === 0) return;
+    setHistoryBusy(true);
+    try {
+      await invoke("history_delete", {
+        ids: Array.from(selectedHistory),
+        deleteFiles,
+      });
+      await refreshHistory();
+    } catch (e) {
+      setError(humanizeError(String(e)));
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
   async function installFfmpegNow() {
     setFfmpegBusy(true);
     setError(null);
@@ -703,6 +844,13 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={page === "history" ? "nav active" : "nav"}
+            onClick={() => setPage("history")}
+          >
+            歷史
+          </button>
+          <button
+            type="button"
             className={page === "settings" ? "nav active" : "nav"}
             onClick={() => setPage("settings")}
           >
@@ -740,7 +888,153 @@ export default function App() {
         </section>
       )}
 
-      {page === "settings" ? (
+      {page === "history" ? (
+        <section className="composer settings" aria-label="下載歷史">
+          <div className="queue-head">
+            <h2>下載歷史</h2>
+            <p>搜尋、篩選、清理；資料由核心 SQLite 保存</p>
+          </div>
+          <div className="settings-grid">
+            <label className="field compact">
+              <span>關鍵字</span>
+              <input
+                value={historyQuery}
+                onChange={(e) => setHistoryQuery(e.target.value)}
+                placeholder="標題／作者／URL"
+              />
+            </label>
+            <label className="field compact">
+              <span>站點</span>
+              <select
+                value={historySite}
+                onChange={(e) => setHistorySite(e.target.value)}
+              >
+                <option value="">全部</option>
+                <option value="gofile">Gofile</option>
+                <option value="bunkr">Bunkr</option>
+                <option value="iwara">Iwara</option>
+                <option value="bilibili">Bilibili</option>
+                <option value="mega">MEGA</option>
+              </select>
+            </label>
+            <label className="field compact">
+              <span>狀態</span>
+              <select
+                value={historyStatus}
+                onChange={(e) => setHistoryStatus(e.target.value)}
+              >
+                <option value="">全部</option>
+                <option value="done">完成</option>
+                <option value="skipped">已略過</option>
+                <option value="error">失敗</option>
+                <option value="cancelled">取消</option>
+                <option value="running">進行中</option>
+              </select>
+            </label>
+            <label className="field compact">
+              <span>標籤</span>
+              <input
+                value={historyTag}
+                onChange={(e) => setHistoryTag(e.target.value)}
+                placeholder="精確標籤"
+              />
+            </label>
+          </div>
+          <div className="actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={historyBusy}
+              onClick={() => void refreshHistory()}
+            >
+              {historyBusy ? "載入中…" : "查詢"}
+            </button>
+            <button
+              type="button"
+              className="ghost danger"
+              disabled={historyBusy || selectedHistory.size === 0}
+              onClick={() => void deleteSelectedHistory(false)}
+            >
+              刪除條目
+            </button>
+            <button
+              type="button"
+              className="ghost danger"
+              disabled={historyBusy || selectedHistory.size === 0}
+              onClick={() => void deleteSelectedHistory(true)}
+            >
+              刪除條目與檔案
+            </button>
+          </div>
+          {error && <p className="error">{error}</p>}
+          {historyRows.length === 0 ? (
+            <div className="empty">
+              <p>尚無歷史紀錄，完成下載後會出現在這裡。</p>
+            </div>
+          ) : (
+            <ul className="jobs">
+              {historyRows.map((row) => (
+                <li key={row.id} className="job">
+                  <div className="job-top">
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={selectedHistory.has(row.id)}
+                        onChange={(e) => {
+                          setSelectedHistory((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(row.id);
+                            else next.delete(row.id);
+                            return next;
+                          });
+                        }}
+                      />
+                    </label>
+                    <span className={`badge ${siteTone(row.site)}`}>{row.site}</span>
+                    <div className="job-title">
+                      <strong>{row.title || row.item_id || row.id}</strong>
+                      <span>
+                        {row.author ? `${row.author} · ` : ""}
+                        {statusLabel(row.status)}
+                        {row.created_at ? ` · ${row.created_at}` : ""}
+                      </span>
+                      <span>{row.canonical_url || row.source_url || ""}</span>
+                    </div>
+                    {row.output_dir && (
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => void openFolder(row.output_dir!)}
+                      >
+                        開啟資料夾
+                      </button>
+                    )}
+                  </div>
+                  {(row.tags || []).length > 0 && (
+                    <p className="hint">標籤：{(row.tags || []).join(", ")}</p>
+                  )}
+                  {(row.files || []).length > 0 && (
+                    <ul className="files">
+                      {(row.files || []).slice(0, 8).map((f, idx) => (
+                        <li key={`${row.id}-${idx}`} className="file muted">
+                          <div className="file-meta">
+                            <span className="name">{f.name || f.path || f.file_id}</span>
+                            <span className="stats">
+                              {f.size != null ? formatBytes(f.size) : "—"}
+                              {" · "}
+                              {statusLabel(f.status || "done")}
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : page === "settings" ? (
         <section className="composer settings" aria-label="設定">
           <div className="queue-head">
             <h2>設定</h2>
@@ -797,6 +1091,23 @@ export default function App() {
                   setSettingsDirty(true);
                 }}
               />
+            </label>
+            <label className="field">
+              <span>重複項目策略</span>
+              <select
+                value={settingsDraft.onDuplicate}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    onDuplicate: e.target.value as DuplicateMode,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="skip">略過（已下載）</option>
+                <option value="overwrite">覆蓋</option>
+                <option value="rename">重新命名</option>
+              </select>
             </label>
           </div>
 
@@ -1236,16 +1547,31 @@ export default function App() {
                                 {" · "}
                                 {formatSpeed(file.bps)}
                                 {" · "}
-                                {statusLabel(file.status)}
+                                {file.alreadyDownloaded
+                                  ? "已下載"
+                                  : statusLabel(file.status)}
                               </span>
                             </div>
                             <div className="bar" aria-hidden>
-                              <i style={{ width: `${pct}%` }} />
+                              <i
+                                style={{
+                                  width: `${
+                                    file.status === "skipped" || file.alreadyDownloaded
+                                      ? 100
+                                      : pct
+                                  }%`,
+                                }}
+                              />
                             </div>
-                            {file.message && (
+                            {file.message && file.status === "error" && (
                               <p className="error">{file.message}</p>
                             )}
-                            {file.status === "done" && file.path && (
+                            {file.message &&
+                              (file.status === "skipped" || file.alreadyDownloaded) && (
+                              <p className="hint">{file.message}</p>
+                            )}
+                            {(file.status === "done" || file.status === "skipped") &&
+                              file.path && (
                               <button
                                 type="button"
                                 className="linkish"

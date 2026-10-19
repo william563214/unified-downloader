@@ -23,6 +23,7 @@ from bs4 import BeautifulSoup
 from requests import Session
 
 from udl.extractors.base import extract_result, extracted_file, extractor
+from udl.metadata import item_metadata
 
 # from upstream config
 bunkr_api = "https://glb-apisign.cdn.cr/sign"
@@ -294,6 +295,13 @@ class bunkr_extractor(extractor):
             raise RuntimeError(f"could not resolve download URL for {url}")
         name = sanitize_filename(get_item_filename(soup))
         album_id = get_album_id(url)
+        file_meta = item_metadata(
+            site=self.site,
+            item_id=album_id,
+            canonical_url=url,
+            title=name,
+            extra={"page": url},
+        )
         return extract_result(
             site=self.site,
             title=name,
@@ -303,10 +311,12 @@ class bunkr_extractor(extractor):
                     name=name,
                     relative_dir=album_id,
                     headers=dict(download_headers),
+                    metadata=file_meta,
                 )
             ],
             kind="file",
             meta={"url": url},
+            metadata=file_meta,
         )
 
     def _resolve_album(self, url: str, soup: BeautifulSoup) -> extract_result:
@@ -342,6 +352,7 @@ class bunkr_extractor(extractor):
                 name = f"{stem}_{n}{suffix}"
                 n += 1
             reserved.add(name.lower())
+            page_id = get_album_id(page)
             files.append(
                 extracted_file(
                     url=link,
@@ -349,6 +360,14 @@ class bunkr_extractor(extractor):
                     relative_dir=folder,
                     headers=dict(download_headers),
                     meta={"page": page},
+                    metadata=item_metadata(
+                        site=self.site,
+                        item_id=page_id,
+                        canonical_url=page,
+                        title=name,
+                        collection=album_name,
+                        collection_id=album_id,
+                    ),
                 )
             )
 
@@ -361,6 +380,15 @@ class bunkr_extractor(extractor):
             files=files,
             kind="album",
             meta={"album_id": album_id, "items": len(item_pages)},
+            metadata=item_metadata(
+                site=self.site,
+                item_id=album_id,
+                canonical_url=url,
+                title=album_name,
+                collection=album_name,
+                collection_id=album_id,
+                extra={"items": len(item_pages)},
+            ),
         )
 
 
