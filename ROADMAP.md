@@ -20,7 +20,7 @@
 - [x] 不預設 Cloudflare 繞過（`--cloudflare-bypass` / GUI 選用）
 - [x] 登入延後（可選 Bearer token stub，不寫入磁碟）
 
-## v0.3 — Bilibili（本版）
+## v0.3 — Bilibili
 
 - [x] BV/av 影片解析（含多分 P）
 - [x] b23.tv / bili2233.cn 短鏈解析
@@ -33,17 +33,23 @@
 - [ ] QR／Cookie 登入（stub／設計註解；憑證進 OS keychain — 延後）
 - [ ] 首次執行自動下載 FFmpeg（延後；目前缺則 `ffmpeg_missing`）
 
-## v0.4 — MEGA 與強化
+## v0.4 — MEGA（本版）
 
-- [ ] MEGA 經外部工具（建議 megatools 或 MEGAcmd `mega-get`）
-- [ ] `ExternalExtractor` 介面統一事件
-- [ ] **不**實作 SmartProxy／Quota Recovery
-- [ ] 佇列持久化、限速、剪貼簿監看（可選）
+- [x] MEGA 經外部工具：優先 **megatools**（`megatools dl`），備援 MEGAcmd `mega-get`
+- [x] `external_extractor` 介面＋進度轉成標準 JSON-lines
+- [x] 公開 file／folder 與舊 `#!`／`#F!` 連結
+- [x] 缺少工具 → `mega_tool_missing`＋安裝指引；`--mega-tool` / `UDL_MEGA_TOOL`
+- [x] 取消時乾淨結束子行程
+- [x] GUI MEGA 徽章與工具提示
+- [x] **不**實作 SmartProxy／Quota Recovery／換 IP
+- [ ] 佇列持久化、限速、剪貼簿監看（可選，延後）
+- [ ] 首次執行自動下載 megatools（延後；目前缺則清楚錯誤）
 
 ## 不做／延後
 
 - gallery-dl 當 library（授權衝突）；若備援只允許獨立子行程
 - 通用「任意網站」fallback
 - 程式碼簽章／公證（v0.1 明確跳過）
-- 付費牆／VIP／區域限制繞過
+- 付費牆／VIP／區域限制／MEGA 配額繞過
 - 完整 Iwara 帳號登入流程與憑證保管（僅 token stub）
+- 移植 MegaBasterd（改走 megatools／MEGAcmd 子行程）

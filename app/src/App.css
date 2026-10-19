@@ -219,6 +219,12 @@ input:focus {
   border-color: #e7c0d0;
 }
 
+.tone-mega {
+  background: #e8f1f8;
+  color: #1f4f7a;
+  border-color: #b7cfe3;
+}
+
 .tone-unknown {
   background: #ecece8;
   color: #5c675f;

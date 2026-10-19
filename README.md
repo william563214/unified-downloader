@@ -1,4 +1,4 @@
-# 整合下載器（unified-downloader）v0.3
+# 整合下載器（unified-downloader）v0.4
 
 桌面應用：貼上網址 → 辨識站點 → 用統一 Python 核心下載。  
 授權：**GPL-3.0-or-later**（見 `LICENSE`、`NOTICE`）。
@@ -9,7 +9,7 @@
 unified-downloader/
 ├─ core/udl/              # Python 核心套件
 │  ├─ router.py           # URL → extractor 註冊表
-│  ├─ extractors/         # gofile、bunkr、iwara、bilibili/
+│  ├─ extractors/         # gofile、bunkr、iwara、bilibili/、external/mega
 │  ├─ download/http.py    # 共用 HTTP：續傳、重試、並行、取消
 │  ├─ postprocess/ffmpeg.py  # DASH 合併（Bilibili 等可重用）
 │  ├─ events.py           # JSON-lines 事件（含 merging / probe）
@@ -32,7 +32,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 | Bunkr | ✅ | Lysagxra/BunkrDownloader（相簿／單檔） |
 | Iwara | ✅ | Moeary/IwaraTool（公開影片／播放清單／作者頁） |
 | Bilibili | ✅ | ScottSloan/Bili23-Downloader（BV/av、多分 P、b23、可匿名 bangumi；DASH+FFmpeg） |
-| MEGA | 延後 | v0.4 外部工具 |
+| MEGA | ✅ 外部工具 | **megatools**（優先）／MEGAcmd `mega-get`（備援）；子行程，不移植 MegaBasterd |
 
 上游 commit 與授權細節見 `NOTICE`。介面約定見 `docs/extractor-interface.md`。路線圖見 `ROADMAP.md`。
 
@@ -51,6 +51,15 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - 需要 FFmpeg（PATH、`UDL_FFMPEG` 或 `--ffmpeg`）。尚未內建自動下載；缺少時會發出 `ffmpeg_missing`。
 - **不會**繞過大會員、付費牆或地區限制；QR 登入僅 stub。
 
+### MEGA 備註（v0.4）
+
+- 公開連結：`mega.nz/file/…`、`/folder/…`、舊格式 `#!`／`#F!`（亦接受 `mega.co.nz`／`mega.io`）。
+- **工具選擇：** 優先 `megatools`（`megatools dl`／`megadl`）— 單一無頭二進位、進度可解析、macOS／Windows／Linux 皆可；找不到再試 MEGAcmd 的 `mega-get`（可能需要背景 `mega-cmd-server`）。
+- 授權：megatools 為 GPL-2.0（含 OpenSSL 例外）→ **只以子行程呼叫，絕不 import／連結**；MEGAcmd 多為 BSD-2。詳見 `NOTICE`。
+- 缺少工具時發出 `mega_tool_missing` 與安裝指引（brew／scoop／apt／[mega.io/cmd](https://mega.io/cmd)）。可用 `--mega-tool` 或 `UDL_MEGA_TOOL` 指定路徑。
+- 取消會結束子行程（行程組 SIGTERM→SIGKILL）。
+- **不**實作 SmartProxy／Quota Recovery／換 IP 等配額繞過；遇到 509 只回報清楚錯誤。
+
 ## 開發環境
 
 ### 需求
@@ -58,6 +67,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - Python ≥ 3.11、[uv](https://docs.astral.sh/uv/)
 - Node.js ≥ 20、Rust（stable）
 - FFmpeg（Bilibili DASH 合併）
+- megatools 或 MEGAcmd（MEGA；建議 megatools）
 - 桌面開發另需 [Tauri 前置](https://tauri.app/start/prerequisites/)（Linux：webkit2gtk 等）
 
 ### Python 核心
@@ -73,6 +83,8 @@ uv run udl get "https://www.iwara.tv/video/<id>" -o ./out --json --quality Sourc
 uv run udl resolve "https://www.bilibili.com/video/BV1xx411c7mD"
 uv run udl probe "https://www.bilibili.com/video/BV1xx411c7mD"
 uv run udl get "https://www.bilibili.com/video/BV1xx411c7mD" -o ./out --json
+uv run udl resolve "https://mega.nz/file/<id>#<key>"
+uv run udl get "https://mega.nz/file/<id>#<key>" -o ./out --json
 ```
 
 ### GUI
@@ -108,6 +120,7 @@ cd app && npm run tauri build
 - Bunkr 網域與簽章 API 常變，需追上游。
 - Iwara `X-Version` salt 與 Cloudflare 策略會變；預設不用 cloudscraper。
 - Bilibili WBI 簽章與 playurl 行為可能隨站方變更；區域／會員限制會以錯誤事件回報。
+- MEGA 傳輸配額由站方決定；本專案不會提供繞過手段。
 - 自動化測試仍刻意延後。
 
 ## 授權
