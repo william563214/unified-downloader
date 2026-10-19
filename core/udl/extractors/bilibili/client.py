@@ -1,4 +1,12 @@
-"""Anonymous Bilibili HTTP client (no VIP/paywall/region bypass)."""
+"""Anonymous Bilibili HTTP client (no VIP/paywall/region bypass).
+
+Session cookies can be injected later via set_session_cookies once
+udl.secrets lands — this PR stays anonymous by default.
+
+TODO(cdn/host): custom CDN node preference and Host header belong with
+PR #6 networking (UA/proxy/aria2). Defer until that merges to avoid
+colliding User-Agent / session wiring — see docs/bilibili.md.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +18,7 @@ import requests
 from requests import Response, Session
 
 from udl.download.http import default_timeout, default_user_agent
+from udl.extractors.bilibili.login import requires_login
 from udl.extractors.bilibili.wbi import enc_wbi, store_wbi_keys
 
 api_base = "https://api.bilibili.com"
@@ -17,16 +26,31 @@ nav_api = f"{api_base}/x/web-interface/nav"
 spi_api = f"{api_base}/x/frontend/finger/spi"
 view_api = f"{api_base}/x/web-interface/wbi/view"
 playurl_api = f"{api_base}/x/player/wbi/playurl"
+player_v2_api = f"{api_base}/x/player/wbi/v2"
 bangumi_season_api = f"{api_base}/pgc/view/web/season"
 bangumi_media_api = f"{api_base}/pgc/review/user"
 bangumi_playurl_api = f"{api_base}/pgc/player/web/playurl"
+cheese_season_api = f"{api_base}/pugv/view/web/season/v2"
+cheese_playurl_api = f"{api_base}/pugv/player/web/playurl"
+space_search_api = f"{api_base}/x/space/wbi/arc/search"
+space_card_api = f"{api_base}/x/web-interface/card"
+fav_list_api = f"{api_base}/x/v3/fav/resource/list"
+popular_weekly_api = f"{api_base}/x/web-interface/popular/series/one"
+seasons_archives_api = f"{api_base}/x/polymer/web-space/seasons_archives_list"
+series_archives_api = f"{api_base}/x/series/archives"
+series_meta_api = f"{api_base}/x/series/series"
+stein_edge_api = f"{api_base}/x/stein/edgeinfo_v2"
+danmaku_xml_api = "https://comment.bilibili.com/{cid}.xml"
+audio_info_api = "https://www.bilibili.com/audio/music-service-c/web/song/info"
+audio_menu_info_api = "https://www.bilibili.com/audio/music-service-c/web/menu/info"
+audio_menu_list_api = "https://www.bilibili.com/audio/music-service-c/web/song/of-menu"
+audio_play_api = "https://www.bilibili.com/audio/music-service-c/web/url"
 referer = "https://www.bilibili.com/"
 
 # playurl fnval flags (DASH + extras) from Bili23
 video_fnval = 4048
 bangumi_fnval = 143312
 
-# API codes we surface without retry/bypass
 code_region_lock = -10403
 code_paywall = 87008
 
@@ -40,7 +64,7 @@ class bilibili_api_error(RuntimeError):
 
 
 class bilibili_client:
-    """session-backed client for view / playurl / bangumi."""
+    """session-backed client for view / playurl / bangumi / lists."""
 
     def __init__(
         self,
@@ -48,6 +72,7 @@ class bilibili_client:
         user_agent: str = default_user_agent,
         timeout: float = default_timeout,
         session: Session | None = None,
+        cookies: dict[str, str] | None = None,
     ) -> None:
         self.timeout = timeout
         self._own_session = session is None
@@ -62,6 +87,28 @@ class bilibili_client:
             }
         )
         self._bootstrapped = False
+        self._logged_in = False
+        if cookies:
+            self.set_session_cookies(cookies)
+
+    def set_session_cookies(self, cookies: dict[str, str]) -> None:
+        """inject session cookies (SESSDATA / bili_jct / DedeUserID…).
+
+        Designed for a later PR that loads credentials from udl.secrets.
+        """
+        for name, value in cookies.items():
+            if value:
+                self.session.cookies.set(str(name), str(value), domain=".bilibili.com")
+        if cookies.get("SESSDATA"):
+            self._logged_in = True
+
+    def set_user_agent(self, user_agent: str) -> None:
+        """update UA — preferred path after PR #6 network settings merge."""
+        self.session.headers["User-Agent"] = user_agent
+
+    @property
+    def has_session(self) -> bool:
+        return self._logged_in or bool(self.session.cookies.get("SESSDATA"))
 
     def close(self) -> None:
         if self._own_session:
@@ -89,7 +136,6 @@ class bilibili_client:
                     "buvid4", str(data["b_4"]), domain=".bilibili.com"
                 )
         except bilibili_api_error:
-            # spi failure is non-fatal; view may still work
             pass
         self.refresh_wbi()
         self._bootstrapped = True
@@ -105,6 +151,8 @@ class bilibili_client:
                 "failed to obtain WBI signing keys from nav",
                 code=payload.get("code"),
             )
+        if data.get("isLogin"):
+            self._logged_in = True
 
     def resolve_short_link(self, url: str) -> str:
         """follow b23.tv / bili2233.cn redirects to the final URL."""
@@ -121,9 +169,16 @@ class bilibili_client:
             raise bilibili_api_error("short link expired or invalid")
         return final
 
-    def view(self, bvid: str) -> dict[str, Any]:
+    def view(self, bvid: str | None = None, *, aid: int | None = None) -> dict[str, Any]:
         self.bootstrap()
-        query = enc_wbi({"bvid": bvid})
+        params: dict[str, object] = {}
+        if bvid:
+            params["bvid"] = bvid
+        elif aid is not None:
+            params["aid"] = aid
+        else:
+            raise ValueError("view requires bvid or aid")
+        query = enc_wbi(params)
         payload = self._get_json(f"{view_api}?{query}")
         data = payload.get("data")
         if not isinstance(data, dict):
@@ -148,6 +203,39 @@ class bilibili_client:
             raise bilibili_api_error("playurl response missing data")
         if data.get("is_drm"):
             raise bilibili_api_error("DRM-protected content is not supported")
+        return data
+
+    def player_v2(
+        self,
+        *,
+        cid: int,
+        bvid: str | None = None,
+        aid: int | None = None,
+    ) -> dict[str, Any]:
+        """player info — subtitles + chapters (view_points)."""
+        self.bootstrap()
+        params: dict[str, object] = {
+            "cid": cid,
+            "dm_img_list": "[]",
+            "dm_img_str": "V2ViR0wgMS4wIChPcGVuR0wgRVMgMi4wIENocm9taXVtKQ",
+            "dm_cover_img_str": (
+                "QU5HTEUgKE5WSURJQSwgTlZJRElBIEdlRm9yY2UgUlRYIDQwNjAg"
+                "TGFwdG9wIEdQVSAoMHgwMDAwMjhFMCkgRGlyZWN0M0QxMSB2c181"
+                "XzAgcHNfNV8wLCBEM0QxMSlHb29nbGUgSW5jLiAoTlZJRElBKQ"
+            ),
+            "dm_img_inter": '{"ds":[],"wh":[5231,6067,75],"of":[475,950,475]}',
+        }
+        if bvid:
+            params["bvid"] = bvid
+        elif aid is not None:
+            params["aid"] = aid
+        else:
+            raise ValueError("player_v2 requires bvid or aid")
+        query = enc_wbi(params)
+        payload = self._get_json(f"{player_v2_api}?{query}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("player v2 response missing data")
         return data
 
     def bangumi_season(
@@ -195,6 +283,307 @@ class bilibili_client:
         if result.get("is_drm"):
             raise bilibili_api_error("DRM-protected content is not supported")
         return result
+
+    def cheese_season(
+        self,
+        *,
+        ep_id: int | None = None,
+        season_id: int | None = None,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        if ep_id is not None:
+            param = f"ep_id={ep_id}"
+        elif season_id is not None:
+            param = f"season_id={season_id}"
+        else:
+            raise ValueError("cheese_season requires ep_id or season_id")
+        payload = self._get_json(f"{cheese_season_api}?{param}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("cheese season response missing data")
+        if ep_id is not None:
+            data = dict(data)
+            data["current_ep_id"] = ep_id
+        return data
+
+    def playurl_cheese(
+        self,
+        *,
+        avid: int,
+        ep_id: int,
+        cid: int,
+        qn: int = 80,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        params = {
+            "avid": avid,
+            "ep_id": ep_id,
+            "cid": cid,
+            "qn": qn,
+            "fnver": 0,
+            "fnval": video_fnval,
+            "fourk": 1,
+        }
+        payload = self._get_json(f"{cheese_playurl_api}?{urlencode(params)}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("cheese playurl missing data")
+        return data
+
+    def space_videos(
+        self,
+        mid: int,
+        *,
+        pn: int = 1,
+        ps: int = 40,
+        keyword: str = "",
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        params: dict[str, object] = {
+            "pn": pn,
+            "ps": ps,
+            "tid": 0,
+            "special_type": "",
+            "order": "pubdate",
+            "mid": mid,
+            "index": 0,
+            "keyword": keyword or "",
+            "order_avoided": "true",
+            "platform": "web",
+            "web_location": "333.1387",
+            "dm_img_list": "[]",
+            "dm_img_str": "V2ViR0wgMS4wIChPcGVuR0wgRVMgMi4wIENocm9taXVtKQ",
+            "dm_cover_img_str": (
+                "QU5HTEUgKE5WSURJQSwgTlZJRElBIEdlRm9yY2UgUlRYIDQwNjAg"
+                "TGFwdG9wIEdQVSAoMHgwMDAwMjhFMCkgRGlyZWN0M0QxMSB2c181"
+                "XzAgcHNfNV8wLCBEM0QxMSlHb29nbGUgSW5jLiAoTlZJRElBKQ"
+            ),
+            "dm_img_inter": '{"ds":[],"wh":[3688,4546,12],"of":[119,238,119]}',
+        }
+        query = enc_wbi(params)
+        payload = self._get_json(f"{space_search_api}?{query}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("space search missing data")
+        return data
+
+    def space_card(self, mid: int) -> dict[str, Any]:
+        self.bootstrap()
+        payload = self._get_json(f"{space_card_api}?mid={mid}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("space card missing data")
+        return data
+
+    def favlist(
+        self,
+        media_id: int,
+        *,
+        pn: int = 1,
+        ps: int = 40,
+        keyword: str = "",
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        params = {
+            "media_id": media_id,
+            "pn": pn,
+            "ps": ps,
+            "keyword": keyword or "",
+            "order": "mtime",
+            "type": 0,
+            "tid": 0,
+            "platform": "web",
+            "web_location": "333.1387",
+        }
+        payload = self._get_json(f"{fav_list_api}?{urlencode(params)}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("favlist missing data")
+        return data
+
+    def popular_weekly(self, number: int | None = None) -> dict[str, Any]:
+        self.bootstrap()
+        params: dict[str, object] = {"web_location": "333.934"}
+        if number is not None:
+            params["number"] = number
+        query = enc_wbi(params)
+        payload = self._get_json(f"{popular_weekly_api}?{query}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("popular weekly missing data")
+        return data
+
+    def collection_archives(
+        self,
+        *,
+        mid: int,
+        season_id: int,
+        pn: int = 1,
+        ps: int = 30,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        params = {
+            "mid": mid,
+            "season_id": season_id,
+            "sort_reverse": "false",
+            "page_size": ps,
+            "page_num": pn,
+            "web_location": "333.1387",
+        }
+        payload = self._get_json(f"{seasons_archives_api}?{urlencode(params)}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("collection archives missing data")
+        return data
+
+    def series_archives(
+        self,
+        *,
+        mid: int,
+        series_id: int,
+        pn: int = 1,
+        ps: int = 30,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        params = {
+            "mid": mid,
+            "current_mid": 0,
+            "series_id": series_id,
+            "only_normal": "true",
+            "sort": "desc",
+            "ps": ps,
+            "pn": pn,
+            "web_location": "333.1387",
+        }
+        payload = self._get_json(f"{series_archives_api}?{urlencode(params)}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("series archives missing data")
+        return data
+
+    def series_meta(self, series_id: int) -> dict[str, Any] | None:
+        self.bootstrap()
+        params = {"series_id": series_id, "web_location": "333.1387"}
+        payload = self._get_json(
+            f"{series_meta_api}?{urlencode(params)}", allow_nonzero=True
+        )
+        if payload.get("code") not in (0, None):
+            return None
+        data = payload.get("data") or {}
+        meta = data.get("meta")
+        return meta if isinstance(meta, dict) else None
+
+    def stein_edge(
+        self,
+        *,
+        bvid: str,
+        graph_version: int,
+        edge_id: int | None = None,
+        portal: int = 0,
+    ) -> dict[str, Any]:
+        """interactive video graph node."""
+        self.bootstrap()
+        params: dict[str, object] = {
+            "bvid": bvid,
+            "graph_version": graph_version,
+            "portal": portal,
+            "screen": 0,
+        }
+        if edge_id is not None:
+            params["edge_id"] = edge_id
+        query = enc_wbi(params)
+        payload = self._get_json(f"{stein_edge_api}?{query}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("stein edgeinfo missing data")
+        return data
+
+    def danmaku_xml(self, cid: int) -> str:
+        """fetch classic danmaku XML for a cid."""
+        self.bootstrap()
+        url = danmaku_xml_api.format(cid=cid)
+        try:
+            resp = self.session.get(url, timeout=self.timeout)
+        except requests.RequestException as exc:
+            raise bilibili_api_error(f"danmaku fetch failed: {exc}") from exc
+        if resp.status_code != 200:
+            raise bilibili_api_error(
+                f"danmaku HTTP {resp.status_code}", code=resp.status_code
+            )
+        return resp.text
+
+    def audio_info(self, sid: int) -> dict[str, Any]:
+        self.bootstrap()
+        payload = self._get_json(f"{audio_info_api}?{urlencode({'sid': sid})}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("audio info missing data")
+        return data
+
+    def audio_menu_info(self, sid: int) -> dict[str, Any]:
+        self.bootstrap()
+        payload = self._get_json(f"{audio_menu_info_api}?{urlencode({'sid': sid})}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("audio menu info missing data")
+        return data
+
+    def audio_menu_songs(self, sid: int, *, pn: int = 1, ps: int = 100) -> dict[str, Any]:
+        self.bootstrap()
+        params = {"sid": sid, "pn": pn, "ps": ps}
+        payload = self._get_json(f"{audio_menu_list_api}?{urlencode(params)}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("audio menu list missing data")
+        return data
+
+    def audio_playurl(self, sid: int, *, quality: int = 2) -> dict[str, Any]:
+        self.bootstrap()
+        params = {"sid": sid, "privilege": 2, "quality": quality}
+        payload = self._get_json(f"{audio_play_api}?{urlencode(params)}")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise bilibili_api_error("audio playurl missing data")
+        return data
+
+    # --- account-only stubs (login PR) ---
+
+    def watchlater(self, **_kwargs: Any) -> dict[str, Any]:
+        raise requires_login("watchlater")
+
+    def history(self, **_kwargs: Any) -> dict[str, Any]:
+        raise requires_login("history")
+
+    def followed_bangumi(self, **_kwargs: Any) -> dict[str, Any]:
+        raise requires_login("followed_bangumi")
+
+    def subscribed_collections(self, **_kwargs: Any) -> dict[str, Any]:
+        raise requires_login("subscribed_collections")
+
+    def favorite_folders(self, **_kwargs: Any) -> dict[str, Any]:
+        raise requires_login("favorite_folders")
+
+    def get_bytes(self, url: str) -> bytes:
+        try:
+            resp = self.session.get(url, timeout=self.timeout)
+        except requests.RequestException as exc:
+            raise bilibili_api_error(f"HTTP request failed: {exc}") from exc
+        if resp.status_code != 200:
+            raise bilibili_api_error(f"HTTP {resp.status_code} for {url}")
+        return resp.content
+
+    def get_json_url(self, url: str) -> dict[str, Any]:
+        try:
+            resp = self.session.get(url, timeout=self.timeout)
+        except requests.RequestException as exc:
+            raise bilibili_api_error(f"HTTP request failed: {exc}") from exc
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise bilibili_api_error("non-JSON response") from exc
+        if not isinstance(payload, dict):
+            raise bilibili_api_error("unexpected JSON payload")
+        return payload
 
     def _get_json(self, url: str, *, allow_nonzero: bool = False) -> dict[str, Any]:
         try:

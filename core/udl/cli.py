@@ -58,11 +58,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "probe",
         help="fetch site metadata (parts / qualities) without downloading",
     )
-    p_probe.add_argument("url", help="content URL")
+    p_probe.add_argument(
+        "url",
+        nargs="+",
+        help="content URL(s); multiple = batch probe (bilibili)",
+    )
     p_probe.add_argument(
         "--json",
         action="store_true",
         help="emit a JSON-lines probe event (default: pretty JSON object)",
+    )
+    p_probe.add_argument(
+        "--page",
+        type=int,
+        default=1,
+        help="bilibili list page number (space/favlist/collection)",
+    )
+    p_probe.add_argument(
+        "--keyword",
+        default=None,
+        help="bilibili keyword filter for space/favlist server search",
     )
 
     p_get = sub.add_parser("get", help="download a URL")
@@ -109,6 +124,94 @@ def _build_parser() -> argparse.ArgumentParser:
         "--part",
         default=None,
         help="bilibili part/page number (1-based) or 'all'",
+    )
+    p_get.add_argument(
+        "--codec",
+        default=None,
+        help="bilibili video codec: avc|hevc|av1 or codecid 7|12|13",
+    )
+    p_get.add_argument(
+        "--audio-quality",
+        default=None,
+        help="bilibili audio id (30251 Hi-Res / 30250 Dolby / 30280 / 30232 / 30216)",
+    )
+    p_get.add_argument(
+        "--container",
+        choices=("mp4", "mkv"),
+        default="mp4",
+        help="bilibili output container (default mp4)",
+    )
+    p_get.add_argument(
+        "--danmaku",
+        choices=("xml", "ass", "json"),
+        default=None,
+        help="export bilibili danmaku in this format",
+    )
+    p_get.add_argument(
+        "--subtitle",
+        choices=("srt", "lrc", "txt", "ass", "json"),
+        default=None,
+        help="export bilibili subtitles in this format",
+    )
+    p_get.add_argument(
+        "--subtitle-lang",
+        default=None,
+        help="comma-separated subtitle language codes (default: all available)",
+    )
+    p_get.add_argument(
+        "--embed-danmaku",
+        action="store_true",
+        help="embed ASS danmaku as subtitle track (implies --danmaku ass)",
+    )
+    p_get.add_argument(
+        "--embed-subtitle",
+        action="store_true",
+        help="embed ASS subtitles into mkv/mp4 (implies --subtitle ass)",
+    )
+    p_get.add_argument(
+        "--no-chapters",
+        action="store_true",
+        help="skip writing bilibili chapters when available",
+    )
+    p_get.add_argument(
+        "--filter-title",
+        default=None,
+        help="bilibili auto-select: title keyword",
+    )
+    p_get.add_argument(
+        "--filter-date-from",
+        default=None,
+        help="bilibili auto-select: upload date from YYYY-MM-DD",
+    )
+    p_get.add_argument(
+        "--filter-date-to",
+        default=None,
+        help="bilibili auto-select: upload date to YYYY-MM-DD",
+    )
+    p_get.add_argument(
+        "--filter-duration-min",
+        type=float,
+        default=None,
+        help="bilibili auto-select: min duration seconds",
+    )
+    p_get.add_argument(
+        "--filter-duration-max",
+        type=float,
+        default=None,
+        help="bilibili auto-select: max duration seconds",
+    )
+    p_get.add_argument(
+        "--part-range",
+        default=None,
+        help="bilibili auto-select: page range e.g. 1-5",
+    )
+    p_get.add_argument(
+        "--sessdata",
+        default=None,
+        help=(
+            "optional Bilibili SESSDATA cookie (in-memory only; "
+            "login UX deferred — plug-in for later udl.secrets PR)"
+        ),
     )
     p_get.add_argument(
         "--ffmpeg",
@@ -396,7 +499,12 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 
 def cmd_probe(args: argparse.Namespace) -> int:
-    info = resolve(args.url)
+    urls = args.url if isinstance(args.url, list) else [args.url]
+    if len(urls) > 1:
+        return _cmd_probe_batch(urls, args)
+
+    url = urls[0]
+    info = resolve(url)
     if not info.supported:
         msg = info.message or "unsupported URL"
         if args.json:
@@ -407,33 +515,45 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
     ext = None
     try:
-        ext = get_extractor(args.url)
-        if hasattr(ext, "probe"):
-            probe = ext.probe(args.url)
-            payload = probe.to_dict() if hasattr(probe, "to_dict") else dict(probe)
+        if info.site == "bilibili":
+            from udl.extractors.bilibili import bilibili_extractor
+
+            probe_url = url
+            if getattr(args, "keyword", None):
+                sep = "&" if "?" in probe_url else "?"
+                probe_url = f"{probe_url}{sep}keyword={args.keyword}"
+            ext = bilibili_extractor(page_num=int(getattr(args, "page", 1) or 1))
+            probe = ext.probe(probe_url)
+            payload = probe.to_dict()
         else:
-            result = ext.resolve(args.url)
-            payload = {
-                "site": result.site,
-                "kind": result.kind,
-                "title": result.title,
-                "url": args.url,
-                "parts": result.meta.get("parts") or [],
-                "qualities": result.meta.get("qualities") or [],
-                "default_part": result.meta.get("default_part"),
-                "default_quality": result.meta.get("default_quality"),
-                "message": None,
-                "files": [
-                    {"name": f.name, "size": f.size, "path": f.relative_dir}
-                    for f in result.files
-                ],
-            }
-            meta = metadata_payload(result)
-            if meta:
-                payload["metadata"] = meta
+            ext = get_extractor(url)
+            if hasattr(ext, "probe"):
+                probe = ext.probe(url)
+                payload = probe.to_dict() if hasattr(probe, "to_dict") else dict(probe)
+            else:
+                result = ext.resolve(url)
+                payload = {
+                    "site": result.site,
+                    "kind": result.kind,
+                    "title": result.title,
+                    "url": url,
+                    "parts": result.meta.get("parts") or [],
+                    "qualities": result.meta.get("qualities") or [],
+                    "default_part": result.meta.get("default_part"),
+                    "default_quality": result.meta.get("default_quality"),
+                    "message": None,
+                    "files": [
+                        {"name": f.name, "size": f.size, "path": f.relative_dir}
+                        for f in result.files
+                    ],
+                }
+                meta = metadata_payload(result)
+                if meta:
+                    payload["metadata"] = meta
     except Exception as exc:  # noqa: BLE001
+        code = getattr(exc, "code", None) or "resolve_failed"
         if args.json:
-            emitter().error(message=str(exc), code="resolve_failed")
+            emitter().error(message=str(exc), code=str(code))
         else:
             print(f"probe failed: {exc}", file=sys.stderr)
         return 1
@@ -454,6 +574,102 @@ def _parse_quality(raw: str | None) -> int | None:
     if raw is None or raw == "" or raw.lower() in {"auto", "best"}:
         return None
     return int(raw)
+
+
+def _parse_codec(raw: str | None) -> int | None:
+    if raw is None or raw == "" or raw.lower() in {"auto", "best"}:
+        return None
+    key = str(raw).strip().lower()
+    mapping = {
+        "avc": 7,
+        "h264": 7,
+        "hevc": 12,
+        "h265": 12,
+        "av1": 13,
+        "7": 7,
+        "12": 12,
+        "13": 13,
+    }
+    if key in mapping:
+        return mapping[key]
+    return int(key)
+
+
+def _cmd_probe_batch(urls: list[str], args: argparse.Namespace) -> int:
+    from udl.extractors.bilibili import bilibili_extractor
+    from udl.extractors.bilibili.ids import split_batch_urls
+
+    # flatten if user pasted multi-line as one arg
+    expanded: list[str] = []
+    for u in urls:
+        expanded.extend(split_batch_urls(u))
+    ext = bilibili_extractor(page_num=int(getattr(args, "page", 1) or 1))
+    try:
+        results = ext.probe_batch("\n".join(expanded))
+        payload = {
+            "batch": True,
+            "count": len(results),
+            "items": [
+                r.to_dict() if hasattr(r, "to_dict") else r for r in results
+            ],
+        }
+    finally:
+        ext.close()
+    if args.json:
+        emitter().probe(**payload)
+    else:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _bilibili_from_args(args: argparse.Namespace):
+    from udl.extractors.bilibili import bili_options, bilibili_extractor, select_filter
+    from udl.extractors.bilibili.filter import parse_part_range
+
+    quality = _parse_quality(args.quality)
+    codecid = _parse_codec(getattr(args, "codec", None))
+    audio_q = getattr(args, "audio_quality", None)
+    audio_quality = int(audio_q) if audio_q not in (None, "") else None
+    danmaku = getattr(args, "danmaku", None)
+    subtitle = getattr(args, "subtitle", None)
+    embed_danmaku = bool(getattr(args, "embed_danmaku", False))
+    embed_subtitle = bool(getattr(args, "embed_subtitle", False))
+    if embed_danmaku and not danmaku:
+        danmaku = "ass"
+    if embed_subtitle and not subtitle:
+        subtitle = "ass"
+    page_from, page_to = parse_part_range(getattr(args, "part_range", None))
+    select = select_filter(
+        title_keyword=getattr(args, "filter_title", None),
+        date_from=getattr(args, "filter_date_from", None),
+        date_to=getattr(args, "filter_date_to", None),
+        duration_min=getattr(args, "filter_duration_min", None),
+        duration_max=getattr(args, "filter_duration_max", None),
+        page_from=page_from,
+        page_to=page_to,
+    )
+    langs_raw = getattr(args, "subtitle_lang", None) or ""
+    langs = [x.strip() for x in langs_raw.split(",") if x.strip()]
+    cookies = None
+    sessdata = getattr(args, "sessdata", None)
+    if sessdata:
+        cookies = {"SESSDATA": str(sessdata)}
+    opts = bili_options(
+        quality=quality,
+        codecid=codecid,
+        audio_quality=audio_quality,
+        part=args.part,
+        container=getattr(args, "container", None) or "mp4",
+        danmaku_format=danmaku,
+        subtitle_format=subtitle,
+        subtitle_languages=langs,
+        embed_danmaku=embed_danmaku,
+        embed_subtitle=embed_subtitle,
+        write_chapters=not bool(getattr(args, "no_chapters", False)),
+        select=select,
+        cookies=cookies,
+    )
+    return bilibili_extractor(options=opts, ffmpeg=args.ffmpeg)
 
 
 def cmd_get(args: argparse.Namespace) -> int:
@@ -489,22 +705,15 @@ def cmd_get(args: argparse.Namespace) -> int:
     overrides: dict[int, Path] = {}
     try:
         if info.site == "bilibili":
-            from udl.extractors.bilibili import bilibili_extractor
-
             try:
-                quality = _parse_quality(args.quality)
-            except ValueError:
-                msg = f"invalid bilibili --quality (expect qn int): {args.quality}"
+                ext = _bilibili_from_args(args)
+            except ValueError as exc:
+                msg = f"invalid bilibili option: {exc}"
                 if args.json:
                     emit.error(job=job_id, message=msg, code="resolve_failed")
                 else:
                     print(msg, file=sys.stderr)
                 return 1
-            ext = bilibili_extractor(
-                quality=quality,
-                part=args.part,
-                ffmpeg=args.ffmpeg,
-            )
         else:
             ext = get_extractor(args.url)
             _apply_site_options(ext, args)

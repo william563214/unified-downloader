@@ -72,8 +72,8 @@
 
 - [x] NFO／sidecar 資訊檔輸出（`udl/postprocess/nfo.py`；CLI／GUI 全域＋站點開關）
 - [x] 封面／縮圖下載（`udl/postprocess/cover.py`；poster／folder.jpg；可選 FFmpeg 嵌入）
-- [ ] aria2 RPC 後端（與另一代理的下載引擎工作協調；本 foundation 不改引擎內部）
-- [ ] 全域限速／Proxy（同上，下載引擎平行工作）
+- [ ] aria2 RPC 後端（與 PR #6 下載引擎工作協調）
+- [ ] 全域限速／Proxy（PR #6）
 
 ## v0.6 — Iwara 對齊 Moeary／IwaraTool
 
@@ -86,13 +86,22 @@
 
 ## v0.7 — Bilibili 對齊 Bili23-Downloader
 
-- [ ] QR／SMS／Cookie 登入（憑證進 OS keychain；僅使用者自有帳號權限）
-- [ ] 全解析類型覆蓋（在帳號權限內）
-- [ ] 批次任務
-- [ ] 8K／HDR／Dolby（僅限帳號可得流，不繞過大會員／付費／區域）
-- [ ] 彈幕／字幕
-- [ ] 章節
-- [ ] 封裝 mp4／mkv 選項
+### v0.7-A（本版／匿名＋可插 session cookie）
+
+- [x] 解析類型：普通多 P、bangumi ep/ss/md、cheese、互動 graph、au/am、UP 空間、公開收藏夾、每周必看、合集／系列
+- [x] 帳號專屬清單（稍後再看／歷史／追番／訂閱合集）→ `requires_login` stub（等登入 PR）
+- [x] 批次多連結、UP／收藏夾 keyword、條件自動勾選（日期／時長／標題／P 範圍）
+- [x] 畫質列表＋AVC／HEVC／AV1、音訊品質（含 Hi-Res／Dolby **僅 API 有提供時**）
+- [x] 彈幕 xml／ass／json、字幕 srt／lrc／txt／ass／json、章節、mp4／mkv、可選 ASS 嵌入
+- [x] 統一 metadata＋per-type 命名模板預設；接入 NFO／封面／規則／去重
+- [x] GUI「Bilibili」解析頁（樹狀勾選 → 佇列）
+- [x] CDN／自訂 Host：TODO（避開與 PR #6 UA／代理衝突；見 `docs/bilibili.md`）
+- [ ] QR／SMS／Cookie 登入（憑證進 OS keychain；設計已預留 `set_session_cookies`／`--sessdata`）
+
+### 仍屬 v0.7 follow-up
+
+- [ ] 登入後帳號清單與更高畫質（仍不繞過大會員／付費／區域）
+- [ ] protobuf 分段彈幕（目前走經典 XML comment API）
 
 ## 不做／延後
 

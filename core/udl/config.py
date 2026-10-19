@@ -17,11 +17,20 @@ udl_config_env = "UDL_CONFIG"
 _safe_toml_key = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
+def _default_type_templates() -> dict[str, str]:
+    try:
+        from udl.extractors.bilibili.templates import default_type_templates
+
+        return dict(default_type_templates)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 @dataclass
 class udl_config:
     name_template: str = ""
     site_templates: dict[str, str] = field(default_factory=dict)
-    type_templates: dict[str, str] = field(default_factory=dict)
+    type_templates: dict[str, str] = field(default_factory=_default_type_templates)
     rules: list[classify_rule] = field(default_factory=list)
     name_conflict: str = "rename"
 
@@ -46,10 +55,12 @@ class udl_config:
         conflict = str(data.get("name_conflict") or "rename").lower()
         if conflict not in {"rename", "overwrite", "error"}:
             conflict = "rename"
+        merged_types = _default_type_templates()
+        merged_types.update({str(k): str(v) for k, v in type_templates.items()})
         return cls(
             name_template=str(data.get("name_template") or data.get("template") or ""),
             site_templates={str(k): str(v) for k, v in site_templates.items()},
-            type_templates={str(k): str(v) for k, v in type_templates.items()},
+            type_templates=merged_types,
             rules=parse_rules(data),
             name_conflict=conflict,
         )

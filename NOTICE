@@ -39,14 +39,22 @@ upstream copyright and were adapted under compatible licenses.
 - Upstream: https://github.com/ScottSloan/Bili23-Downloader
 - License: GPL-3.0
 - Ported from commit: e3d6aff32fffca88b249412b92b40448321418c4
-- Notes: Subset only — BV/av multi-part video, b23.tv short links,
-  bangumi/episode when freely accessible. WBI signing, playurl DASH
-  selection, and FFmpeg merge patterns adapted from upstream
-  (`util/parse/parser/*`, `util/ffmpeg`). Qt worker/thread model was
-  not ported. No paywall, VIP-only, or region-lock bypass.
-  Upstream README also states a non-commercial usage agreement; GPL
-  itself does not forbid commercial use — both are documented here.
-  QR/cookie login is stubbed for a later release (OS keychain).
+- Notes: v0.7-A parity subset — BV/av multi-P, bangumi ep/ss/md,
+  cheese courses, interactive stein graph nodes, au/am audio,
+  UP space, public favlists, weekly popular, collections/series,
+  b23.tv short links. Danmaku (xml/ass/json), subtitles
+  (srt/lrc/txt/ass/json), chapters, AVC/HEVC/AV1 + audio quality
+  selection, mp4/mkv. WBI signing, playurl DASH, and FFmpeg merge
+  patterns adapted from upstream (`util/parse/parser/*`,
+  `util/parse/additional/*`, `util/ffmpeg`). Qt UI was not ported.
+  No paywall, VIP-only, or region-lock bypass — only streams the
+  current session is entitled to. Account-only lists (watch-later,
+  history, followed bangumi, subscribed collections) raise
+  `requires_login` until a follow-up PR adds QR/SMS/Cookie via
+  `udl.secrets`. Session cookies can be injected with
+  `set_session_cookies` / `--sessdata`. Upstream README also states
+  a non-commercial usage agreement; GPL itself does not forbid
+  commercial use — both are documented here.
 
 ## External tools (subprocess only — not linked / not imported)
 

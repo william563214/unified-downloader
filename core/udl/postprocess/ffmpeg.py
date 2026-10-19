@@ -88,11 +88,15 @@ def merge_dash(
     *,
     ffmpeg: str | Path | None = None,
     overwrite: bool = True,
+    chapters_path: Path | None = None,
+    subtitle_paths: list[tuple[Path, str | None]] | None = None,
 ) -> Path:
     """merge DASH video (+ optional audio) into output with stream copy.
 
     Uses `-c copy -strict unofficial` so Dolby Vision / unusual boxes
     remux without re-encode (same pattern as Bili23-Downloader).
+
+    Optional chapters (ffmetadata) and ASS subtitle tracks for mkv/mp4.
     """
     binary = find_ffmpeg(ffmpeg)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,11 +104,37 @@ def merge_dash(
     if overwrite:
         cmd.append("-y")
     cmd.extend(["-i", str(video_path)])
+    input_count = 1
     if audio_path is not None:
         cmd.extend(["-i", str(audio_path)])
-        cmd.extend(["-c:v", "copy", "-c:a", "copy", "-strict", "unofficial"])
-    else:
-        cmd.extend(["-c", "copy", "-strict", "unofficial"])
+        input_count += 1
+    if chapters_path is not None and chapters_path.is_file():
+        cmd.extend(["-i", str(chapters_path)])
+        input_count += 1
+    subtitle_paths = subtitle_paths or []
+    sub_start = input_count
+    for sub_path, _lang in subtitle_paths:
+        cmd.extend(["-i", str(sub_path)])
+        input_count += 1
+
+    # map streams
+    cmd.extend(["-map", "0:v:0?"])
+    if audio_path is not None:
+        cmd.extend(["-map", "1:a:0?"])
+    for i, (_path, _lang) in enumerate(subtitle_paths):
+        cmd.extend(["-map", f"{sub_start + i}:0?"])
+
+    cmd.extend(["-c:v", "copy", "-c:a", "copy", "-c:s", "copy", "-strict", "unofficial"])
+    if chapters_path is not None and chapters_path.is_file():
+        # chapters input is the one after audio (or after video if no audio)
+        chap_idx = 2 if audio_path is not None else 1
+        cmd.extend(["-map_metadata", str(chap_idx)])
+    for i, (_path, lang) in enumerate(subtitle_paths):
+        if lang:
+            cmd.extend([f"-metadata:s:s:{i}", f"language={lang}"])
+    # mp4 soft-subs need mov_text; mkv keeps ass
+    if output_path.suffix.lower() == ".mp4" and subtitle_paths:
+        cmd.extend(["-c:s", "mov_text"])
     cmd.append(str(output_path))
 
     try:
@@ -118,6 +148,17 @@ def merge_dash(
         raise merge_error(f"failed to run FFmpeg: {exc}") from exc
 
     if proc.returncode != 0:
+        # retry without subtitle embedding if soft-sub failed
+        if subtitle_paths:
+            return merge_dash(
+                video_path,
+                audio_path,
+                output_path,
+                ffmpeg=ffmpeg,
+                overwrite=overwrite,
+                chapters_path=chapters_path,
+                subtitle_paths=None,
+            )
         detail = (proc.stderr or proc.stdout or "").strip()
         if len(detail) > 800:
             detail = detail[-800:]

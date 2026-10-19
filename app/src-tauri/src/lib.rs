@@ -40,9 +40,19 @@ struct ProbeResult {
     url: String,
     parts: Vec<serde_json::Value>,
     qualities: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    codecs: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    audio_qualities: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    subtitle_tracks: Vec<serde_json::Value>,
     default_part: Option<i64>,
     default_quality: Option<i64>,
     message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pagination: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    naming_template: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -395,7 +405,11 @@ async fn probe_url(app: AppHandle, url: String) -> Result<ProbeResult, String> {
     }
     let value: serde_json::Value = serde_json::from_str(stdout.trim())
         .map_err(|e| format!("parse probe JSON: {e}; raw={stdout}; err={stderr}"))?;
-    Ok(ProbeResult {
+    Ok(probe_result_from_value(value, &url))
+}
+
+fn probe_result_from_value(value: serde_json::Value, fallback_url: &str) -> ProbeResult {
+    ProbeResult {
         site: value
             .get("site")
             .and_then(|v| v.as_str())
@@ -411,7 +425,7 @@ async fn probe_url(app: AppHandle, url: String) -> Result<ProbeResult, String> {
         url: value
             .get("url")
             .and_then(|v| v.as_str())
-            .unwrap_or(&url)
+            .unwrap_or(fallback_url)
             .to_string(),
         parts: value
             .get("parts")
@@ -420,6 +434,21 @@ async fn probe_url(app: AppHandle, url: String) -> Result<ProbeResult, String> {
             .unwrap_or_default(),
         qualities: value
             .get("qualities")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        codecs: value
+            .get("codecs")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        audio_qualities: value
+            .get("audio_qualities")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default(),
+        subtitle_tracks: value
+            .get("subtitle_tracks")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default(),
@@ -432,7 +461,49 @@ async fn probe_url(app: AppHandle, url: String) -> Result<ProbeResult, String> {
                 v.as_str().map(str::to_string)
             }
         }),
-    })
+        pagination: value.get("pagination").cloned().filter(|v| !v.is_null()),
+        naming_template: value
+            .get("naming_template")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    }
+}
+
+#[tauri::command]
+async fn probe_bilibili(
+    app: AppHandle,
+    urls: Vec<String>,
+    page: Option<u32>,
+    keyword: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec!["probe".into()];
+    for u in &urls {
+        let trimmed = u.trim();
+        if !trimmed.is_empty() {
+            args.push(trimmed.to_string());
+        }
+    }
+    if args.len() == 1 {
+        return Err("no urls".into());
+    }
+    if let Some(p) = page {
+        args.push("--page".into());
+        args.push(p.max(1).to_string());
+    }
+    if let Some(kw) = keyword {
+        let kw = kw.trim();
+        if !kw.is_empty() {
+            args.push("--keyword".into());
+            args.push(kw.to_string());
+        }
+    }
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("udl probe exited {:?}: {stderr}", code));
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse probe JSON: {e}; raw={stdout}; err={stderr}"))
 }
 
 #[tauri::command]
@@ -524,6 +595,16 @@ async fn start_download(
     ffmpeg: Option<String>,
     on_duplicate: Option<String>,
     job_id: Option<String>,
+    codec: Option<String>,
+    audio_quality: Option<String>,
+    container: Option<String>,
+    danmaku: Option<String>,
+    subtitle: Option<String>,
+    subtitle_lang: Option<String>,
+    embed_danmaku: Option<bool>,
+    embed_subtitle: Option<bool>,
+    filter_title: Option<String>,
+    part_range: Option<String>,
 ) -> Result<String, String> {
     let settings = load_settings_file(&app);
     let job_id = job_id
@@ -563,6 +644,68 @@ async fn start_download(
         if !p.is_empty() {
             args.push("--part".into());
             args.push(p.to_string());
+        }
+    }
+    if let Some(c) = codec {
+        let c = c.trim();
+        if !c.is_empty() {
+            args.push("--codec".into());
+            args.push(c.to_string());
+        }
+    }
+    if let Some(aq) = audio_quality {
+        let aq = aq.trim();
+        if !aq.is_empty() {
+            args.push("--audio-quality".into());
+            args.push(aq.to_string());
+        }
+    }
+    if let Some(cont) = container {
+        let cont = cont.trim();
+        if cont == "mp4" || cont == "mkv" {
+            args.push("--container".into());
+            args.push(cont.to_string());
+        }
+    }
+    if let Some(d) = danmaku {
+        let d = d.trim();
+        if !d.is_empty() {
+            args.push("--danmaku".into());
+            args.push(d.to_string());
+        }
+    }
+    if let Some(s) = subtitle {
+        let s = s.trim();
+        if !s.is_empty() {
+            args.push("--subtitle".into());
+            args.push(s.to_string());
+        }
+    }
+    if let Some(sl) = subtitle_lang {
+        let sl = sl.trim();
+        if !sl.is_empty() {
+            args.push("--subtitle-lang".into());
+            args.push(sl.to_string());
+        }
+    }
+    if embed_danmaku.unwrap_or(false) {
+        args.push("--embed-danmaku".into());
+    }
+    if embed_subtitle.unwrap_or(false) {
+        args.push("--embed-subtitle".into());
+    }
+    if let Some(ft) = filter_title {
+        let ft = ft.trim();
+        if !ft.is_empty() {
+            args.push("--filter-title".into());
+            args.push(ft.to_string());
+        }
+    }
+    if let Some(pr) = part_range {
+        let pr = pr.trim();
+        if !pr.is_empty() {
+            args.push("--part-range".into());
+            args.push(pr.to_string());
         }
     }
     if cloudflare_bypass.unwrap_or(false) {
@@ -1021,6 +1164,7 @@ pub fn run() {
             get_app_paths,
             resolve_url,
             probe_url,
+            probe_bilibili,
             ffmpeg_status,
             install_ffmpeg,
             start_download,
