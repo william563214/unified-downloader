@@ -1,4 +1,4 @@
-# 整合下載器（unified-downloader）v0.5
+# 整合下載器（unified-downloader）v0.7-A
 
 桌面應用：貼上網址 → 辨識站點 → 用統一 Python 核心下載。  
 授權：**GPL-3.0-or-later**（見 `LICENSE`、`NOTICE`）。
@@ -34,7 +34,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 | Gofile | ✅ | ltsdw/gofile-downloader（訪客 token，公開連結） |
 | Bunkr | ✅ | Lysagxra/BunkrDownloader（相簿／單檔） |
 | Iwara | ✅ | Moeary/IwaraTool（公開影片／播放清單／作者頁） |
-| Bilibili | ✅ | ScottSloan/Bili23-Downloader（BV/av、多分 P、b23、可匿名 bangumi；DASH+FFmpeg） |
+| Bilibili | ✅ v0.7-A | ScottSloan/Bili23-Downloader（多類型解析、彈幕字幕、codec；無登入；見 `docs/bilibili.md`） |
 | MEGA | ✅ 外部工具 | **megatools**（優先）／MEGAcmd `mega-get`（備援）；子行程，不移植 MegaBasterd |
 
 上游 commit 與授權細節見 `NOTICE`。介面約定見 `docs/extractor-interface.md`。路線圖見 `ROADMAP.md`。
@@ -47,12 +47,13 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - **不**預設開 Cloudflare 繞過。需要時：`udl get … --cloudflare-bypass`（需 `uv sync --extra iwara` 或安裝 cloudscraper），GUI 有對應核取方塊且預設關閉
 - `X-Version` salt 在 `core/udl/extractors/iwara_xversion.py`；全部失敗會拋清楚錯誤
 
-### Bilibili 備註
+### Bilibili 備註（v0.7-A）
 
-- 預設使用**無需登入即可取得的最高畫質**；`--quality`（qn 數字）／GUI 可改選。
-- 多分 P：未帶 `?p=` 時預設全部；bangumi 季節連結預設當前／第一集，可用 `--part all`。
-- 需要 FFmpeg（PATH、`UDL_FFMPEG`、`--ffmpeg`，或 GUI 首次下載到應用資料目錄）。缺少時會發出 `ffmpeg_missing`。
-- **不會**繞過大會員、付費牆或地區限制；QR 登入僅 stub。
+- 類型：BV／多 P、bangumi、cheese、互動節點、au／am、UP 空間、公開收藏夾、每周必看、合集／系列；帳號清單 → `requires_login`。
+- 畫質／`--codec avc|hevc|av1`／`--audio-quality`；僅 session 可得流，**不**繞過 VIP／付費／區域。
+- `--danmaku`／`--subtitle`／章節／`--container mp4|mkv`；詳見 `docs/bilibili.md`。
+- GUI「Bilibili」解析頁：多連結樹狀勾選 → 佇列。登入（QR／Cookie）與 `udl.secrets` 另 PR。
+- 需要 FFmpeg（PATH、`UDL_FFMPEG`、`--ffmpeg`，或 GUI 首次下載）。
 
 ### MEGA 備註（v0.4）
 

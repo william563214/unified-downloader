@@ -42,7 +42,7 @@ Python：`from udl.metadata import item_metadata`。
 | Gofile | content／file id | title、collection（資料夾） |
 | Bunkr | album／media slug | title、canonical_url、collection |
 | Iwara | video id | author、tags、duration、thumbnail、views／likes |
-| Bilibili | bvid 或 `bvid/pN` | author、pubdate、tags、desc、cover、views／likes |
+| Bilibili | bvid／`bvid/pN`／au／season | author、pubdate、tags、desc、cover、views／likes、collection；`extra.kind`／`nfo_type` |
 | MEGA | handle | canonical_url、kind（file／folder）；其餘常為空 |
 
 ## 去重鍵

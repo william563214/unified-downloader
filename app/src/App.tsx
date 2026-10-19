@@ -22,6 +22,7 @@ import {
   history_cover_path,
   site_ids,
 } from "./settings";
+import BilibiliParse from "./BilibiliParse";
 import "./App.css";
 
 type ResolveResult = {
@@ -95,6 +96,16 @@ type JobRow = {
   quality: string | null;
   part: string | null;
   cloudflareBypass: boolean | null;
+  codec?: string | null;
+  audioQuality?: string | null;
+  container?: string | null;
+  danmaku?: string | null;
+  subtitle?: string | null;
+  subtitleLang?: string | null;
+  embedDanmaku?: boolean;
+  embedSubtitle?: boolean;
+  filterTitle?: string | null;
+  partRange?: string | null;
   files: FileRow[];
   ok?: number;
   failed?: number;
@@ -107,7 +118,7 @@ type UdlEventPayload = {
   line: Record<string, unknown>;
 };
 
-type Page = "download" | "history" | "repair" | "settings";
+type Page = "download" | "bilibili" | "history" | "repair" | "settings";
 
 function formatBytes(n?: number): string {
   if (n == null || Number.isNaN(n)) return "—";
@@ -554,6 +565,16 @@ export default function App() {
           ffmpeg: settings.ffmpegPath || null,
           onDuplicate: settings.onDuplicate || "skip",
           jobId: job.id || null,
+          codec: job.codec ?? null,
+          audioQuality: job.audioQuality ?? null,
+          container: job.container ?? null,
+          danmaku: job.danmaku ?? null,
+          subtitle: job.subtitle ?? null,
+          subtitleLang: job.subtitleLang ?? null,
+          embedDanmaku: job.embedDanmaku ?? false,
+          embedSubtitle: job.embedSubtitle ?? false,
+          filterTitle: job.filterTitle ?? null,
+          partRange: job.partRange ?? null,
         });
         setJobs((prev) =>
           prev.map((j) =>
@@ -753,10 +774,61 @@ export default function App() {
       cloudflareBypass:
         overrides?.cloudflareBypass ??
         (site === "iwara" ? settings.iwaraCloudflareBypass : null),
+      codec: overrides?.codec ?? null,
+      audioQuality: overrides?.audioQuality ?? null,
+      container: overrides?.container ?? null,
+      danmaku: overrides?.danmaku ?? null,
+      subtitle: overrides?.subtitle ?? null,
+      subtitleLang: overrides?.subtitleLang ?? null,
+      embedDanmaku: overrides?.embedDanmaku ?? false,
+      embedSubtitle: overrides?.embedSubtitle ?? false,
+      filterTitle: overrides?.filterTitle ?? null,
+      partRange: overrides?.partRange ?? null,
       files: [],
       status: "queued",
     };
     setJobs((prev) => [job, ...prev]);
+  }
+
+  function enqueueFromBilibiliParse(opts: {
+    url: string;
+    quality: string | null;
+    part: string | null;
+    codec: string | null;
+    audioQuality: string | null;
+    container: string;
+    danmaku: string | null;
+    subtitle: string | null;
+    subtitleLang: string | null;
+    embedDanmaku: boolean;
+    embedSubtitle: boolean;
+    filterTitle: string | null;
+    partRange: string | null;
+    checkedPages: number[];
+  }) {
+    const part =
+      opts.partRange && opts.checkedPages.length > 1
+        ? "all"
+        : opts.part;
+    enqueueDownload({
+      url: opts.url,
+      site: "bilibili",
+      title: "Bilibili",
+      output,
+      quality: opts.quality,
+      part,
+      codec: opts.codec,
+      audioQuality: opts.audioQuality,
+      container: opts.container,
+      danmaku: opts.danmaku,
+      subtitle: opts.subtitle,
+      subtitleLang: opts.subtitleLang,
+      embedDanmaku: opts.embedDanmaku,
+      embedSubtitle: opts.embedSubtitle,
+      filterTitle: opts.filterTitle,
+      partRange: opts.partRange,
+    });
+    setPage("download");
   }
 
   async function cancelJob(job: JobRow) {
@@ -1031,6 +1103,13 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={page === "bilibili" ? "nav active" : "nav"}
+            onClick={() => setPage("bilibili")}
+          >
+            Bilibili
+          </button>
+          <button
+            type="button"
             className={page === "history" ? "nav active" : "nav"}
             onClick={() => setPage("history")}
           >
@@ -1082,7 +1161,13 @@ export default function App() {
         </section>
       )}
 
-      {page === "history" ? (
+      {page === "bilibili" ? (
+        <BilibiliParse
+          settings={settings}
+          output={output || settings.downloadDir}
+          onEnqueue={enqueueFromBilibiliParse}
+        />
+      ) : page === "history" ? (
         <section className="composer settings" aria-label="下載歷史">
           <div className="queue-head">
             <h2>下載歷史</h2>

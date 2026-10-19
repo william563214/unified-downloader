@@ -63,7 +63,7 @@ registry: list[site_entry] = [
         match=bilibili_mod.matches,
         factory=bilibili_mod.bilibili_extractor,
         status="implemented",
-        kind_hint="video|bangumi",
+        kind_hint="video|bangumi|cheese|audio|space|favlist|popular|collection",
     ),
     site_entry(
         site="mega",
