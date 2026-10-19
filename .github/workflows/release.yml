@@ -51,12 +51,13 @@ jobs:
 
       - name: Install frontend deps
         working-directory: app
+        shell: bash
         run: |
-          npm ci
-          # Ensure platform-native @tauri-apps/cli binding is present
-          # (npm lockfiles generated on one OS often omit other optionalDeps)
-          npm install --no-save --no-package-lock \
-            "@tauri-apps/cli@$(node -p "require('./node_modules/@tauri-apps/cli/package.json').version")"
+          # Prefer npm install over npm ci so the runner OS resolves native
+          # optionalDependencies (tauri-cli / lightningcss) that a Linux-generated
+          # lockfile may not have fully materialised for macOS/Windows.
+          rm -rf node_modules
+          npm install --no-fund --no-audit
 
       - name: Install Linux WebKit deps
         if: runner.os == 'Linux'

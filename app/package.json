@@ -34,6 +34,14 @@
     "@tauri-apps/cli-linux-x64-musl": "2.12.3",
     "@tauri-apps/cli-win32-arm64-msvc": "2.12.3",
     "@tauri-apps/cli-win32-ia32-msvc": "2.12.3",
-    "@tauri-apps/cli-win32-x64-msvc": "2.12.3"
+    "@tauri-apps/cli-win32-x64-msvc": "2.12.3",
+    "lightningcss-darwin-arm64": "1.33.0",
+    "lightningcss-darwin-x64": "1.33.0",
+    "lightningcss-linux-arm64-gnu": "1.33.0",
+    "lightningcss-linux-arm64-musl": "1.33.0",
+    "lightningcss-linux-x64-gnu": "1.33.0",
+    "lightningcss-linux-x64-musl": "1.33.0",
+    "lightningcss-win32-arm64-msvc": "1.33.0",
+    "lightningcss-win32-x64-msvc": "1.33.0"
   }
 }
