@@ -23,6 +23,9 @@ import {
   site_ids,
 } from "./settings";
 import BilibiliParse from "./BilibiliParse";
+import { BrowsePage } from "./iwara/BrowsePage";
+import { HomePage } from "./iwara/HomePage";
+import { SubscriptionsPage } from "./iwara/SubscriptionsPage";
 import "./App.css";
 
 type ResolveResult = {
@@ -118,7 +121,7 @@ type UdlEventPayload = {
   line: Record<string, unknown>;
 };
 
-type Page = "download" | "bilibili" | "history" | "repair" | "settings";
+type Page = "download" | "bilibili" | "history" | "repair" | "settings" | "iwara" | "iwara-subs" | "iwara-home";
 
 function formatBytes(n?: number): string {
   if (n == null || Number.isNaN(n)) return "—";
@@ -1119,6 +1122,27 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={page === "iwara" ? "nav active" : "nav"}
+            onClick={() => setPage("iwara")}
+          >
+            Iwara
+          </button>
+          <button
+            type="button"
+            className={page === "iwara-home" ? "nav active" : "nav"}
+            onClick={() => setPage("iwara-home")}
+          >
+            首頁
+          </button>
+          <button
+            type="button"
+            className={page === "iwara-subs" ? "nav active" : "nav"}
+            onClick={() => setPage("iwara-subs")}
+          >
+            訂閱
+          </button>
+          <button
+            type="button"
             className={page === "history" ? "nav active" : "nav"}
             onClick={() => setPage("history")}
           >
@@ -1175,6 +1199,24 @@ export default function App() {
           settings={settings}
           output={output || settings.downloadDir}
           onEnqueue={enqueueFromBilibiliParse}
+        />
+      ) : page === "iwara" ? (
+        <BrowsePage
+          downloadDir={settings.downloadDir}
+          cloudflareBypass={Boolean(settings.iwaraCloudflareBypass)}
+          onEnqueueStarted={() => setPage("download")}
+        />
+      ) : page === "iwara-home" ? (
+        <HomePage
+          downloadDir={settings.downloadDir}
+          cloudflareBypass={Boolean(settings.iwaraCloudflareBypass)}
+          onEnqueueStarted={() => setPage("download")}
+        />
+      ) : page === "iwara-subs" ? (
+        <SubscriptionsPage
+          downloadDir={settings.downloadDir}
+          cloudflareBypass={Boolean(settings.iwaraCloudflareBypass)}
+          onEnqueueStarted={() => setPage("download")}
         />
       ) : page === "history" ? (
         <section className="composer settings" aria-label="下載歷史">
