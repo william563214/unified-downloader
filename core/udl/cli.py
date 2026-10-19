@@ -1157,7 +1157,13 @@ def cmd_secrets(args: argparse.Namespace) -> int:
         if args.json:
             print(json.dumps({"key": args.key, "found": value is not None}, ensure_ascii=False))
         elif value is not None:
-            if args.key.strip() == "bilibili.session":
+            # never print credential values for login-related keys
+            if args.key.strip() in {
+                "bilibili.session",
+                "iwara.password",
+                "iwara.user_token",
+                "iwara.access_token",
+            }:
                 print("(redacted — use --json to check presence)", file=sys.stderr)
                 return 0
             print(value)
