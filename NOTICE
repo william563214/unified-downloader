@@ -1,0 +1,102 @@
+# NOTICE — Third-party provenance for unified-downloader (整合下載器)
+
+This project is licensed under GPL-3.0-or-later. Ported modules retain
+upstream copyright and were adapted under compatible licenses.
+
+## Ported extractors (this tree)
+
+### Gofile — `core/udl/extractors/gofile.py`
+- Upstream: https://github.com/ltsdw/gofile-downloader
+- License: GPL-3.0
+- Ported from commit: 48349ba3d017d4531bc3bc3d150e365bdd98f0d6
+- Notes: Guest account creation (`POST api.gofile.io/accounts`) and
+  `X-Website-Token` generation follow upstream public-link behaviour.
+  Token salt may rotate; failures should surface as clear errors.
+
+### Bunkr — `core/udl/extractors/bunkr.py`
+- Upstream: https://github.com/Lysagxra/BunkrDownloader
+- License: GPL-3.0
+- Ported from commit: a58790ff540e8d9b0579c1b1c4d1b49d4fa9b8da
+- Notes: Album and single-file resolution, signing API
+  (`glb-apisign.cdn.cr/sign`), download API (`dl.bunkr.cr/api/_001_v2`).
+  Domains rotate; keep FALLBACK_DOMAIN and URL patterns maintainable.
+
+### Iwara — `core/udl/extractors/iwara.py`, `iwara_xversion.py`
+- Upstream: https://github.com/Moeary/IwaraTool
+- License: MIT
+- Ported from commit: 1e98c96c422a169699c0d16bcab49b8a7f5238d5
+- Copyright: retain MIT attribution from Moeary/IwaraTool
+- Notes: Ported API client pieces from `app/core/api/` (videos, listings,
+  users, endpoints, auth_tokens X-Version) without PySide6 / QSettings.
+  `X-Version` salts live in `iwara_xversion.py` as documented constants and
+  raise a clear error when all salts are rejected (site rotation).
+  Cloudflare challenge bypass (`cloudscraper`) is **opt-in / off by default**.
+  Optional Bearer token is accepted in-memory only (not stored). Upstream
+  README also lists extra packaging usage terms outside the MIT LICENSE
+  file; those are not part of the MIT grant and are noted here only.
+
+### Bilibili — `core/udl/extractors/bilibili/`
+- Upstream: https://github.com/ScottSloan/Bili23-Downloader
+- License: GPL-3.0
+- Ported from commit: e3d6aff32fffca88b249412b92b40448321418c4
+- Notes: Subset only — BV/av multi-part video, b23.tv short links,
+  bangumi/episode when freely accessible. WBI signing, playurl DASH
+  selection, and FFmpeg merge patterns adapted from upstream
+  (`util/parse/parser/*`, `util/ffmpeg`). Qt worker/thread model was
+  not ported. No paywall, VIP-only, or region-lock bypass.
+  Upstream README also states a non-commercial usage agreement; GPL
+  itself does not forbid commercial use — both are documented here.
+  QR/cookie login is stubbed for a later release (OS keychain).
+
+## External tools (subprocess only — not linked / not imported)
+
+### MEGA — `core/udl/extractors/external/mega.py`
+- Preferred: **megatools** (`megatools dl` / `megadl`)
+  - Upstream: https://xff.cz/megatools/ / https://xff.cz/git/megatools
+  - License: GPL-2.0 with OpenSSL exemption (treated as GPL-2.0-only for
+    linking purposes). **Must not be imported or statically/dynamically
+    linked into the udl process**; invoke only as a separate executable.
+  - Why preferred: single headless binary, parseable progress lines, works
+    without a background daemon on macOS / Windows / Linux.
+- Fallback: **MEGAcmd** (`mega-get`)
+  - Upstream: https://github.com/meganz/MEGAcmd
+  - License: mostly BSD-2-Clause (interactive shell binary is GPL).
+  - May require `mega-cmd-server` in the background; progress is a
+    TRANSFERRING bar that udl parses when present.
+- Supported URLs: `mega.nz/file/…`, `/folder/…`, legacy `#!` / `#F!`
+  (also `mega.co.nz` / `mega.io` hosts).
+- Missing tool: JSON-lines `error` with `code=mega_tool_missing` and
+  install guidance (brew / scoop / apt / https://mega.io/cmd). Optional
+  override: `--mega-tool` or `UDL_MEGA_TOOL`.
+- Explicitly **not** implemented: MegaBasterd SmartProxy, Quota Recovery,
+  IP rotation, or any transfer-quota bypass.
+
+## Bundled / first-run FFmpeg downloads
+
+The desktop app may download a **static FFmpeg binary** on first use when none
+is found on PATH / `UDL_FFMPEG` / Settings. Builds are checksum-verified before
+install into the application data directory (`…/ffmpeg/`).
+
+### Windows x64 — BtbN FFmpeg-Builds (LGPL static)
+- Source: https://github.com/BtbN/FFmpeg-Builds
+- Asset: `ffmpeg-master-latest-win64-lgpl.zip` from the `latest` release
+- Checksum: verified against the release `checksums.sha256` at download time
+- License: **LGPL** variant (non-GPL build). FFmpeg itself is LGPL 2.1+ /
+  GPL 2+ depending on configure options; this asset is the LGPL build.
+
+### macOS arm64 — Martin Riedl static builds
+- Source: https://ffmpeg.martin-riedl.de/
+- Asset: `redirect/latest/macos/arm64/release/ffmpeg.zip`
+- Checksum: verified against the companion `ffmpeg.zip.sha256` next to the
+  resolved download URL
+- License: these builds typically enable GPL components (e.g. x264/x265).
+  Treat the downloaded macOS binary as **GPL** unless you replace it with an
+  LGPL-only build. See https://ffmpeg.org/legal.html.
+
+Users may instead install FFmpeg themselves and point Settings → FFmpeg path
+(or set `UDL_FFMPEG`). This project does not redistribute FFmpeg inside the
+signed/unsigned app bundle by default; the optional download is user-initiated.
+
+## Intentionally not ported
+- gallery-dl (GPL-2.0-only) — incompatible with GPL-3.0; do not import or copy.
+- MegaBasterd — GUI-only Java app; MEGA is handled via megatools/MEGAcmd instead.

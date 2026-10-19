@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  lint-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync and lint Python
+        working-directory: core
+        run: |
+          uv sync --extra dev
+          uv run ruff check udl
+          uv run udl sites
+          uv run udl schema >/dev/null
+
+  lint-app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install and typecheck frontend
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
