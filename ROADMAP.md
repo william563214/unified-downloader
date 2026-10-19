@@ -31,7 +31,10 @@
 - [x] GUI Bilibili 徽章＋分 P／畫質選擇
 - [x] 明確拒絕付費牆／大會員／區域繞過（清楚錯誤碼／訊息）
 - [ ] QR／Cookie 登入（stub／設計註解；憑證進 OS keychain — 延後）
-- [ ] 首次執行自動下載 FFmpeg（延後；目前缺則 `ffmpeg_missing`）
+- [x] 首次執行可下載 FFmpeg（checksum；macOS arm64 / Windows x64）
+- [x] GUI 設定頁（下載目錄、並發、站點選項、FFmpeg 路徑）
+- [x] 佇列打磨（並發／暫停／取消／重試／zh-TW 錯誤／開檔／剪貼簿）
+- [x] Release 產未簽章 macOS arm64 `.dmg` + Windows x64 installer（sidecar triple）
 
 ## v0.4 — MEGA（本版）
 
@@ -42,7 +45,7 @@
 - [x] 取消時乾淨結束子行程
 - [x] GUI MEGA 徽章與工具提示
 - [x] **不**實作 SmartProxy／Quota Recovery／換 IP
-- [ ] 佇列持久化、限速、剪貼簿監看（可選，延後）
+- [ ] 佇列持久化、限速（剪貼簿偵測已在 GUI 提供基本版）
 - [ ] 首次執行自動下載 megatools（延後；目前缺則清楚錯誤）
 
 ## 不做／延後

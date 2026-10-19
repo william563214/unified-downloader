@@ -1,8 +1,10 @@
 """Locate and run FFmpeg for DASH video+audio merge.
 
-FFmpeg is expected on PATH or via an explicit path / UDL_FFMPEG env.
-First-run app download of a bundled binary is deferred — emit a clear
-ffmpeg_missing error until then.
+Lookup order:
+1. explicit path (--ffmpeg)
+2. UDL_FFMPEG env
+3. app-managed install dir (UDL_FFMPEG_DIR or platform default)
+4. PATH
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from pathlib import Path
 
 # lowercase constants per project convention
 ffmpeg_env = "UDL_FFMPEG"
+ffmpeg_dir_env = "UDL_FFMPEG_DIR"
 default_ffmpeg_name = "ffmpeg"
 
 
@@ -29,6 +32,21 @@ class merge_error(RuntimeError):
     code = "merge_failed"
 
 
+def _is_executable(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    if os.name == "nt":
+        return path.suffix.lower() in {".exe", ""} or path.name.lower().startswith("ffmpeg")
+    return os.access(path, os.X_OK)
+
+
+def managed_ffmpeg_candidates() -> list[Path]:
+    """paths where the GUI / provisioner may install FFmpeg."""
+    from udl.postprocess.ffmpeg_provision import default_install_dir, installed_ffmpeg_path
+
+    return [installed_ffmpeg_path(default_install_dir())]
+
+
 def find_ffmpeg(explicit: str | Path | None = None) -> Path:
     """return path to ffmpeg or raise ffmpeg_missing_error.
 
@@ -36,26 +54,30 @@ def find_ffmpeg(explicit: str | Path | None = None) -> Path:
     """
     if explicit:
         path = Path(explicit)
-        if path.is_file() and os.access(path, os.X_OK):
+        if _is_executable(path):
             return path.resolve()
         raise ffmpeg_missing_error(f"FFmpeg not found at {path}")
 
     env = os.environ.get(ffmpeg_env)
     if env:
         path = Path(env)
-        if path.is_file() and os.access(path, os.X_OK):
+        if _is_executable(path):
             return path.resolve()
         raise ffmpeg_missing_error(f"FFmpeg not found at {ffmpeg_env}={env}")
+
+    for candidate in managed_ffmpeg_candidates():
+        if _is_executable(candidate):
+            return candidate.resolve()
 
     which = shutil.which(default_ffmpeg_name)
     if which:
         path = Path(which)
-        if path.is_file() and os.access(path, os.X_OK):
+        if _is_executable(path):
             return path.resolve()
 
     raise ffmpeg_missing_error(
         "FFmpeg not found — install it on PATH, set UDL_FFMPEG, "
-        "or pass --ffmpeg (bundled download planned for a later release)"
+        "pass --ffmpeg, or use the app first-run download"
     )
 
 

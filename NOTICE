@@ -71,6 +71,32 @@ upstream copyright and were adapted under compatible licenses.
 - Explicitly **not** implemented: MegaBasterd SmartProxy, Quota Recovery,
   IP rotation, or any transfer-quota bypass.
 
+## Bundled / first-run FFmpeg downloads
+
+The desktop app may download a **static FFmpeg binary** on first use when none
+is found on PATH / `UDL_FFMPEG` / Settings. Builds are checksum-verified before
+install into the application data directory (`…/ffmpeg/`).
+
+### Windows x64 — BtbN FFmpeg-Builds (LGPL static)
+- Source: https://github.com/BtbN/FFmpeg-Builds
+- Asset: `ffmpeg-master-latest-win64-lgpl.zip` from the `latest` release
+- Checksum: verified against the release `checksums.sha256` at download time
+- License: **LGPL** variant (non-GPL build). FFmpeg itself is LGPL 2.1+ /
+  GPL 2+ depending on configure options; this asset is the LGPL build.
+
+### macOS arm64 — Martin Riedl static builds
+- Source: https://ffmpeg.martin-riedl.de/
+- Asset: `redirect/latest/macos/arm64/release/ffmpeg.zip`
+- Checksum: verified against the companion `ffmpeg.zip.sha256` next to the
+  resolved download URL
+- License: these builds typically enable GPL components (e.g. x264/x265).
+  Treat the downloaded macOS binary as **GPL** unless you replace it with an
+  LGPL-only build. See https://ffmpeg.org/legal.html.
+
+Users may instead install FFmpeg themselves and point Settings → FFmpeg path
+(or set `UDL_FFMPEG`). This project does not redistribute FFmpeg inside the
+signed/unsigned app bundle by default; the optional download is user-initiated.
+
 ## Intentionally not ported
 - gallery-dl (GPL-2.0-only) — incompatible with GPL-3.0; do not import or copy.
 - MegaBasterd — GUI-only Java app; MEGA is handled via megatools/MEGAcmd instead.

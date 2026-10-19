@@ -17,9 +17,11 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             artifact: unified-downloader-macos-arm64
+            sidecar: udl-aarch64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: unified-downloader-windows-x64
+            sidecar: udl-x86_64-pc-windows-msvc.exe
 
     runs-on: ${{ matrix.os }}
 
@@ -45,16 +47,11 @@ jobs:
         run: |
           chmod +x scripts/build-sidecar.sh
           ./scripts/build-sidecar.sh "${{ matrix.target }}"
+          test -f "app/src-tauri/binaries/${{ matrix.sidecar }}"
 
       - name: Install frontend deps
         working-directory: app
         run: npm ci
-
-      - name: Install Linux WebKit deps
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
 
       - name: Build Tauri app (unsigned)
         working-directory: app
@@ -62,45 +59,58 @@ jobs:
           # Explicitly skip signing
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           TAURI_SKIP_CODE_SIGNING: "true"
+          TAURI_SIGNING_PRIVATE_KEY: ""
         run: npm run tauri -- build --target ${{ matrix.target }}
 
       - name: Collect artifacts (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist-out
           find app/src-tauri/target/${{ matrix.target }}/release/bundle -type f \
             \( -name '*.dmg' -o -name '*.app' \) -print || true
-          # Prefer dmg; also zip the .app if present
           dmg=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle/dmg -name '*.dmg' 2>/dev/null | head -1 || true)
-          if [[ -n "${dmg}" ]]; then
-            cp "$dmg" "dist-out/${{ matrix.artifact }}.dmg"
+          if [[ -z "${dmg}" ]]; then
+            echo "ERROR: no .dmg produced under bundle/dmg" >&2
+            find app/src-tauri/target/${{ matrix.target }}/release/bundle -maxdepth 3 -type f -print || true
+            exit 1
           fi
+          cp "$dmg" "dist-out/${{ matrix.artifact }}.dmg"
           appdir=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle/macos -name '*.app' -type d 2>/dev/null | head -1 || true)
           if [[ -n "${appdir}" ]]; then
             ditto -c -k --sequesterRsrc --keepParent "$appdir" "dist-out/${{ matrix.artifact }}.app.zip"
           fi
-          cp "app/src-tauri/binaries/udl-${{ matrix.target }}" "dist-out/udl-${{ matrix.target }}" || true
+          cp "app/src-tauri/binaries/${{ matrix.sidecar }}" "dist-out/${{ matrix.sidecar }}"
+          # Confirm sidecar naming matches Tauri externalBin convention
+          ls -la "app/src-tauri/binaries/"
           ls -la dist-out
 
       - name: Collect artifacts (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist-out
           find app/src-tauri/target/${{ matrix.target }}/release/bundle -type f | head -50
           nsis=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle/nsis -name '*.exe' 2>/dev/null | head -1 || true)
           msi=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle/msi -name '*.msi' 2>/dev/null | head -1 || true)
+          if [[ -z "$nsis" && -z "$msi" ]]; then
+            echo "ERROR: no NSIS .exe or .msi produced" >&2
+            find app/src-tauri/target/${{ matrix.target }}/release/bundle -maxdepth 4 -type f -print || true
+            exit 1
+          fi
           [[ -n "$nsis" ]] && cp "$nsis" "dist-out/${{ matrix.artifact }}-setup.exe"
           [[ -n "$msi" ]] && cp "$msi" "dist-out/${{ matrix.artifact }}.msi"
-          cp "app/src-tauri/binaries/udl-${{ matrix.target }}.exe" "dist-out/udl-${{ matrix.target }}.exe" || true
+          cp "app/src-tauri/binaries/${{ matrix.sidecar }}" "dist-out/${{ matrix.sidecar }}"
+          ls -la "app/src-tauri/binaries/"
           ls -la dist-out
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: dist-out/*
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')

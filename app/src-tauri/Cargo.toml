@@ -1,6 +1,6 @@
 [package]
 name = "unified-downloader"
-version = "0.1.0"
+version = "0.3.0"
 description = "整合下載器 desktop shell"
 authors = ["william563214"]
 edition = "2021"
