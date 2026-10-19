@@ -1,4 +1,4 @@
-"""download session helpers: history queue duplicates around extractors."""
+"""download session helpers: history queue duplicates naming rules around extractors."""
 
 from __future__ import annotations
 
@@ -6,9 +6,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from udl.config import load_config, udl_config
 from udl.events import emitter
 from udl.extractors.base import extract_result
 from udl.metadata import item_metadata
+from udl.naming import detect_media_type, pick_template, resolve_output_path
+from udl.rules import apply_rules
 from udl.store.db import connect
 from udl.store.duplicates import duplicate_mode, resolve_duplicate
 from udl.store.hashutil import sha256_file
@@ -18,6 +21,62 @@ from udl.store.queue import queue_job, save_queue_job, update_queue_status
 
 def open_store(db_path: str | Path | None = None) -> sqlite3.Connection:
     return connect(db_path)
+
+
+def plan_file_destinations(
+    result: extract_result,
+    output_dir: Path,
+    *,
+    config: udl_config | None = None,
+    name_template: str | None = None,
+    on_duplicate: duplicate_mode = "skip",
+) -> tuple[set[int], dict[int, Path], dict[int, Any]]:
+    """apply classification rules + naming templates without touching the DB.
+
+    returns (rule_skip_indexes, dest_overrides, per_index_decision_dict)
+    """
+    cfg = config if config is not None else load_config()
+    meta = result.metadata or item_metadata(site=result.site, title=result.title)
+    skip_indexes: set[int] = set()
+    overrides: dict[int, Path] = {}
+    decisions: dict[int, Any] = {}
+    for idx, f in enumerate(result.files):
+        file_meta = f.metadata or meta
+        media_type = detect_media_type(f.name)
+        decision = apply_rules(
+            cfg.rules,
+            file_meta,
+            size=f.size,
+            media_type=media_type,
+            original_name=f.name,
+        )
+        decisions[idx] = decision
+        if decision.skip:
+            skip_indexes.add(idx)
+            continue
+        template = decision.template or pick_template(
+            cli_template=name_template,
+            site=result.site,
+            media_type=media_type,
+            config_default=cfg.name_template,
+            site_templates=cfg.site_templates,
+            type_templates=cfg.type_templates,
+        )
+        conflict = "overwrite" if on_duplicate == "overwrite" else cfg.name_conflict
+        rendered = resolve_output_path(
+            output_dir,
+            original_name=f.name,
+            relative_dir=f.relative_dir,
+            metadata=file_meta,
+            template=template or None,
+            folder_override=decision.folder,
+            size=f.size,
+            media_type=media_type,
+            on_conflict=conflict,
+        )
+        if template or decision.folder or rendered.conflict_renamed:
+            overrides[idx] = rendered.absolute
+    return skip_indexes, overrides, decisions
 
 
 def prepare_download(
@@ -34,8 +93,14 @@ def prepare_download(
     cloudflare_bypass: bool = False,
     workers: int | None = None,
     ffmpeg: str | None = None,
+    config: udl_config | None = None,
+    name_template: str | None = None,
 ) -> tuple[set[int], dict[int, Path], bool]:
-    """record job start apply duplicate policy. returns skip set dest overrides all-skipped."""
+    """record job start apply rules naming duplicate policy.
+
+    returns skip set dest overrides all-skipped.
+    """
+    cfg = config if config is not None else load_config()
     meta = result.metadata or item_metadata(site=result.site, title=result.title)
     if meta.canonical_url is None:
         meta.canonical_url = url
@@ -58,6 +123,9 @@ def prepare_download(
             ffmpeg=ffmpeg,
             on_duplicate=on_duplicate,
             metadata=meta.to_dict(omit_empty=True),
+            options={
+                "name_template": name_template or cfg.name_template,
+            },
         ),
         metadata=meta,
     )
@@ -71,12 +139,49 @@ def prepare_download(
         status="running",
     )
 
-    skip_indexes: set[int] = set()
-    overrides: dict[int, Path] = {}
+    rule_skips, overrides, decisions = plan_file_destinations(
+        result,
+        output_dir,
+        config=cfg,
+        name_template=name_template,
+        on_duplicate=on_duplicate,
+    )
+    skip_indexes: set[int] = set(rule_skips)
+
     for idx, f in enumerate(result.files):
-        dest_dir = output_dir / f.relative_dir if f.relative_dir else output_dir
-        dest = dest_dir / f.name
         file_meta = f.metadata or meta
+        decision = decisions.get(idx)
+        if idx in rule_skips:
+            if emit and decision is not None:
+                emit.duplicate(
+                    job=job_id,
+                    file=f"{job_id}:{idx}",
+                    action="skip",
+                    message=decision.message or "skipped by classification rule",
+                    path=None,
+                    matched_by=f"rule:{decision.rule_id}",
+                    already_downloaded=False,
+                    metadata=file_meta.to_dict(omit_empty=True) if file_meta else None,
+                )
+            record_file_done(
+                conn,
+                job_id=job_id,
+                site=result.site,
+                file_id=f"{job_id}:{idx}",
+                name=f.name,
+                path=None,
+                status="skipped",
+                item_id=file_meta.item_id if file_meta else None,
+                canonical_url=file_meta.canonical_url if file_meta else None,
+                size=f.size,
+                metadata=file_meta,
+                compute_hash=False,
+            )
+            continue
+
+        dest_dir = output_dir / f.relative_dir if f.relative_dir else output_dir
+        dest = overrides.get(idx, dest_dir / f.name)
+
         action = resolve_duplicate(
             conn,
             site=result.site,
@@ -90,19 +195,27 @@ def prepare_download(
         if action.dest is not None and action.dest != dest:
             overrides[idx] = action.dest
             dest = action.dest
+        matched_rule = decision.matched if decision is not None else False
         should_emit = (
             action.hit is not None
             or action.already_downloaded
             or action.action == "rename"
+            or matched_rule
+            or idx in overrides
         )
         if emit and should_emit:
+            message = action.message
+            if decision is not None and decision.matched and decision.message:
+                message = f"{decision.message}; {message}" if message else decision.message
             emit.duplicate(
                 job=job_id,
                 file=f"{job_id}:{idx}",
                 action=action.action,
-                message=action.message,
+                message=message,
                 path=str(dest),
-                matched_by=action.hit.matched_by if action.hit else None,
+                matched_by=action.hit.matched_by if action.hit else (
+                    f"rule:{decision.rule_id}" if matched_rule and decision else None
+                ),
                 already_downloaded=action.already_downloaded,
                 metadata=file_meta.to_dict(omit_empty=True) if file_meta else None,
             )

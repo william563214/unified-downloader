@@ -1,5 +1,6 @@
 export type DuplicateMode = "skip" | "overwrite" | "rename";
 export type CoverNaming = "poster" | "folder";
+export type NameConflictMode = "rename" | "overwrite" | "error";
 
 export type SiteId = "gofile" | "bunkr" | "iwara" | "bilibili" | "mega";
 
@@ -10,6 +11,37 @@ export const site_ids: SiteId[] = [
   "bilibili",
   "mega",
 ];
+
+export type RuleMatch = {
+  site?: string;
+  sites?: string[];
+  author?: string;
+  author_regex?: string;
+  tags_any?: string[];
+  tags_all?: string[];
+  title_regex?: string;
+  duration_min?: number | null;
+  duration_max?: number | null;
+  size_min?: number | null;
+  size_max?: number | null;
+  media_type?: string;
+  media_types?: string[];
+  collection_regex?: string;
+};
+
+export type RuleAction = {
+  type: "folder" | "template" | "folder_and_template" | "skip";
+  folder?: string;
+  template?: string;
+};
+
+export type ClassifyRule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  match: RuleMatch;
+  action: RuleAction;
+};
 
 export type AppSettings = {
   downloadDir: string;
@@ -27,6 +59,11 @@ export type AppSettings = {
   coverNaming: CoverNaming;
   nfoSites: Record<SiteId, boolean>;
   coverSites: Record<SiteId, boolean>;
+  nameTemplate: string;
+  siteTemplates: Record<string, string>;
+  typeTemplates: Record<string, string>;
+  nameConflict: NameConflictMode;
+  classificationRules: ClassifyRule[];
 };
 
 export const default_site_flags = (): Record<SiteId, boolean> => ({
@@ -53,6 +90,11 @@ export const default_settings: AppSettings = {
   coverNaming: "poster",
   nfoSites: default_site_flags(),
   coverSites: default_site_flags(),
+  nameTemplate: "",
+  siteTemplates: {},
+  typeTemplates: {},
+  nameConflict: "rename",
+  classificationRules: [],
 };
 
 export type FfmpegStatus = {
@@ -86,6 +128,7 @@ export type HistoryEntry = {
   updated_at?: string | null;
   finished_at?: string | null;
   files?: Array<{
+    id?: number;
     file_id?: string | null;
     name?: string | null;
     path?: string | null;
@@ -109,8 +152,41 @@ export type QueueEntry = {
   on_duplicate?: string;
 };
 
-const url_pattern =
-  /https?:\/\/[^\s<>"'`]+/i;
+export type RepairIssue = {
+  id: string;
+  kind: string;
+  job_id?: string | null;
+  file_row_id?: number | null;
+  file_id?: string | null;
+  path?: string | null;
+  expected_size?: number | null;
+  actual_size?: number | null;
+  expected_sha256?: string | null;
+  actual_sha256?: string | null;
+  site?: string | null;
+  source_url?: string | null;
+  title?: string | null;
+  message?: string | null;
+  suggested_actions?: string[];
+};
+
+export type RepairScanResult = {
+  scanned_jobs: number;
+  scanned_files: number;
+  scanned_dirs: string[];
+  issue_count: number;
+  issues: RepairIssue[];
+};
+
+export type NamingPreview = {
+  template: string;
+  relative: string;
+  media_type: string;
+  original_name: string;
+  metadata: Record<string, unknown>;
+};
+
+const url_pattern = /https?:\/\/[^\s<>"'`]+/i;
 
 export function extractUrl(text: string): string | null {
   const match = text.trim().match(url_pattern);
@@ -134,4 +210,28 @@ export function sites_cli_list(flags: Record<string, boolean>): string {
     return ["all", ...disabled.map((id) => `-${id}`)].join(",");
   }
   return enabled.join(",");
+}
+
+export function newRuleId(): string {
+  return `rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export function emptyRule(): ClassifyRule {
+  return {
+    id: newRuleId(),
+    name: "新規則",
+    enabled: true,
+    match: { site: "" },
+    action: { type: "folder", folder: "" },
+  };
+}
+
+export function settingsToConfigPayload(settings: AppSettings): Record<string, unknown> {
+  return {
+    name_template: settings.nameTemplate,
+    site_templates: settings.siteTemplates,
+    type_templates: settings.typeTemplates,
+    name_conflict: settings.nameConflict,
+    rules: settings.classificationRules,
+  };
 }

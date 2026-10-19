@@ -22,6 +22,10 @@ jobs:
           uv run udl schema >/dev/null
           UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl history list --json --limit 1 >/dev/null
           UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl queue list --json --unfinished >/dev/null
+          uv run udl naming preview --template '{site}/{author}/{title}.{ext}' --metadata '{"site":"iwara","author":"a","title":"t"}' --json >/dev/null
+          UDL_CONFIG="$RUNNER_TEMP/udl-ci.config.json" uv run udl config show --json >/dev/null
+          UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl repair scan --json --no-orphans >/dev/null
+          UDL_CONFIG="$RUNNER_TEMP/udl-ci.config.json" uv run udl rules list --json >/dev/null
 
   lint-app:
     runs-on: ubuntu-latest

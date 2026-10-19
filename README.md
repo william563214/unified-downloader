@@ -65,10 +65,23 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 
 ### GUI 設定與佇列
 
-- **設定頁**：預設下載資料夾、同時任務數、單一任務檔案並發、重複檔策略（skip／overwrite／rename）、NFO／封面後處理（全域＋站點）、Iwara 畫質／Cloudflare（預設關）、Bilibili 分 P／畫質、FFmpeg 路徑；寫入應用資料目錄 `settings.json`。
+- **設定頁**：預設下載資料夾、同時任務數、單一任務檔案並發、重複檔策略（skip／overwrite／rename）、命名模板（即時預覽）／分類規則、NFO／封面後處理（全域＋站點）、Iwara 畫質／Cloudflare（預設關）、Bilibili 分 P／畫質、FFmpeg 路徑；寫入應用資料目錄 `settings.json`（並同步 `udl.config.json`）。
 - **佇列**：並發下載、暫停／取消／重試、zh-TW 錯誤訊息、開啟檔案／資料夾、焦點時偵測剪貼簿連結；狀態寫入 SQLite，重啟後未完成任務自動恢復。
 - **歷史頁**：搜尋、站點／狀態／日期／標籤篩選、排序、刪除條目（可選刪檔）；有本機封面時顯示縮圖。
+- **修復頁**：掃描缺檔／`.part`／大小／hash／orphan，可重新排隊、重新連結、清殘檔、刪過期紀錄。
 - **FFmpeg 首次佈建**：偵測不到時可下載目前 OS／arch 靜態建置並驗證 checksum（見 `NOTICE`）。CLI：`udl ffmpeg status` / `udl ffmpeg install`。
+
+### 命名／規則／修復 CLI（v0.5）
+
+```bash
+uv run udl get "URL" -o ./out --name-template '{site}/{author}/{title}.{ext}'
+uv run udl naming preview --template '{site}/{title}.{ext}' --metadata '{"site":"iwara","title":"demo"}'
+uv run udl rules test "URL" --json
+uv run udl repair scan --json
+uv run udl repair fix requeue --job-id <id> --json
+```
+
+詳見 `docs/naming-rules.md`。
 
 ### 歷史／去重／NFO／封面 CLI（v0.5）
 
