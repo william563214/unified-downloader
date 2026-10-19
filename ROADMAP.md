@@ -133,6 +133,12 @@
 - [ ] protobuf 分段彈幕（目前走經典 XML comment API）
 - [ ] 簡訊登入內嵌 GeeTest（目前需外部瀏覽器完成驗證）
 
+### v0.7.0 安裝包
+
+- [x] 版本號統一 0.7.0（Python／Tauri／npm／Cargo）
+- [x] PyInstaller sidecar：keyring 平台後端、qrcode／Pillow、v0.7 模組
+- [ ] GitHub Actions `release-artifacts`：未簽章 macOS arm64 `.dmg`＋Windows x64 NSIS
+
 ## 不做／延後
 
 - gallery-dl 當 library（授權衝突）；若備援只允許獨立子行程
