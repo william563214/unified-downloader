@@ -27,7 +27,7 @@ unified-downloader/
 GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-lines（見 `docs/events.md`）。  
 全域歷史 DB 在應用資料目錄（與 FFmpeg 佈建同根），由核心擁有。
 
-**不做：** gallery-dl 程式碼／import（GPL-2.0-only 衝突）、Pixeldrain、通用任意站 fallback、付費牆／配額／VIP／區域繞過、完整登入保管、簽章。
+**不做：** gallery-dl 程式碼／import（GPL-2.0-only 衝突）、Pixeldrain、通用任意站 fallback、付費牆／配額／VIP／區域繞過、簽章。
 
 ## 目前支援
 
@@ -35,7 +35,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 |------|------|------|
 | Gofile | ✅ | ltsdw/gofile-downloader（訪客 token，公開連結） |
 | Bunkr | ✅ | Lysagxra/BunkrDownloader（相簿／單檔） |
-| Iwara | ✅ | Moeary/IwaraTool（公開下載＋瀏覽／本機訂閱／首頁；無登入） |
+| Iwara | ✅ v0.6-B | Moeary/IwaraTool（瀏覽／訂閱／登入／私有片；見 `docs/iwara-browse.md`） |
 | Bilibili | ✅ v0.7-A | ScottSloan/Bili23-Downloader（多類型解析、彈幕字幕、codec；無登入；見 `docs/bilibili.md`） |
 | MEGA | ✅ 外部工具 | **megatools**（優先）／MEGAcmd `mega-get`（備援）；子行程，不移植 MegaBasterd |
 
@@ -45,10 +45,10 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 
 - URL：`/video/<id>`、`/playlist/<id>`、`/profile/<user>`（含 `/videos`）
 - 畫質：`--quality Source|540|360`（預設 Source，自動往下回退）
-- 公開內容匿名可抓；`--token` 僅記憶體暫存（尚未實作帳密登入／keychain）
+- 公開內容匿名可抓；帳號：`udl iwara login|logout|whoami`（憑證進 OS keychain）。`--token` 可覆寫 session
 - **不**預設開 Cloudflare 繞過。需要時：`udl get … --cloudflare-bypass`（需 `uv sync --extra iwara` 或安裝 cloudscraper），GUI 有對應核取方塊且預設關閉
 - `X-Version` salt 在 `core/udl/extractors/iwara_xversion.py`；全部失敗會拋清楚錯誤
-- **v0.6-A 瀏覽／訂閱（無登入）：** `udl iwara search|tag|author|playlist|home|sync|…`；GUI「Iwara／首頁／訂閱」頁。詳見 `docs/iwara-browse.md`。帳號 following 匯入另 PR。
+- **v0.6：** `udl iwara search|tag|…|sync|login|import-following`；GUI「Iwara／首頁／訂閱」＋設定帳號區。詳見 `docs/iwara-browse.md`
 
 ### Bilibili 備註（v0.7-A）
 

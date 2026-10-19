@@ -1,6 +1,7 @@
 """Iwara local subscriptions and custom home sections in SQLite.
 
-Local author/playlist subscriptions only — no account login / following import.
+Local author/playlist subscriptions plus optional import of account
+following (see ``import_following_authors``).
 """
 
 from __future__ import annotations
@@ -183,6 +184,64 @@ def list_subscriptions(
         sql += " where enabled = 1"
     sql += " order by updated_at desc, id desc"
     return [_row_sub(row) for row in conn.execute(sql).fetchall()]
+
+
+def import_following_authors(
+    conn: sqlite3.Connection,
+    *,
+    use_cloudflare_bypass: bool = False,
+    max_pages: int = 100,
+) -> dict[str, Any]:
+    """import the logged-in account's following list into local subscriptions."""
+    from udl.extractors.iwara_auth import (
+        iwara_auth_error,
+        list_following,
+        normalize_following_entry,
+        whoami,
+    )
+
+    account = whoami(use_cloudflare_bypass=use_cloudflare_bypass)
+    if not account.logged_in or not account.user_id:
+        raise iwara_auth_error("Login required to import following")
+
+    rows = list_following(
+        account.user_id,
+        max_pages=max_pages,
+        use_cloudflare_bypass=use_cloudflare_bypass,
+    )
+    added: list[dict[str, Any]] = []
+    updated: list[dict[str, Any]] = []
+    skipped = 0
+    for row in rows:
+        entry = normalize_following_entry(row)
+        if entry is None:
+            skipped += 1
+            continue
+        existing = conn.execute(
+            "select id from iwara_subscriptions where kind = ? and key = ?",
+            ("author", entry["username"]),
+        ).fetchone()
+        sub = add_subscription(
+            conn,
+            kind="author",
+            key=entry["username"],
+            title=entry["name"],
+            remote_id=entry["user_id"] or None,
+        )
+        payload = sub.to_dict()
+        if existing is None:
+            added.append(payload)
+        else:
+            updated.append(payload)
+    return {
+        "account": account.to_dict(),
+        "fetched": len(rows),
+        "added": len(added),
+        "updated": len(updated),
+        "skipped": skipped,
+        "subscriptions_added": added,
+        "subscriptions_updated": updated,
+    }
 
 
 def remove_subscription(conn: sqlite3.Connection, sub_id: int) -> bool:

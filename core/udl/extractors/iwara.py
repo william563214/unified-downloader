@@ -6,7 +6,8 @@ commit 1e98c96c422a169699c0d16bcab49b8a7f5238d5
 License: MIT
 
 Decoupled from PySide6 / QSettings. Public content works without login.
-Optional Bearer token is accepted in-memory only (not persisted).
+Bearer access token may come from CLI ``--token`` or ``udl.secrets``
+session (see ``iwara_auth``). Credentials are never written to plain files.
 Cloudflare challenge bypass (cloudscraper) is opt-in and off by default.
 """
 
@@ -168,12 +169,14 @@ class iwara_extractor(extractor):
         max_pages: int = iwara_max_pages,
     ) -> None:
         self.preferred_quality = preferred_quality or iwara_default_quality
-        # optional JWT — kept in memory only never written to disk
-        self.token = (token or "").strip() or None
+        # optional override otherwise load from udl.secrets session
+        self._token_override = (token or "").strip() or None
+        self.token = self._token_override
         self.use_cloudflare_bypass = bool(use_cloudflare_bypass)
         self.extra_salts = tuple(extra_salts or ())
         self.max_pages = max(1, int(max_pages))
         self._session = _make_session(use_cloudflare_bypass=self.use_cloudflare_bypass)
+        self._ensure_session_token()
 
     def configure(
         self,
@@ -186,10 +189,28 @@ class iwara_extractor(extractor):
         if quality:
             self.preferred_quality = quality
         if token is not None:
-            self.token = token.strip() or None
+            self._token_override = token.strip() or None
+            self.token = self._token_override
         if cloudflare_bypass is not None and cloudflare_bypass != self.use_cloudflare_bypass:
             self.use_cloudflare_bypass = bool(cloudflare_bypass)
             self._session = _make_session(use_cloudflare_bypass=self.use_cloudflare_bypass)
+        self._ensure_session_token()
+
+    def _ensure_session_token(self) -> None:
+        """attach keychain access token when no explicit --token override."""
+        if self._token_override:
+            self.token = self._token_override
+            return
+        try:
+            from udl.extractors.iwara_auth import ensure_access_token
+
+            access = ensure_access_token(
+                use_cloudflare_bypass=self.use_cloudflare_bypass,
+                session=self._session,
+            )
+            self.token = access
+        except Exception:  # noqa: BLE001 — anonymous mode remains valid
+            self.token = None
 
     def resolve(
         self,
@@ -215,6 +236,8 @@ class iwara_extractor(extractor):
     # ── auth / HTTP ──────────────────────────────────────────────────────────
 
     def _auth_headers(self) -> dict[str, str]:
+        if not self._token_override:
+            self._ensure_session_token()
         if self.token:
             return {"Authorization": f"Bearer {self.token}"}
         return {}
@@ -493,7 +516,10 @@ class iwara_extractor(extractor):
         if "youtube" in embed or "youtu.be" in embed:
             return f"external embed cannot be downloaded: {embed}"
         if message == "errors.privateVideo" or private:
-            return "private video — login token required (optional token stub only)"
+            return (
+                "private video — login required "
+                "(udl iwara login, or pass --token)"
+            )
         return "API did not return fileUrl (hidden processing or no permission)"
 
     def _stub_id(self, item: dict[str, Any]) -> str | None:

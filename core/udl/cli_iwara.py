@@ -1,13 +1,18 @@
-"""CLI handlers for ``udl iwara`` browse / subscription commands."""
+"""CLI handlers for ``udl iwara`` browse / auth / subscription commands."""
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
+from udl.extractors.iwara_auth import iwara_auth_error
+from udl.extractors.iwara_auth import login as iwara_login
+from udl.extractors.iwara_auth import logout as iwara_logout
+from udl.extractors.iwara_auth import whoami as iwara_whoami
 from udl.extractors.iwara_browse import annotate_local_status, iwara_browser
 from udl.extractors.iwara_filters import filters_from_args
 from udl.session import open_store
@@ -16,6 +21,7 @@ from udl.store.iwara_subs import (
     add_subscription,
     enqueue_videos,
     fetch_home_section,
+    import_following_authors,
     list_home_sections,
     list_new_items,
     list_subscriptions,
@@ -28,8 +34,47 @@ from udl.store.iwara_subs import (
 
 
 def add_iwara_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    p_iwara = sub.add_parser("iwara", help="Iwara browse search subscribe sync (no login)")
+    p_iwara = sub.add_parser(
+        "iwara",
+        help="Iwara browse search subscribe sync login",
+    )
     iw_sub = p_iwara.add_subparsers(dest="iwara_command", required=True)
+
+    p_login = iw_sub.add_parser("login", help="login and store tokens in OS keychain")
+    p_login.add_argument("--email", default=None, help="email or username")
+    p_login.add_argument("--password", default=None, help="password (prefer prompt)")
+    p_login.add_argument("--cloudflare-bypass", action="store_true")
+    p_login.add_argument("--json", action="store_true")
+
+    p_logout = iw_sub.add_parser("logout", help="clear Iwara secrets from keychain")
+    p_logout.add_argument("--json", action="store_true")
+
+    p_whoami = iw_sub.add_parser("whoami", help="validate session and show account")
+    p_whoami.add_argument("--cloudflare-bypass", action="store_true")
+    p_whoami.add_argument("--json", action="store_true")
+
+    p_import = iw_sub.add_parser(
+        "import-following",
+        help="import account following into local subscriptions",
+    )
+    p_import.add_argument("--json", action="store_true")
+    p_import.add_argument("--max-pages", type=int, default=100)
+    p_import.add_argument("--cloudflare-bypass", action="store_true")
+    p_import.add_argument(
+        "--sync",
+        action="store_true",
+        help="after import run sync to enqueue new content",
+    )
+    p_import.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="output dir required when --sync",
+    )
+    p_import.add_argument("--quality", default=None)
+    p_import.add_argument("--max-sync-pages", type=int, default=5)
+    p_import.add_argument("--no-enqueue", action="store_true")
 
     def _common_browse(p: argparse.ArgumentParser) -> None:
         p.add_argument("--json", action="store_true", help="emit JSON")
@@ -46,7 +91,11 @@ def add_iwara_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
             help="SFW/NSFW filter: all|ecchi|general",
         )
         p.add_argument("--cloudflare-bypass", action="store_true")
-        p.add_argument("--token", default=None, help="optional Bearer (memory only)")
+        p.add_argument(
+            "--token",
+            default=None,
+            help="optional Bearer override (else keychain session)",
+        )
         p.add_argument("--min-likes", type=int, default=None)
         p.add_argument("--max-likes", type=int, default=None)
         p.add_argument("--min-views", type=int, default=None)
@@ -245,6 +294,87 @@ def _detect_subscribe_target(target: str, kind: str) -> tuple[str, str]:
 def cmd_iwara(args: argparse.Namespace) -> int:
     cmd = args.iwara_command
     as_json = bool(getattr(args, "json", False))
+
+    if cmd == "login":
+        email = (args.email or "").strip()
+        password = args.password
+        if not email:
+            try:
+                email = input("Iwara email/username: ").strip()
+            except EOFError:
+                email = ""
+        if not password:
+            try:
+                password = getpass.getpass("Iwara password: ")
+            except EOFError:
+                password = ""
+        try:
+            account = iwara_login(
+                email,
+                password or "",
+                use_cloudflare_bypass=bool(args.cloudflare_bypass),
+            )
+        except iwara_auth_error as exc:
+            _print({"ok": False, "error": str(exc)}, as_json=as_json)
+            return 1
+        payload = {"ok": True, "account": account.to_dict()}
+        _print(payload, as_json=as_json)
+        return 0
+
+    if cmd == "logout":
+        iwara_logout()
+        _print({"ok": True, "logged_out": True}, as_json=as_json)
+        return 0
+
+    if cmd == "whoami":
+        try:
+            account = iwara_whoami(
+                use_cloudflare_bypass=bool(args.cloudflare_bypass),
+            )
+        except iwara_auth_error as exc:
+            _print({"ok": False, "error": str(exc), "logged_in": False}, as_json=as_json)
+            return 1
+        payload = {"ok": True, **account.to_dict()}
+        _print(payload, as_json=as_json)
+        return 0 if account.logged_in else 1
+
+    if cmd == "import-following":
+        if args.sync and args.output is None:
+            print("--output is required with --sync", file=sys.stderr)
+            return 2
+        conn = open_store(getattr(args, "db", None))
+        try:
+            try:
+                payload = import_following_authors(
+                    conn,
+                    use_cloudflare_bypass=bool(args.cloudflare_bypass),
+                    max_pages=int(args.max_pages),
+                )
+            except iwara_auth_error as exc:
+                _print({"ok": False, "error": str(exc)}, as_json=as_json)
+                return 1
+            if args.sync:
+                assert args.output is not None
+                args.output.mkdir(parents=True, exist_ok=True)
+                browser = _browser_from_args(args)
+                try:
+                    sync_payload = sync_all_subscriptions(
+                        conn,
+                        browser,
+                        output_dir=str(args.output.resolve()),
+                        enqueue=not bool(args.no_enqueue),
+                        max_pages=int(args.max_sync_pages),
+                        cloudflare_bypass=bool(args.cloudflare_bypass),
+                        quality=args.quality,
+                    )
+                finally:
+                    browser.close()
+                payload["sync"] = sync_payload
+            payload["ok"] = True
+        finally:
+            conn.close()
+        _print(payload, as_json=as_json)
+        return 0
 
     if cmd in {"search", "tag", "author", "playlist", "home"}:
         browser = _browser_from_args(args)

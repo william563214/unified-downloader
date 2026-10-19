@@ -1,9 +1,13 @@
-"""Iwara browse / search / home listing helpers (no account login).
+"""Iwara browse / search / home listing helpers.
 
 Ported patterns from Moeary/IwaraTool
 https://github.com/Moeary/IwaraTool
 commit 1e98c96c422a169699c0d16bcab49b8a7f5238d5
 License: MIT
+
+Uses the same HTTP session as ``iwara_extractor``. When an account session
+exists in ``udl.secrets``, browse/search results reflect that account
+(including visibility of private／friends-only items the account can access).
 """
 
 from __future__ import annotations

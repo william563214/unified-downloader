@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { humanizeError } from "../errors";
+import { AccountSection } from "./AccountSection";
 import type { IwaraSubscription, IwaraVideo } from "./types";
 import { VideoGrid } from "./VideoGrid";
 
@@ -141,8 +142,15 @@ export function SubscriptionsPage({
     <section className="composer settings iwara-page" aria-label="Iwara 訂閱">
       <div className="queue-head">
         <h2>Iwara 訂閱</h2>
-        <p>本機訂閱作者／播放清單並同步新內容（不含帳號 following 匯入）</p>
+        <p>本機訂閱作者／播放清單；登入後可匯入帳號 Following 並批次同步</p>
       </div>
+
+      <AccountSection
+        cloudflareBypass={cloudflareBypass}
+        downloadDir={downloadDir}
+        showImport
+        onImported={() => void refresh()}
+      />
 
       <div className="settings-grid">
         <label className="field compact">

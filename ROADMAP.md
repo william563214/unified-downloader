@@ -85,7 +85,7 @@
 
 ## v0.6 — Iwara 對齊 Moeary／IwaraTool
 
-### v0.6-A（本 PR：公開瀏覽／本機訂閱，無登入）
+### v0.6-A（公開瀏覽／本機訂閱，無登入）
 
 - [x] 搜尋／標籤／作者／播放清單／首頁推薦 browse API（`udl iwara search|tag|author|playlist|home`）
 - [x] 結果標註本地下載狀態（SQLite history／queue → downloaded／queued／not_downloaded）
@@ -94,10 +94,16 @@
 - [x] GUI：Iwara 瀏覽網格、訂閱頁、首頁自訂區塊、SFW／NSFW、HTML5 串流預覽
 - [x] 文件：`docs/iwara-browse.md`；NOTICE 保留 Moeary/IwaraTool MIT 出處
 
-### 後續（需 `udl.secrets`／登入）
+### v0.6-B（帳號登入／私有片／Following 匯入）
 
-- [ ] 登入＋ OS keychain 保管憑證
-- [ ] 私有影片、匯入 following／帳號訂閱流
+- [x] 登入＋ OS keychain（`udl.secrets`）保管 email／password／user＋access token；`udl iwara login|logout|whoami`
+- [x] Session 用於私有／好友可見片與 browse／search／sync（結果反映帳號）
+- [x] 匯入帳號 Following → `iwara_subscriptions`＋可選批次 sync
+- [x] 修復中心：Iwara 過期 URL 以 `repair fix requeue` 重 resolve（沿用 session）
+- [x] GUI 設定／訂閱頁帳號區塊；文件與 NOTICE 更新
+
+### 後續
+
 - [ ] 進階篩選（時長等）與預覽強化
 
 ## v0.7 — Bilibili 對齊 Bili23-Downloader
