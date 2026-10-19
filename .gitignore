@@ -1,0 +1,25 @@
+.temp/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+node_modules/
+# ignore generated pyinstaller specs in temp only; keep packaging/udl.spec
+.temp/**/*.spec
+app/dist/
+app/src-tauri/target/
+app/src-tauri/binaries/udl-*
+!app/src-tauri/binaries/.gitkeep
+core/.venv/
+*.AppImage
+*.dmg
+*.msi
+.DS_Store
+*.part
+*.temp
+.idea/
+.vscode/
+uploads/

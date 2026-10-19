@@ -1,0 +1,121 @@
+name: release-artifacts
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: unified-downloader-macos-arm64
+            sidecar: udl-aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: unified-downloader-windows-x64
+            sidecar: udl-x86_64-pc-windows-msvc.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build Python sidecar
+        shell: bash
+        run: |
+          chmod +x scripts/build-sidecar.sh
+          ./scripts/build-sidecar.sh "${{ matrix.target }}"
+          test -f "app/src-tauri/binaries/${{ matrix.sidecar }}"
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      - name: Build Tauri app (unsigned)
+        working-directory: app
+        env:
+          # Explicitly skip signing
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          TAURI_SKIP_CODE_SIGNING: "true"
+          TAURI_SIGNING_PRIVATE_KEY: ""
+        run: npm run tauri -- build --target ${{ matrix.target }}
+
+      - name: Collect artifacts (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-out
+          find app/src-tauri/target/${{ matrix.target }}/release/bundle -type f \
+            \( -name '*.dmg' -o -name '*.app' \) -print || true
+          dmg=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle/dmg -name '*.dmg' 2>/dev/null | head -1 || true)
+          if [[ -z "${dmg}" ]]; then
+            echo "ERROR: no .dmg produced under bundle/dmg" >&2
+            find app/src-tauri/target/${{ matrix.target }}/release/bundle -maxdepth 3 -type f -print || true
+            exit 1
+          fi
+          cp "$dmg" "dist-out/${{ matrix.artifact }}.dmg"
+          appdir=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle/macos -name '*.app' -type d 2>/dev/null | head -1 || true)
+          if [[ -n "${appdir}" ]]; then
+            ditto -c -k --sequesterRsrc --keepParent "$appdir" "dist-out/${{ matrix.artifact }}.app.zip"
+          fi
+          cp "app/src-tauri/binaries/${{ matrix.sidecar }}" "dist-out/${{ matrix.sidecar }}"
+          # Confirm sidecar naming matches Tauri externalBin convention
+          ls -la "app/src-tauri/binaries/"
+          ls -la dist-out
+
+      - name: Collect artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-out
+          find app/src-tauri/target/${{ matrix.target }}/release/bundle -type f | head -50
+          nsis=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle/nsis -name '*.exe' 2>/dev/null | head -1 || true)
+          msi=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle/msi -name '*.msi' 2>/dev/null | head -1 || true)
+          if [[ -z "$nsis" && -z "$msi" ]]; then
+            echo "ERROR: no NSIS .exe or .msi produced" >&2
+            find app/src-tauri/target/${{ matrix.target }}/release/bundle -maxdepth 4 -type f -print || true
+            exit 1
+          fi
+          [[ -n "$nsis" ]] && cp "$nsis" "dist-out/${{ matrix.artifact }}-setup.exe"
+          [[ -n "$msi" ]] && cp "$msi" "dist-out/${{ matrix.artifact }}.msi"
+          cp "app/src-tauri/binaries/${{ matrix.sidecar }}" "dist-out/${{ matrix.sidecar }}"
+          ls -la "app/src-tauri/binaries/"
+          ls -la dist-out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist-out/*
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-out/*
+          draft: true
+          generate_release_notes: true
