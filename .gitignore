@@ -6,8 +6,9 @@ __pycache__/
 venv/
 dist/
 build/
-*.spec
 node_modules/
+# ignore generated pyinstaller specs in temp only; keep packaging/udl.spec
+.temp/**/*.spec
 app/dist/
 app/src-tauri/target/
 app/src-tauri/binaries/udl-*
