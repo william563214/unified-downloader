@@ -23,6 +23,11 @@ jobs:
           uv run udl schema >/dev/null
           UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl history list --json --limit 1 >/dev/null
           UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl queue list --json --unfinished >/dev/null
+          UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl queue schedule status --json >/dev/null
+          UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl queue schedule list --json >/dev/null
+          UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl queue schedule set ci-night --start 22:00 --end 06:00 --days weekdays --max-concurrent 2 --after none --json >/dev/null
+          UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl queue schedule profile set ci-day --default-limit 1M --window 'weekdays:09:00-18:00:256K' --clear-windows --json >/dev/null
+          UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl queue schedule quota --enable --hour-mb 100 --day-mb 1000 --json >/dev/null
           uv run udl naming preview --template '{site}/{author}/{title}.{ext}' --metadata '{"site":"iwara","author":"a","title":"t"}' --json >/dev/null
           UDL_CONFIG="$RUNNER_TEMP/udl-ci.config.json" uv run udl config show --json >/dev/null
           UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl repair scan --json --no-orphans >/dev/null

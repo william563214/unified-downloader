@@ -280,6 +280,7 @@ export type QueueEntry = {
   part?: string | null;
   cloudflare_bypass?: boolean;
   on_duplicate?: string;
+  queue_name?: string | null;
 };
 
 export type RepairIssue = {

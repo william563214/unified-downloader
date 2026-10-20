@@ -19,7 +19,7 @@ unified-downloader/
 │  ├─ events.py           # JSON-lines 事件（含 metadata / duplicate / postprocess）
 │  └─ cli.py              # resolve / probe / get / history / queue / iwara / secrets / …
 ├─ app/                   # Tauri v2 + React/TS GUI（sidecar 叫 udl）
-├─ docs/                  # 事件、metadata、networking、page-download、checksum-hook…
+├─ docs/                  # 事件、metadata、networking、scheduler、page-download、checksum-hook…
 ├─ packaging/             # PyInstaller spec
 └─ scripts/               # sidecar 建置腳本
 ```
@@ -84,6 +84,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - **校驗／掃毒（v0.9-D）**：下載後 MD5／SHA-1／SHA-256；可選 Defender／ClamAV 指令（預設關）；見 `docs/checksum-hook.md`。
 - **FFmpeg 首次佈建**：偵測不到時可下載目前 OS／arch 靜態建置並驗證 checksum（見 `NOTICE`）。CLI：`udl ffmpeg status` / `udl ffmpeg install`。
 - **網路**：見 `docs/networking.md`（全域限速、代理三模式、可選 aria2 RPC、自訂 UA）。
+- **排程／配額**：見 `docs/scheduler.md`（具名佇列、時段、完成後動作、流量配額、時段限速）。
 - **MEGA**：內建 Python 客戶端（分段＋CBC-MAC；見 `docs/mega.md`）；可選 megatools／MEGAcmd 外部後端。
 
 ### 截圖（佔位）
@@ -112,6 +113,8 @@ uv run udl repair fix requeue --job-id <id> --json
 uv run udl history list --json --site iwara --query "keyword"
 uv run udl history delete <job-id> --delete-files
 uv run udl queue list --unfinished --json
+uv run udl queue schedule status --json
+uv run udl queue schedule set night --start 22:00 --end 06:00 --days weekdays --after notify
 uv run udl get "URL" -o ./out --json --on-duplicate skip
 uv run udl get "URL" -o ./out --json --write-nfo --write-cover --embed-cover
 ```

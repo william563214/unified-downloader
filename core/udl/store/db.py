@@ -170,6 +170,58 @@ migrations: list[tuple[int, str]] = [
           on iwara_home_sections(position);
         """,
     ),
+    (
+        4,
+        """
+        create table if not exists named_queues (
+          name text primary key,
+          enabled integer not null default 1,
+          max_concurrent integer not null default 2,
+          day_spec text not null default 'daily',
+          start_time text,
+          end_time text,
+          repeat_mode text not null default 'repeat',
+          once_completed_at text,
+          after_completion text not null default 'none',
+          speed_profile text,
+          created_at text not null default (datetime('now')),
+          updated_at text not null default (datetime('now'))
+        );
+
+        insert or ignore into named_queues(name) values ('default');
+
+        create table if not exists speed_profiles (
+          name text primary key,
+          default_speed_limit text not null default '',
+          windows_json text not null default '[]',
+          created_at text not null default (datetime('now')),
+          updated_at text not null default (datetime('now'))
+        );
+
+        create table if not exists traffic_quota (
+          id integer primary key check (id = 1),
+          enabled integer not null default 0,
+          max_mb_per_hour real,
+          max_mb_per_day real,
+          paused_until text,
+          updated_at text not null default (datetime('now'))
+        );
+
+        insert or ignore into traffic_quota(id) values (1);
+
+        create table if not exists traffic_usage (
+          bucket_kind text not null,
+          bucket_key text not null,
+          bytes_used integer not null default 0,
+          updated_at text not null default (datetime('now')),
+          primary key (bucket_kind, bucket_key)
+        );
+
+        alter table queue_jobs add column queue_name text not null default 'default';
+        create index if not exists idx_queue_jobs_queue_name
+          on queue_jobs(queue_name);
+        """,
+    ),
 ]
 
 
@@ -214,6 +266,59 @@ def migrate(conn: sqlite3.Connection) -> None:
                 conn.execute("alter table history_files add column role text")
             conn.execute(
                 "create index if not exists idx_history_files_role on history_files(role)"
+            )
+        elif version == 4:
+            conn.executescript(
+                """
+                create table if not exists named_queues (
+                  name text primary key,
+                  enabled integer not null default 1,
+                  max_concurrent integer not null default 2,
+                  day_spec text not null default 'daily',
+                  start_time text,
+                  end_time text,
+                  repeat_mode text not null default 'repeat',
+                  once_completed_at text,
+                  after_completion text not null default 'none',
+                  speed_profile text,
+                  created_at text not null default (datetime('now')),
+                  updated_at text not null default (datetime('now'))
+                );
+                insert or ignore into named_queues(name) values ('default');
+                create table if not exists speed_profiles (
+                  name text primary key,
+                  default_speed_limit text not null default '',
+                  windows_json text not null default '[]',
+                  created_at text not null default (datetime('now')),
+                  updated_at text not null default (datetime('now'))
+                );
+                create table if not exists traffic_quota (
+                  id integer primary key check (id = 1),
+                  enabled integer not null default 0,
+                  max_mb_per_hour real,
+                  max_mb_per_day real,
+                  paused_until text,
+                  updated_at text not null default (datetime('now'))
+                );
+                insert or ignore into traffic_quota(id) values (1);
+                create table if not exists traffic_usage (
+                  bucket_kind text not null,
+                  bucket_key text not null,
+                  bytes_used integer not null default 0,
+                  updated_at text not null default (datetime('now')),
+                  primary key (bucket_kind, bucket_key)
+                );
+                """
+            )
+            q_cols = _table_columns(conn, "queue_jobs")
+            if "queue_name" not in q_cols:
+                conn.execute(
+                    "alter table queue_jobs add column queue_name "
+                    "text not null default 'default'"
+                )
+            conn.execute(
+                "create index if not exists idx_queue_jobs_queue_name "
+                "on queue_jobs(queue_name)"
             )
         else:
             conn.executescript(sql)

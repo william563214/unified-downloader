@@ -15,7 +15,9 @@ from udl import __version__
 from udl.checksum import expected_from_cli
 from udl.cli_iwara import add_iwara_parser, cmd_iwara
 from udl.cli_mega import add_mega_parser, cmd_mega
+from udl.cli_schedule import add_schedule_parser, cmd_queue_schedule
 from udl.config import load_config, save_config, udl_config
+from udl.download.rate import flush_traffic_accounting, set_traffic_recorder
 from udl.events import dump_schema, emitter
 from udl.metadata import item_metadata
 from udl.naming import preview_template
@@ -27,6 +29,7 @@ from udl.postprocess.options import parse_site_toggle_list, postprocess_options
 from udl.repair import apply_repair_actions, scan_repair
 from udl.router import get_extractor, resolve
 from udl.rules import parse_rules, test_rules_against_metadata
+from udl.scheduler import note_traffic
 from udl.secrets import delete_secret, get_secret, set_secret
 from udl.session import (
     finalize_download,
@@ -711,6 +714,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_q_status.add_argument("--message", default=None)
     p_q_status.add_argument("--json", action="store_true")
 
+    p_q_list.add_argument(
+        "--queue",
+        default=None,
+        dest="queue_name",
+        help="filter by named queue (v0.9 scheduler)",
+    )
+    add_schedule_parser(queue_sub)
+
     p_naming = sub.add_parser("naming", help="name template preview helpers")
     naming_sub = p_naming.add_subparsers(dest="naming_command", required=True)
     p_naming_preview = naming_sub.add_parser("preview", help="preview a name template")
@@ -1196,6 +1207,9 @@ def cmd_get(args: argparse.Namespace) -> int:
     on_dup: duplicate_mode = args.on_duplicate
     conn = None if args.no_history else open_store(args.db)
     cfg = load_config(getattr(args, "config", None))
+    # traffic quota accounting via rate limiter hook
+    db_for_traffic = args.db
+    set_traffic_recorder(lambda n: note_traffic(n, db_path=db_for_traffic))
 
     ext = None
     skip_indexes: set[int] = set()
@@ -1442,6 +1456,8 @@ def cmd_get(args: argparse.Namespace) -> int:
             else:
                 print(f"postprocess failed: {exc}", file=sys.stderr)
 
+    flush_traffic_accounting()
+    set_traffic_recorder(None)
     if conn is not None:
         conn.close()
 
@@ -1897,11 +1913,14 @@ def cmd_history(args: argparse.Namespace) -> int:
 def cmd_queue(args: argparse.Namespace) -> int:
     conn = open_store(args.db)
     try:
+        if args.queue_command == "schedule":
+            return cmd_queue_schedule(conn, args)
         if args.queue_command == "list":
             rows = list_queue(
                 conn,
                 status=args.status,
                 unfinished_only=bool(args.unfinished),
+                queue_name=getattr(args, "queue_name", None),
                 limit=args.limit,
             )
             payload = [r.to_dict() for r in rows]
@@ -1944,6 +1963,8 @@ def cmd_queue(args: argparse.Namespace) -> int:
                 print(json.dumps(payload, ensure_ascii=False, indent=2))
             return 0
     finally:
+        flush_traffic_accounting()
+        set_traffic_recorder(None)
         conn.close()
     return 2
 

@@ -60,6 +60,7 @@ export type JobRow = {
   expandAll?: boolean;
   nodeNames?: string | null;
   megaSelect?: string | null;
+  queueName?: string;
   files: FileRow[];
   ok?: number;
   failed?: number;
