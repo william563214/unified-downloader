@@ -209,4 +209,4 @@
 - 通用「任意網站」fallback
 - 程式碼簽章／公證（v0.1 明確跳過）
 - 付費牆／VIP／區域限制／MEGA 配額繞過（含 SmartProxy／換 IP）
-- gallery-dl 當 library（見上）；MegaBasterd GUI／SmartProxy 不移植（協定能力已內建）
+- MegaBasterd GUI／SmartProxy 不移植（協定能力已內建於 `udl.extractors.mega`）
