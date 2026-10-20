@@ -279,6 +279,8 @@ export default function App() {
           classificationRules: Array.isArray(loaded.classificationRules)
             ? loaded.classificationRules
             : [],
+          megaBackend:
+            loaded.megaBackend === "external" ? "external" : "builtin",
           megaToolPath: loaded.megaToolPath ?? "",
           clipboardWatcher: Boolean(loaded.clipboardWatcher),
           notificationsEnabled:
@@ -2044,46 +2046,62 @@ export default function App() {
           <div className="settings-block">
             <h3>工具 · MEGA</h3>
             <p className="hint">
-              指定 megatools 或 mega-get 路徑（等同 --mega-tool／UDL_MEGA_TOOL）
+              預設內建 Python 客戶端。外部後端需 megatools／MEGAcmd（--mega-tool／UDL_MEGA_TOOL）。不支援配額繞過。
             </p>
-            <label className="field">
-              <span>MEGA 工具路徑</span>
-              <div className="folder-row">
-                <input
-                  value={settingsDraft.megaToolPath}
-                  onChange={(e) => {
-                    setSettingsDraft((s) => ({
-                      ...s,
-                      megaToolPath: e.target.value,
-                    }));
-                    setSettingsDirty(true);
-                  }}
-                  placeholder="空白＝自動尋找 PATH"
-                  spellCheck={false}
-                />
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={() => {
-                    void (async () => {
-                      const selected = await open({
-                        multiple: false,
-                        title: "選擇 MEGA 工具",
-                      });
-                      if (typeof selected === "string") {
-                        setSettingsDraft((s) => ({
-                          ...s,
-                          megaToolPath: selected,
-                        }));
-                        setSettingsDirty(true);
-                      }
-                    })();
-                  }}
-                >
-                  瀏覽
-                </button>
-              </div>
+            <label className="field compact">
+              <span>後端</span>
+              <select
+                value={settingsDraft.megaBackend}
+                onChange={(e) => {
+                  const value = e.target.value === "external" ? "external" : "builtin";
+                  setSettingsDraft((s) => ({ ...s, megaBackend: value }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="builtin">內建（預設）</option>
+                <option value="external">外部工具（megatools／MEGAcmd）</option>
+              </select>
             </label>
+            {settingsDraft.megaBackend === "external" && (
+              <label className="field">
+                <span>MEGA 工具路徑</span>
+                <div className="folder-row">
+                  <input
+                    value={settingsDraft.megaToolPath}
+                    onChange={(e) => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        megaToolPath: e.target.value,
+                      }));
+                      setSettingsDirty(true);
+                    }}
+                    placeholder="空白＝自動尋找 PATH"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => {
+                      void (async () => {
+                        const selected = await open({
+                          multiple: false,
+                          title: "選擇 MEGA 工具",
+                        });
+                        if (typeof selected === "string") {
+                          setSettingsDraft((s) => ({
+                            ...s,
+                            megaToolPath: selected,
+                          }));
+                          setSettingsDirty(true);
+                        }
+                      })();
+                    }}
+                  >
+                    瀏覽
+                  </button>
+                </div>
+              </label>
+            )}
           </div>
 
           <div className="settings-block" id="settings-naming">
@@ -2598,42 +2616,6 @@ export default function App() {
                 spellCheck={false}
               />
             </label>
-            <h4>MEGA</h4>
-            <p className="hint">
-              預設內建客戶端。外部後端需本機 megatools 或 MEGAcmd。不支援 SmartProxy／換
-              IP／配額繞過。
-            </p>
-            <label className="field compact">
-              <span>後端</span>
-              <select
-                value={settingsDraft.megaBackend}
-                onChange={(e) => {
-                  const value = e.target.value === "external" ? "external" : "builtin";
-                  setSettingsDraft((s) => ({ ...s, megaBackend: value }));
-                  setSettingsDirty(true);
-                }}
-              >
-                <option value="builtin">內建（預設）</option>
-                <option value="external">外部工具（megatools／MEGAcmd）</option>
-              </select>
-            </label>
-            {settingsDraft.megaBackend === "external" && (
-              <label className="field compact">
-                <span>外部工具路徑（選用）</span>
-                <input
-                  value={settingsDraft.megaToolPath}
-                  onChange={(e) => {
-                    setSettingsDraft((s) => ({
-                      ...s,
-                      megaToolPath: e.target.value,
-                    }));
-                    setSettingsDirty(true);
-                  }}
-                  placeholder="空白則搜尋 PATH／UDL_MEGA_TOOL"
-                  spellCheck={false}
-                />
-              </label>
-            )}
           </div>
 
 
