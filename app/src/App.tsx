@@ -131,38 +131,6 @@ async function notifyJob(title: string, body: string): Promise<void> {
   }
 }
 
-function formatBytes(n?: number): string {
-  if (n == null || Number.isNaN(n)) return "—";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
-  return `${(n / 1024 ** 3).toFixed(2)} GB`;
-}
-
-function formatSpeed(bps?: number): string {
-  if (bps == null || bps <= 0) return "—";
-  return `${formatBytes(bps)}/s`;
-}
-
-function siteTone(site: string | null | undefined): string {
-  switch (site) {
-    case "gofile":
-      return "tone-gofile";
-    case "bunkr":
-      return "tone-bunkr";
-    case "iwara":
-      return "tone-iwara";
-    case "bilibili":
-      return "tone-bili";
-    case "mega":
-      return "tone-mega";
-    case "direct":
-      return "tone-direct";
-    default:
-      return "tone-unknown";
-  }
-}
-
 export default function App() {
   const [page, setPage] = useState<Page>("download");
   const [url, setUrl] = useState("");
