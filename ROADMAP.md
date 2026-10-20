@@ -139,6 +139,14 @@
 - [x] PyInstaller sidecar：keyring 平台後端、qrcode／Pillow、v0.7 模組
 - [ ] GitHub Actions `release-artifacts`：未簽章 macOS arm64 `.dmg`＋Windows x64 NSIS
 
+### v0.7.0 手動測試與已知風險修復
+
+- [x] 手動測試清單：[`docs/TESTING.md`](docs/TESTING.md)＋ GitHub issue [#15](https://github.com/william563214/unified-downloader/issues/15)（建議標籤 `testing`）
+- [x] `folder.jpg`：同目錄多檔只寫一次；預設仍為 per-file `*-poster.jpg`
+- [x] 大檔 hash：完成時用 fast partial（`UDL_HASH_MODE`），並可背景補算 full sha256
+- [x] 修復 orphan：僅掃歷史 output 根＋已知副檔名＋忽略清單
+- [x] MEGA 去重：node handle＋size（避免粗粒度 handle 誤 skip）
+
 ## 不做／延後
 
 - gallery-dl 當 library（授權衝突）；若備援只允許獨立子行程

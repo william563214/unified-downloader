@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from udl.metadata import item_metadata
-from udl.store.hashutil import sha256_file
+from udl.store.hashutil import hash_file_for_history
 
 duplicate_mode = Literal["skip", "overwrite", "rename"]
 
@@ -67,32 +67,52 @@ def find_duplicate(
     sha256: str | None = None,
     path: str | Path | None = None,
 ) -> duplicate_hit | None:
-    """prefer (site, item_id) then URL then size+hash then existing path."""
+    """prefer (site, item_id) then URL then size+hash then existing path.
+
+    MEGA uses node handle as item_id and requires size as well so folder-level
+    handles do not falsely skip sibling files of different sizes.
+    """
     if site and item_id:
-        row = conn.execute(
-            """
-            select job_id, file_id, path, site, item_id, status, size, sha256
-            from history_files
-            where site = ? and item_id = ? and status in ('done', 'skipped')
-            order by updated_at desc
-            limit 1
-            """,
-            (site, item_id),
-        ).fetchone()
-        if row is None:
+        # mega: match node handle + size when size is known
+        if site == "mega" and size is not None and size > 0:
             row = conn.execute(
                 """
-                select id as job_id, null as file_id, output_dir as path,
-                       site, item_id, status, null as size, null as sha256
-                from history_jobs
+                select job_id, file_id, path, site, item_id, status, size, sha256
+                from history_files
+                where site = ? and item_id = ? and size = ?
+                  and status in ('done', 'skipped')
+                order by updated_at desc
+                limit 1
+                """,
+                (site, item_id, size),
+            ).fetchone()
+            if row is not None:
+                return _hit("mega_handle_size", row)
+        else:
+            row = conn.execute(
+                """
+                select job_id, file_id, path, site, item_id, status, size, sha256
+                from history_files
                 where site = ? and item_id = ? and status in ('done', 'skipped')
                 order by updated_at desc
                 limit 1
                 """,
                 (site, item_id),
             ).fetchone()
-        if row is not None:
-            return _hit("site_item_id", row)
+            if row is None and site != "mega":
+                row = conn.execute(
+                    """
+                    select id as job_id, null as file_id, output_dir as path,
+                           site, item_id, status, null as size, null as sha256
+                    from history_jobs
+                    where site = ? and item_id = ? and status in ('done', 'skipped')
+                    order by updated_at desc
+                    limit 1
+                    """,
+                    (site, item_id),
+                ).fetchone()
+            if row is not None:
+                return _hit("site_item_id", row)
 
     if canonical_url:
         row = conn.execute(
@@ -123,7 +143,7 @@ def find_duplicate(
 
     digest = sha256
     if digest is None and path is not None and Path(path).is_file():
-        digest = sha256_file(path)
+        digest = hash_file_for_history(path)
     if digest:
         row = conn.execute(
             """

@@ -10,7 +10,12 @@ from typing import Any
 
 from udl.metadata import item_metadata
 from udl.store.db import connect
-from udl.store.hashutil import sha256_file
+from udl.store.hashutil import (
+    hash_file_background,
+    hash_file_for_history,
+    large_file_bytes,
+    resolve_hash_mode,
+)
 
 
 @dataclass
@@ -191,6 +196,27 @@ def record_job_started(
     conn.commit()
 
 
+def update_file_sha256(
+    conn: sqlite3.Connection,
+    *,
+    job_id: str,
+    file_id: str | None,
+    sha256: str | None,
+) -> None:
+    """patch sha256 after background hashing finishes."""
+    if not file_id or not sha256:
+        return
+    conn.execute(
+        """
+        update history_files
+        set sha256 = ?, updated_at = datetime('now')
+        where job_id = ? and file_id = ?
+        """,
+        (sha256, job_id, file_id),
+    )
+    conn.commit()
+
+
 def record_file_done(
     conn: sqlite3.Connection,
     *,
@@ -207,15 +233,28 @@ def record_file_done(
     metadata: item_metadata | dict[str, Any] | None = None,
     role: str | None = None,
     compute_hash: bool = True,
+    hash_mode: str | None = None,
 ) -> None:
     path_str = str(path) if path is not None else None
     file_size = size
     digest = sha256
+    schedule_full = False
     if path_str and Path(path_str).is_file():
         if file_size is None:
             file_size = Path(path_str).stat().st_size
         if digest is None and compute_hash and status == "done":
-            digest = sha256_file(path_str)
+            # auto mode: fast partial for large files so completion is not blocked
+            # then optionally schedule a full hash in a background thread
+            mode = resolve_hash_mode(hash_mode)
+            digest = hash_file_for_history(path_str, mode=mode)
+            if (
+                mode == "auto"
+                and file_size is not None
+                and file_size >= large_file_bytes
+                and digest
+                and digest.startswith("partial:")
+            ):
+                schedule_full = True
     meta_dict: dict[str, Any]
     if isinstance(metadata, item_metadata):
         meta_dict = metadata.to_dict(omit_empty=True)
@@ -264,6 +303,24 @@ def record_file_done(
         ),
     )
     conn.commit()
+    if schedule_full and path_str and file_id:
+        db_path = Path(conn.execute("pragma database_list").fetchone()[2])
+
+        def _on_done(full_digest: str | None) -> None:
+            if not full_digest:
+                return
+            try:
+                bg = connect(db_path)
+                try:
+                    update_file_sha256(
+                        bg, job_id=job_id, file_id=file_id, sha256=full_digest
+                    )
+                finally:
+                    bg.close()
+            except OSError:
+                return
+
+        hash_file_background(path_str, on_done=_on_done, mode="full")
 
 
 def set_job_cover_path(

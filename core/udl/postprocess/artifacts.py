@@ -101,6 +101,8 @@ def run_postprocess(
 
     job_cover: Path | None = None
     hint = kind_hint or result.kind
+    # folder.jpg is shared per directory write at most once to avoid overwrite races
+    folder_cover_dirs: set[str] = set()
 
     for idx, extracted, media_path in media_list:
         file_meta = extracted.metadata or result.metadata or item_metadata(site=site)
@@ -163,60 +165,89 @@ def run_postprocess(
         cover_path: Path | None = None
         if opts.cover_enabled_for(site):
             try:
-                if emit:
-                    emit.postprocess(
-                        job=job_id,
-                        file=media_file_id,
-                        step="cover",
-                        message="downloading cover",
-                    )
-                cover_path = download_cover(
-                    file_meta,
-                    media_path,
-                    naming=opts.cover_naming,
-                    ffmpeg=opts.ffmpeg,
-                    job_id=job_id,
-                    file_id=f"{media_file_id}:cover",
-                    emit=emit,
-                    cancel=cancel,
+                naming = opts.cover_naming
+                parent_key = str(media_path.parent.resolve())
+                skip_folder_write = (
+                    naming == "folder" and parent_key in folder_cover_dirs
                 )
-                if cover_path is None:
+                if skip_folder_write:
+                    existing = media_path.parent / "folder.jpg"
+                    if existing.is_file():
+                        cover_path = existing
+                        if emit:
+                            emit.postprocess(
+                                job=job_id,
+                                file=media_file_id,
+                                step="cover",
+                                path=str(existing),
+                                message="reusing folder.jpg already written for this directory",
+                                ok=True,
+                            )
+                    elif emit:
+                        emit.postprocess(
+                            job=job_id,
+                            file=media_file_id,
+                            step="cover",
+                            message="skip folder.jpg already handled for this directory",
+                            ok=True,
+                        )
+                else:
                     if emit:
                         emit.postprocess(
                             job=job_id,
                             file=media_file_id,
                             step="cover",
-                            message="no thumbnail/cover url in metadata",
-                            ok=True,
+                            message="downloading cover",
                         )
-                else:
-                    art = artifact_result(
-                        role=role_cover,
-                        path=cover_path,
-                        name=cover_path.name,
-                        file_id=f"{media_file_id}:cover",
-                        media_file_id=media_file_id,
-                    )
-                    artifacts.append(art)
-                    job_cover = job_cover or cover_path
-                    _emit_and_record(
-                        emit=emit,
-                        conn=conn,
+                    cover_path = download_cover(
+                        file_meta,
+                        media_path,
+                        naming=naming,
+                        ffmpeg=opts.ffmpeg,
                         job_id=job_id,
-                        site=site,
-                        art=art,
-                        metadata=file_meta,
+                        file_id=f"{media_file_id}:cover",
+                        emit=emit,
+                        cancel=cancel,
                     )
-                    if emit:
-                        emit.postprocess(
-                            job=job_id,
-                            file=art.file_id,
-                            step="cover",
-                            path=str(cover_path),
+                    if naming == "folder" and cover_path is not None:
+                        folder_cover_dirs.add(parent_key)
+                    if cover_path is None:
+                        if emit:
+                            emit.postprocess(
+                                job=job_id,
+                                file=media_file_id,
+                                step="cover",
+                                message="no thumbnail/cover url in metadata",
+                                ok=True,
+                            )
+                    else:
+                        art = artifact_result(
                             role=role_cover,
-                            message="cover saved",
-                            ok=True,
+                            path=cover_path,
+                            name=cover_path.name,
+                            file_id=f"{media_file_id}:cover",
+                            media_file_id=media_file_id,
                         )
+                        artifacts.append(art)
+                        job_cover = job_cover or cover_path
+                        _emit_and_record(
+                            emit=emit,
+                            conn=conn,
+                            job_id=job_id,
+                            site=site,
+                            art=art,
+                            metadata=file_meta,
+                        )
+                        if emit:
+                            emit.postprocess(
+                                job=job_id,
+                                file=art.file_id,
+                                step="cover",
+                                path=str(cover_path),
+                                role=role_cover,
+                                message="cover saved",
+                                ok=True,
+                            )
             except Exception as exc:  # noqa: BLE001
                 if emit:
                     emit.postprocess(

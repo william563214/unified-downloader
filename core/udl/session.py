@@ -14,7 +14,7 @@ from udl.naming import detect_media_type, pick_template, resolve_output_path
 from udl.rules import apply_rules
 from udl.store.db import connect
 from udl.store.duplicates import duplicate_mode, resolve_duplicate
-from udl.store.hashutil import sha256_file
+from udl.store.hashutil import hash_file_for_history
 from udl.store.history import record_file_done, record_job_finished, record_job_started
 from udl.store.queue import queue_job, save_queue_job, update_queue_status
 
@@ -317,7 +317,7 @@ def finalize_download(
 def file_digest(path: Path) -> tuple[int | None, str | None]:
     if not path.is_file():
         return None, None
-    return path.stat().st_size, sha256_file(path)
+    return path.stat().st_size, hash_file_for_history(path)
 
 
 def metadata_payload(result: extract_result) -> dict[str, Any] | None:
