@@ -640,7 +640,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_naming_preview.add_argument(
         "--template",
         required=True,
-        help="template string with {field} / {date:%Y-%m} placeholders",
+        help="template string with {field} / {date:%%Y-%%m} placeholders",
     )
     p_naming_preview.add_argument(
         "--metadata",
