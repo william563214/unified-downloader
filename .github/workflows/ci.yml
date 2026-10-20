@@ -19,6 +19,7 @@ jobs:
           uv sync --extra dev
           uv run ruff check udl
           uv run udl sites
+          uv run udl gallerydl status --json >/dev/null || true
           uv run udl schema >/dev/null
           UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl history list --json --limit 1 >/dev/null
           UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl queue list --json --unfinished >/dev/null
@@ -27,6 +28,7 @@ jobs:
           UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl repair scan --json --no-orphans >/dev/null
           UDL_CONFIG="$RUNNER_TEMP/udl-ci.config.json" uv run udl rules list --json >/dev/null
           uv run udl page "https://example.com/" --json --no-head >/dev/null
+          uv run udl resolve "https://example.com/" --json >/dev/null || true
           uv run udl bili login status --json >/dev/null || true
           uv run udl bili login qr --json --no-image >/dev/null || true
 

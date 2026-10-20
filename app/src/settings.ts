@@ -9,6 +9,7 @@ export type SiteId =
   | "iwara"
   | "bilibili"
   | "mega"
+  | "gallerydl"
   | "direct";
 
 export const site_ids: SiteId[] = [
@@ -17,6 +18,7 @@ export const site_ids: SiteId[] = [
   "iwara",
   "bilibili",
   "mega",
+  "gallerydl",
   "direct",
 ];
 
@@ -93,6 +95,12 @@ export type AppSettings = {
   // MEGA built-in / external fallback
   megaBackend: "builtin" | "external";
   megaToolPath: string;
+  // gallery-dl external (GPL-2.0-only subprocess)
+  gallerydlEnabled: boolean;
+  gallerydlToolPath: string;
+  gallerydlCookiesPath: string;
+  gallerydlOptions: string;
+  gallerydlUseArchive: boolean;
   // tools / shell (v0.8)
   clipboardWatcher: boolean;
   notificationsEnabled: boolean;
@@ -112,6 +120,7 @@ export const default_site_flags = (): Record<SiteId, boolean> => ({
   iwara: true,
   bilibili: true,
   mega: true,
+  gallerydl: true,
   direct: true,
 });
 
@@ -153,6 +162,11 @@ export const default_settings: AppSettings = {
   customHost: "",
   megaBackend: "builtin",
   megaToolPath: "",
+  gallerydlEnabled: true,
+  gallerydlToolPath: "",
+  gallerydlCookiesPath: "",
+  gallerydlOptions: "",
+  gallerydlUseArchive: false,
   clipboardWatcher: false,
   notificationsEnabled: true,
   minimizeToTray: false,
@@ -201,6 +215,11 @@ export function importSettingsJson(
   // never import secrets from file
   merged.aria2RpcSecret = current.aria2RpcSecret;
   if (!merged.megaToolPath) merged.megaToolPath = "";
+  if (merged.gallerydlEnabled == null) merged.gallerydlEnabled = true;
+  if (!merged.gallerydlToolPath) merged.gallerydlToolPath = "";
+  if (!merged.gallerydlCookiesPath) merged.gallerydlCookiesPath = "";
+  if (!merged.gallerydlOptions) merged.gallerydlOptions = "";
+  if (merged.gallerydlUseArchive == null) merged.gallerydlUseArchive = false;
   if (merged.clipboardWatcher == null) merged.clipboardWatcher = false;
   if (merged.notificationsEnabled == null) merged.notificationsEnabled = true;
   if (merged.minimizeToTray == null) merged.minimizeToTray = false;

@@ -81,6 +81,29 @@ upstream copyright and were adapted under compatible licenses.
 
 ## External tools (subprocess only — not linked / not imported)
 
+### gallery-dl — `core/udl/extractors/external/gallerydl.py`
+- Upstream: https://github.com/mikf/gallery-dl
+- License: **GPL-2.0-only** (LICENSE is GPLv2; source headers say
+  "GNU General Public License version 2" — **not** or-later)
+- Verified commit: 7f226f74108501c8ac3120548370f68f19e6f9b3 (v1.32.17)
+- **Decision:** Incompatible with linking/importing into this GPL-3.0-or-later
+  process. Integrate **only** as a separate subprocess (`gallery-dl` executable
+  or `python -m gallery_dl`), communicating via CLI/JSON (`-j`/`--dump-json`,
+  `-s`/`--simulate`, `--Print`, `--cookies`, `--proxy`, `--limit-rate`,
+  `--download-archive`, `-o` options). Do **not** vendor or `import gallery_dl`.
+- Redistribution: release builds may **bundle a separate gallery-dl binary**
+  produced by PyInstaller (mere aggregation). Accompanying files:
+  `packaging/gallery-dl/LICENSE.gallery-dl` and `SOURCE.txt` (upstream URL +
+  commit). Users may instead install gallery-dl themselves
+  (`pip`/`uv`/`brew`) and set Settings → gallery-dl path or `UDL_GALLERY_DL`.
+- Router priority: after native Gofile/Bunkr/Iwara/Bilibili/MEGA, before
+  generic `direct`. Matching uses gallery-dl’s own URL recognition (`-E`).
+- Auth: cookies file and/or `udl.secrets` keys `gallerydl.username` /
+  `gallerydl.password` (optional per-site
+  `gallerydl.username.<category>`). Secrets are never logged.
+- Explicitly **not** implemented: paywall/quota/DRM bypass; Cloudflare
+  challenge bypass stays opt-in / off by default (no automatic bypass).
+
 ### MEGA external fallback — `core/udl/extractors/external/mega.py`
 - Optional backend (`--mega-backend external` / settings); default is built-in.
 - Preferred CLI: **megatools** (`megatools dl` / `megadl`)
@@ -123,5 +146,6 @@ Users may instead install FFmpeg themselves and point Settings → FFmpeg path
 signed/unsigned app bundle by default; the optional download is user-initiated.
 
 ## Intentionally not ported
-- gallery-dl (GPL-2.0-only) — incompatible with GPL-3.0; do not import or copy.
-- MegaBasterd — GUI-only Java app; MEGA is handled via megatools/MEGAcmd instead.
+- gallery-dl **library/import/vendored source** (GPL-2.0-only) — incompatible
+  with linking into GPL-3.0-or-later udl; subprocess aggregation only (above).
+- MegaBasterd — GUI-only Java app; MEGA protocol is built-in; megatools/MEGAcmd remain optional fallback.

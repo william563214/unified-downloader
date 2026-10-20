@@ -230,6 +230,16 @@
 - [x] 可選下載後指令（預設關；Windows Defender／ClamAV 預設集、逾時）
 - [x] 文件：`docs/page-download.md`、`docs/checksum-hook.md`；更新 events／ROADMAP
 
+### gallery-dl 備援（子行程）
+
+- [x] 授權確認：GPL-2.0-only → **禁止** import／vendor；僅獨立子行程（NOTICE 記載 commit）
+- [x] `udl.extractors.external.gallerydl`：CLI／JSON（`-j -s`、`--Print`、proxy／限速／cookies／archive）
+- [x] Router：native 站點之後、`direct` 之前；以 gallery-dl `-E` 辨識 URL
+- [x] 對接 metadata／JSON-lines／history／去重／命名／NFO／cover／佇列續傳
+- [x] GUI 設定（啟用、路徑、cookies、per-site `-o`、archive）＋佇列來源 `gallery-dl`＋模組清單
+- [x] Release mere aggregation 打包獨立 `gallery-dl`（附 LICENSE／SOURCE）；失敗則改提示安裝
+- [x] `docs/gallery-dl.md`、`docs/TESTING.md` 手動項目；更新 ROADMAP／NOTICE
+
 ### 規劃中（非本 PR）
 
 - [ ] **瀏覽器擴充功能**（Chrome／Edge MV3）：重用 [william563214/download_classify](https://github.com/william563214/download_classify) — 右鍵選單、下載接管、native messaging／localhost＋token
@@ -237,9 +247,9 @@
 
 ## 不做／延後
 
-- gallery-dl 當 library（授權衝突）；若備援只允許獨立子行程
+- gallery-dl 當 **library／import／vendored 原始碼**（GPL-2.0-only 與 GPL-3.0-or-later 連結不相容）；子行程備援已實作
 - Pixeldrain（明確排除）
-- 通用「任意網站」fallback（v0.9-A 僅直連檔案，非任意站解析）
+- 通用「任意網站」fallback（v0.9-A 僅直連檔案；站點解析交給 gallery-dl 子行程）
 - DRM／加密 HLS key 擷取
 - 程式碼簽章／公證（v0.1 明確跳過）
 - 付費牆／VIP／區域限制／MEGA 配額繞過（含 SmartProxy／換 IP）

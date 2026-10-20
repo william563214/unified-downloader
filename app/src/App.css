@@ -329,6 +329,25 @@ input:focus {
   border-color: #b7cfe3;
 }
 
+.tone-gallerydl {
+  background: #f0ebe4;
+  color: #5c4030;
+  border-color: #d4c4b0;
+}
+
+.gallerydl-module-list {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.85rem;
+  columns: 2;
+}
+
+.gallerydl-module-list li {
+  break-inside: avoid;
+}
+
 .tone-direct {
   background: #eef3ea;
   color: #3d5a2c;

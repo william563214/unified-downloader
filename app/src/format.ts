@@ -38,6 +38,9 @@ export function siteTone(site: string | null | undefined): string {
       return "tone-bili";
     case "mega":
       return "tone-mega";
+    case "gallerydl":
+    case "gallery-dl":
+      return "tone-gallerydl";
     case "direct":
       return "tone-direct";
     default:

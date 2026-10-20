@@ -72,7 +72,8 @@ class my_extractor(extractor):
 | bunkr | `bunkr.py` | implemented | Lysagxra/BunkrDownloader GPL-3.0 |
 | iwara | `iwara.py` + `iwara_xversion.py` | implemented | Moeary/IwaraTool MIT |
 | bilibili | `bilibili/` | implemented | ScottSloan/Bili23-Downloader GPL-3.0 |
-| mega | `external/mega.py` | external | megatools（優先）／MEGAcmd `mega-get`（子行程） |
+| mega | `mega/`＋`external/mega.py` | implemented／external | 內建協定；可選 megatools／MEGAcmd |
+| gallerydl | `external/gallerydl.py` | external | mikf/gallery-dl 子行程（GPL-2.0-only；禁止 import） |
 | direct | `direct.py` | implemented | 通用直連（router 最後匹配；HEAD／Range 探測） |
 
 ## MEGA（v0.4 外部工具）

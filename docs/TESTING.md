@@ -88,6 +88,21 @@ William 手動驗證用。對應 GitHub issue：[v0.7.0 手動測試清單](http
 
 ---
 
+## gallery-dl（子行程備援）
+
+- [ ] `udl gallerydl status`／設定頁「偵測 gallery-dl」可找到 bundled 或 PATH／手動路徑
+- [ ] 缺少 gallery-dl 時：原生站仍可用；gallery-dl URL 清楚提示安裝（或落到 Direct）
+- [ ] 非原生、gallery-dl 支援的公開 URL：佇列來源顯示 `gallery-dl`，可下載完成並進歷史
+- [ ] 原生站點（Gofile／Bunkr／Iwara／Bilibili／MEGA）優先於 gallery-dl
+- [ ] 設定停用 gallery-dl 後，上述 URL 不再走 gallery-dl
+- [ ] cookies 檔與 keychain 帳密可傳入；log／事件不含密碼
+- [ ] 全域限速／自訂代理對 gallery-dl 任務生效
+- [ ] 可選 gallery-dl archive 開啟時略過已下載項（與 udl 去重並存）
+- [ ] 設定可列出支援模組；發行包含獨立 gallery-dl 與 `LICENSE.gallery-dl`／SOURCE（或文件說明改自行安裝）
+- [ ] **不**驗證付費牆／DRM／Cloudflare 繞過（應維持不可用／預設關）
+
+---
+
 ## 簽核
 
 | 欄位 | 內容 |
