@@ -98,6 +98,12 @@ export type AppSettings = {
   notificationsEnabled: boolean;
   minimizeToTray: boolean;
   themeMode: "system" | "light" | "dark";
+  // v0.9-D checksum / post-download hook
+  checksumAuto: boolean;
+  avHookEnabled: boolean;
+  avHookPreset: "" | "defender" | "clamav";
+  avHookCommand: string;
+  avHookTimeout: number;
 };
 
 export const default_site_flags = (): Record<SiteId, boolean> => ({
@@ -151,6 +157,11 @@ export const default_settings: AppSettings = {
   notificationsEnabled: true,
   minimizeToTray: false,
   themeMode: "system",
+  checksumAuto: true,
+  avHookEnabled: false,
+  avHookPreset: "",
+  avHookCommand: "",
+  avHookTimeout: 120,
 };
 
 /** fields never written to exported settings JSON */
@@ -327,5 +338,10 @@ export function settingsToConfigPayload(settings: AppSettings): Record<string, u
     type_templates: settings.typeTemplates,
     name_conflict: settings.nameConflict,
     rules: settings.classificationRules,
+    checksum_auto: settings.checksumAuto,
+    post_cmd_enabled: settings.avHookEnabled,
+    post_cmd: settings.avHookCommand,
+    post_cmd_preset: settings.avHookPreset,
+    post_cmd_timeout: settings.avHookTimeout,
   };
 }

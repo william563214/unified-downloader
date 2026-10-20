@@ -141,6 +141,17 @@ struct AppSettings {
     minimize_to_tray: bool,
     #[serde(default = "default_theme_mode")]
     theme_mode: String,
+    // v0.9-D checksum / post-download hook
+    #[serde(default = "default_checksum_auto")]
+    checksum_auto: bool,
+    #[serde(default)]
+    av_hook_enabled: bool,
+    #[serde(default)]
+    av_hook_preset: String,
+    #[serde(default)]
+    av_hook_command: String,
+    #[serde(default = "default_av_hook_timeout")]
+    av_hook_timeout: u32,
 }
 
 fn default_true() -> bool {
@@ -149,6 +160,14 @@ fn default_true() -> bool {
 
 fn default_theme_mode() -> String {
     "system".into()
+}
+
+fn default_checksum_auto() -> bool {
+    true
+}
+
+fn default_av_hook_timeout() -> u32 {
+    120
 }
 
 fn default_on_duplicate() -> String {
@@ -259,6 +278,11 @@ impl Default for AppSettings {
             notifications_enabled: true,
             minimize_to_tray: false,
             theme_mode: default_theme_mode(),
+            checksum_auto: default_checksum_auto(),
+            av_hook_enabled: false,
+            av_hook_preset: String::new(),
+            av_hook_command: String::new(),
+            av_hook_timeout: default_av_hook_timeout(),
         }
     }
 }
@@ -477,6 +501,11 @@ fn settings_to_udl_config(settings: &AppSettings) -> serde_json::Value {
         "type_templates": settings.type_templates,
         "name_conflict": settings.name_conflict,
         "rules": settings.classification_rules,
+        "checksum_auto": settings.checksum_auto,
+        "post_cmd_enabled": settings.av_hook_enabled,
+        "post_cmd": settings.av_hook_command,
+        "post_cmd_preset": settings.av_hook_preset,
+        "post_cmd_timeout": settings.av_hook_timeout,
     })
 }
 
@@ -753,6 +782,72 @@ fn get_app_paths(app: AppHandle) -> Result<serde_json::Value, String> {
         "ffmpegDir": ffmpeg_install_dir(&app)?.to_string_lossy(),
         "settings": settings_path(&app)?.to_string_lossy(),
     }))
+}
+
+#[tauri::command]
+async fn page_scan(
+    app: AppHandle,
+    url: String,
+    ext: Option<String>,
+    types: Option<String>,
+    size_min: Option<String>,
+    size_max: Option<String>,
+    regex: Option<String>,
+    glob: Option<String>,
+    same_domain: Option<bool>,
+    include_images: Option<bool>,
+    no_head: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let settings = load_settings_file(&app);
+    let mut args = vec!["page".into(), url, "--json".into()];
+    if let Some(v) = ext.filter(|s| !s.trim().is_empty()) {
+        args.push("--ext".into());
+        args.push(v);
+    }
+    if let Some(v) = types.filter(|s| !s.trim().is_empty()) {
+        args.push("--type".into());
+        args.push(v);
+    }
+    if let Some(v) = size_min.filter(|s| !s.trim().is_empty()) {
+        args.push("--size-min".into());
+        args.push(v);
+    }
+    if let Some(v) = size_max.filter(|s| !s.trim().is_empty()) {
+        args.push("--size-max".into());
+        args.push(v);
+    }
+    if let Some(v) = regex.filter(|s| !s.trim().is_empty()) {
+        args.push("--regex".into());
+        args.push(v);
+    }
+    if let Some(v) = glob.filter(|s| !s.trim().is_empty()) {
+        args.push("--glob".into());
+        args.push(v);
+    }
+    if same_domain.unwrap_or(false) {
+        args.push("--same-domain".into());
+    }
+    if include_images.unwrap_or(false) {
+        args.push("--images".into());
+    }
+    if no_head.unwrap_or(false) {
+        args.push("--no-head".into());
+    }
+    append_proxy_ua_args(&mut args, &settings);
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 && stdout.trim().is_empty() {
+        return Err(format!("udl page exited {:?}: {stderr}", code));
+    }
+    // page --json may emit JSON-lines; take last non-empty line
+    let line = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .last()
+        .unwrap_or("");
+    serde_json::from_str(line)
+        .map_err(|e| format!("parse page JSON: {e}; raw={stdout}; err={stderr}"))
 }
 
 #[tauri::command]
@@ -1276,6 +1371,26 @@ async fn start_download(
     if !name_tpl.is_empty() {
         args.push("--name-template".into());
         args.push(name_tpl.to_string());
+    }
+    if !settings.checksum_auto {
+        args.push("--no-checksum-auto".into());
+    }
+    if settings.av_hook_enabled {
+        let preset = settings.av_hook_preset.trim().to_lowercase();
+        if preset == "defender" || preset == "clamav" || preset == "windows_defender" || preset == "clamscan"
+        {
+            args.push("--post-cmd-preset".into());
+            args.push(preset);
+        }
+        let cmd = settings.av_hook_command.trim();
+        if !cmd.is_empty() {
+            args.push("--post-cmd".into());
+            args.push(cmd.to_string());
+        }
+        if settings.av_hook_timeout > 0 {
+            args.push("--post-cmd-timeout".into());
+            args.push(settings.av_hook_timeout.to_string());
+        }
     }
     if let Ok(cfg_path) = naming_config_path(&app) {
         if cfg_path.is_file() {
@@ -2286,6 +2401,7 @@ pub fn run() {
             clear_proxy_password,
             get_app_paths,
             resolve_url,
+            page_scan,
             probe_url,
             probe_bilibili,
             bili_login_status,

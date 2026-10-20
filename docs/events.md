@@ -1,4 +1,4 @@
-# JSON-lines 事件協定（v0.5）
+# JSON-lines 事件協定（v0.5／v0.9-D）
 
 `udl get URL -o DIR --json` 與 Tauri sidecar 透過 **stdout 每行一個 JSON 物件** 溝通。
 人類可读訊息寫入 stderr；GUI 只解析 stdout。
@@ -134,7 +134,33 @@ NFO／封面下載／嵌入等下載後步驟。成功或失敗都會發出；�
 {"ev":"postprocess","job":"<job-id>","file":"<job-id>:0","step":"embed_cover","path":"/out/a.mp4","role":"cover","message":"cover embedded","ok":true}
 ```
 
-`step`：`nfo`／`cover`／`embed_cover`／`skip`。
+`step`：`nfo`／`cover`／`embed_cover`／`hook`／`skip`。
+
+### `checksum`（v0.9-D）
+
+下載後摘要比對（MD5／SHA-1／SHA-256）。
+
+```json
+{"ev":"checksum","job":"<job-id>","file":"<file-id>","ok":true,"algo":"sha256","expected":"…","actual":"…","source":"metadata|sidecar|cli","path":"/out/a.mp4"}
+```
+
+不符時另發 `error`（`code=checksum_mismatch`），工作失敗並進修復中心。
+
+### `hook`（v0.9-D）
+
+可選下載後指令／掃毒結果。
+
+```json
+{"ev":"hook","job":"<job-id>","file":"<file-id>","path":"/out/a.mp4","ok":true,"command":"clamscan …","exit_code":0,"duration_ms":120,"timed_out":false}
+```
+
+### `page`（v0.9-D）
+
+`udl page URL --json`：網頁候選連結清單。
+
+```json
+{"ev":"page","url":"https://…","title":"…","count":3,"candidates":[{"url":"…","name":"a.mp4","source":"a","kind":"video","extension":"mp4","size":123}]}
+```
 
 ### `done`
 
@@ -158,7 +184,7 @@ Job 結束：
 {"ev":"error","job":"<job-id>","file":"<file-id>","message":"…","code":"download_failed"}
 ```
 
-常見 `code`：`unsupported`、`resolve_failed`、`download_failed`、`ffmpeg_missing`、`merge_failed`、`mega_tool_missing`、`nfo_failed`、`cover_failed`、`postprocess_failed`。
+常見 `code`：`unsupported`、`resolve_failed`、`download_failed`、`ffmpeg_missing`、`merge_failed`、`mega_tool_missing`、`nfo_failed`、`cover_failed`、`postprocess_failed`、`checksum_mismatch`、`hook_failed`、`hook_timeout`。
 
 ### `cancel`
 

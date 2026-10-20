@@ -15,6 +15,9 @@ ev_file = "file"
 ev_progress = "progress"
 ev_merging = "merging"
 ev_postprocess = "postprocess"
+ev_checksum = "checksum"
+ev_hook = "hook"
+ev_page = "page"
 ev_done = "done"
 ev_error = "error"
 ev_cancel = "cancel"
@@ -173,6 +176,41 @@ class emitter:
         if code is not None:
             payload["code"] = code
         self.emit(ev_postprocess, **payload)
+
+    def checksum(
+        self,
+        *,
+        job: str,
+        file: str | None = None,
+        ok: bool,
+        algo: str,
+        expected: str,
+        actual: str | None = None,
+        source: str | None = None,
+        path: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "job": job,
+            "ok": ok,
+            "algo": algo,
+            "expected": expected,
+        }
+        if file is not None:
+            payload["file"] = file
+        if actual is not None:
+            payload["actual"] = actual
+        if source is not None:
+            payload["source"] = source
+        if path is not None:
+            payload["path"] = path
+        if message is not None:
+            payload["message"] = message
+        self.emit(ev_checksum, **payload)
+
+    def page(self, **fields: Any) -> None:
+        """page scan result for Download All."""
+        self.emit(ev_page, **fields)
 
     def probe(self, **fields: Any) -> None:
         """rich metadata for GUI selectors (parts / qualities)."""
@@ -351,13 +389,44 @@ def dump_schema() -> dict[str, Any]:
             },
             ev_postprocess: {
                 "job": "str",
-                "step": "str (nfo|cover|embed_cover|skip)",
+                "step": "str (nfo|cover|embed_cover|hook|skip)",
                 "file": "str?",
                 "path": "str?",
-                "role": "str? (nfo|cover)",
+                "role": "str? (nfo|cover|hook)",
                 "message": "str?",
                 "ok": "bool?",
                 "code": "str?",
+            },
+            ev_checksum: {
+                "job": "str",
+                "file": "str?",
+                "ok": "bool",
+                "algo": "md5|sha1|sha256",
+                "expected": "str",
+                "actual": "str?",
+                "source": "str?",
+                "path": "str?",
+                "message": "str?",
+            },
+            ev_hook: {
+                "job": "str?",
+                "file": "str?",
+                "path": "str?",
+                "ok": "bool",
+                "command": "str",
+                "exit_code": "int?",
+                "duration_ms": "int?",
+                "timed_out": "bool?",
+                "message": "str?",
+                "stdout": "str?",
+                "stderr": "str?",
+            },
+            ev_page: {
+                "url": "str",
+                "title": "str?",
+                "count": "int",
+                "candidates": "list",
+                "message": "str?",
             },
             ev_duplicate: {
                 "job": "str",

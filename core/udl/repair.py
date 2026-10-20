@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from udl.store.hashutil import hash_file_for_history, sha256_file
+from udl.store.hashutil import hash_file, hash_file_for_history, sha256_file
 from udl.store.history import delete_history, get_history
 from udl.store.queue import queue_job, save_queue_job
 
@@ -17,6 +18,7 @@ issue_kind = Literal[
     "partial",
     "size_mismatch",
     "hash_mismatch",
+    "checksum_mismatch",
     "orphan_file",
     "stale_record",
 ]
@@ -256,7 +258,7 @@ def scan_repair(
         expected_hash = row["sha256"]
         if verify_hash and expected_hash:
             actual_hash = sha256_file(path)
-            if actual_hash.lower() != str(expected_hash).lower():
+            if actual_hash and actual_hash.lower() != str(expected_hash).lower():
                 result.issues.append(
                     repair_issue(
                         id=_issue_id("hash", job_id, row["id"], path_str),
@@ -276,6 +278,39 @@ def scan_repair(
                         suggested_actions=["requeue", "remove_stale"],
                     )
                 )
+
+        # checksum verification failures recorded in metadata.extra.checksum
+        try:
+            meta = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            meta = {}
+        extra = meta.get("extra") if isinstance(meta, dict) else None
+        checksum = extra.get("checksum") if isinstance(extra, dict) else None
+        if isinstance(checksum, dict) and checksum.get("ok") is False:
+            algo = str(checksum.get("algo") or "sha256")
+            expected = checksum.get("expected")
+            actual = checksum.get("actual")
+            if expected and not actual and path.is_file():
+                actual = hash_file(path, algo)
+            result.issues.append(
+                repair_issue(
+                    id=_issue_id("checksum", job_id, row["id"], path_str),
+                    kind="checksum_mismatch",
+                    job_id=job_id,
+                    file_row_id=int(row["id"]),
+                    file_id=row["file_id"],
+                    path=path_str,
+                    expected_size=expected_size,
+                    actual_size=actual_size,
+                    expected_sha256=str(expected) if expected else None,
+                    actual_sha256=str(actual) if actual else None,
+                    site=row["site"] or job_sites.get(job_id),
+                    source_url=job_urls.get(job_id),
+                    title=job_titles.get(job_id),
+                    message=str(checksum.get("message") or f"{algo} checksum mismatch"),
+                    suggested_actions=["requeue", "remove_stale"],
+                )
+            )
 
     # orphan scan: files under known output dirs not referenced in DB
     dirs: list[Path] = []

@@ -1,4 +1,4 @@
-"""file hashing helpers for history and duplicate detection."""
+"""file hashing helpers for history duplicate detection and checksum verify."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ partial_head_bytes = 1024 * 1024
 partial_tail_bytes = 1024 * 1024
 hash_mode_name = Literal["full", "fast", "auto", "off"]
 hash_mode_env = "UDL_HASH_MODE"
+hash_algo = Literal["md5", "sha1", "sha256"]
+supported_algos: tuple[str, ...] = ("md5", "sha1", "sha256")
 
 
 def resolve_hash_mode(override: str | None = None) -> hash_mode_name:
@@ -27,12 +29,15 @@ def resolve_hash_mode(override: str | None = None) -> hash_mode_name:
     return "auto"
 
 
-def sha256_file(path: str | Path) -> str | None:
-    """full-file sha256 hex digest."""
+def hash_file(path: str | Path, algo: str = "sha256") -> str | None:
+    """return full-file hex digest for path or None if missing / unknown algo."""
+    name = (algo or "sha256").strip().lower()
+    if name not in supported_algos:
+        return None
     target = Path(path)
     if not target.is_file():
         return None
-    digest = hashlib.sha256()
+    digest = hashlib.new(name)
     with target.open("rb") as fh:
         while True:
             chunk = fh.read(hash_chunk)
@@ -40,6 +45,19 @@ def sha256_file(path: str | Path) -> str | None:
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def sha256_file(path: str | Path) -> str | None:
+    """full-file sha256 hex digest."""
+    return hash_file(path, "sha256")
+
+
+def md5_file(path: str | Path) -> str | None:
+    return hash_file(path, "md5")
+
+
+def sha1_file(path: str | Path) -> str | None:
+    return hash_file(path, "sha1")
 
 
 def sha256_file_fast(path: str | Path) -> str | None:
@@ -105,3 +123,28 @@ def hash_file_background(
     thread = threading.Thread(target=worker, name="udl-hash", daemon=True)
     thread.start()
     return thread
+
+
+def normalize_hex(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text.startswith("0x"):
+        text = text[2:]
+    # allow "hash  filename" sidecar lines
+    if " " in text or "\t" in text:
+        text = text.split()[0]
+    if not text or any(c not in "0123456789abcdef" for c in text):
+        return None
+    return text
+
+
+def detect_algo_from_hex(value: str) -> str | None:
+    length = len(value)
+    if length == 32:
+        return "md5"
+    if length == 40:
+        return "sha1"
+    if length == 64:
+        return "sha256"
+    return None

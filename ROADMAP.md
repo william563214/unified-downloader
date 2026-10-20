@@ -203,7 +203,9 @@
 
 ## v0.9 — 直連／分段／排程／批次
 
-### v0.9-A（本版）— 通用直連＋多連線分段
+依賴順序：v0.9-A（通用直連＋分段引擎）→ 其餘可並行；合併前需 rebase 到含 A 的 main。
+
+### v0.9-A — 通用直連＋多連線分段
 
 - [x] 通用直接連結 extractor：未被站點匹配的 HTTP／HTTPS URL（router 最低優先）
 - [x] HEAD／GET 探測：大小、檔名（Content-Disposition／URL）、content-type、Accept-Ranges、ETag／Last-Modified
@@ -217,13 +219,18 @@
 ### v0.9-C — 排程器
 
 - [ ] 下載排程（時段／佇列策略；細節由對應 PR 定義）
+- [ ] 開始／停止排程、完成後動作、流量額度
 
-### v0.9-D — 頁面 Download All＋校驗
+### v0.9-D（本版／頁面擷取＋校驗＋掃毒）
 
-- [ ] 頁面「全部下載」
-- [ ] checksum／AV 相關（細節由對應 PR 定義）
+- [x] Download All：`udl page URL` 抓 HTML，列出 `<a>`／`<video|audio|source>`／可選 `<img>`＋既有站點 extractor 命中
+- [x] 篩選：副檔名／類型、HEAD 大小、regex／glob、同網域
+- [x] GUI「頁面」核取清單（全選／依類型）→ 入佇列；CLI `--json`
+- [x] 校驗：MD5／SHA-1／SHA-256（CLI／metadata／`.sha256` sidecar）；事件＋歷史；不符 → 失敗＋修復中心
+- [x] 可選下載後指令（預設關；Windows Defender／ClamAV 預設集、逾時）
+- [x] 文件：`docs/page-download.md`、`docs/checksum-hook.md`；更新 events／ROADMAP
 
-### 規劃中（非 v0.9）
+### 規劃中（非本 PR）
 
 - [ ] **瀏覽器擴充功能**（Chrome／Edge MV3）：重用 [william563214/download_classify](https://github.com/william563214/download_classify) — 右鍵選單、下載接管、native messaging／localhost＋token
   - **不做**：DRM／加密串流繞過、系統級下載攔截（system-wide download hooking）
@@ -232,6 +239,8 @@
 
 - gallery-dl 當 library（授權衝突）；若備援只允許獨立子行程
 - Pixeldrain（明確排除）
+- 通用「任意網站」fallback（v0.9-A 僅直連檔案，非任意站解析）
+- DRM／加密 HLS key 擷取
 - 程式碼簽章／公證（v0.1 明確跳過）
 - 付費牆／VIP／區域限制／MEGA 配額繞過（含 SmartProxy／換 IP）
 - MegaBasterd GUI／SmartProxy 不移植（協定能力已內建於 `udl.extractors.mega`）

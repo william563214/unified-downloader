@@ -33,6 +33,12 @@ class udl_config:
     type_templates: dict[str, str] = field(default_factory=_default_type_templates)
     rules: list[classify_rule] = field(default_factory=list)
     name_conflict: str = "rename"
+    # v0.9-D post-download hook / checksum defaults
+    checksum_auto: bool = True
+    post_cmd_enabled: bool = False
+    post_cmd: str = ""
+    post_cmd_preset: str = ""
+    post_cmd_timeout: int = 120
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -41,6 +47,11 @@ class udl_config:
             "type_templates": dict(self.type_templates),
             "name_conflict": self.name_conflict,
             "rules": rules_to_list(self.rules),
+            "checksum_auto": self.checksum_auto,
+            "post_cmd_enabled": self.post_cmd_enabled,
+            "post_cmd": self.post_cmd,
+            "post_cmd_preset": self.post_cmd_preset,
+            "post_cmd_timeout": self.post_cmd_timeout,
         }
 
     @classmethod
@@ -57,12 +68,24 @@ class udl_config:
             conflict = "rename"
         merged_types = _default_type_templates()
         merged_types.update({str(k): str(v) for k, v in type_templates.items()})
+        try:
+            timeout = int(data.get("post_cmd_timeout") or 120)
+        except (TypeError, ValueError):
+            timeout = 120
+        checksum_auto = data.get("checksum_auto")
+        if checksum_auto is None:
+            checksum_auto = True
         return cls(
             name_template=str(data.get("name_template") or data.get("template") or ""),
             site_templates={str(k): str(v) for k, v in site_templates.items()},
             type_templates=merged_types,
             rules=parse_rules(data),
             name_conflict=conflict,
+            checksum_auto=bool(checksum_auto),
+            post_cmd_enabled=bool(data.get("post_cmd_enabled")),
+            post_cmd=str(data.get("post_cmd") or ""),
+            post_cmd_preset=str(data.get("post_cmd_preset") or ""),
+            post_cmd_timeout=max(1, timeout),
         )
 
 
@@ -103,7 +126,15 @@ def merge_config_dict(base: udl_config, overlay: dict[str, Any] | None) -> udl_c
     if not overlay:
         return base
     data = base.to_dict()
-    for key in ("name_template", "name_conflict"):
+    for key in (
+        "name_template",
+        "name_conflict",
+        "checksum_auto",
+        "post_cmd_enabled",
+        "post_cmd",
+        "post_cmd_preset",
+        "post_cmd_timeout",
+    ):
         if key in overlay and overlay[key] is not None:
             data[key] = overlay[key]
     if "site_templates" in overlay and isinstance(overlay["site_templates"], dict):
