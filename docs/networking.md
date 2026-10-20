@@ -1,6 +1,6 @@
-# 網路設定（v0.5）
+# 網路設定（v0.5＋v0.9-A）
 
-全域基礎設施：限速、代理、自訂 User-Agent、可選 aria2 RPC。  
+全域基礎設施：限速、代理、自訂 User-Agent、可選 aria2 RPC、多連線分段下載。  
 適用於所有站點的 API 請求與檔案下載（含外部 MEGA 工具可傳遞的旗標）。
 
 ## 設定項目
@@ -14,6 +14,9 @@
 | 代理密碼 | OS keychain | 經 `udl.secrets`（`keyring`）存放，不寫入 settings.json |
 | User-Agent | 內建 Chrome UA | 共用引擎與各 extractor session |
 | aria2 RPC | 關閉 | 啟用後檔案下載交給 aria2；連不上則回退內建引擎 |
+| 多連線分段 | 開啟 | IDM 風格動態分段；無 Range 時單連線 |
+| 每檔連線數 | 8 | 上限 32；並受 per-host 上限約束 |
+| 站點也用分段 | 關閉 | 純 HTTP 檔案的站點 extractor；Gofile／Bunkr／Iwara／MEGA **永遠排除** |
 | Bilibili CDN 主機 | 空 | 逗號分隔偏好 CDN hostname；改寫 playurl netloc |
 | 優先偏好 CDN | 關閉 | 開啟後置換節點排在原始 URL 前 |
 | 自訂 Host | 空 | 媒體下載可選 Host 標頭（通常留空） |
@@ -34,9 +37,56 @@ uv run udl secrets set proxy.custom 'your-password'
 人類可讀單位（大小寫不拘）：`512K`、`1M`、`1.5M`，或純位元組數字。  
 `0` / `off` / 空白 = 不限速。
 
-- 內建引擎：token-bucket（全域 + 可選 per-job）
+- 內建引擎（單連線與分段）：token-bucket（全域 + 可選 per-job）
 - **megatools**：`--limit-speed`（KiB/s）與 `--proxy`
 - **MEGAcmd `mega-get`**：透過 `HTTP(S)_PROXY`／`ALL_PROXY` 環境變數傳代理；CLI 本身無穩定的限速旗標（見下方限制）
+
+## 多連線分段下載（v0.9-A）
+
+內建 HTTP 引擎在 **支援 HTTP Range（Accept-Ranges / 206）** 時可啟用 IDM 風格動態分段：
+
+1. 依連線數把檔案切成初始區段並並行下載
+2. 任一連線完成後，將**最大未完成區段**對半切開，空出的連線接手後半
+3. 區段狀態寫在 `.part.udl-seg.json`（與 `.part` 同目錄），重啟後可續傳
+4. 續傳前以 ETag／Last-Modified（及大小）驗證；遠端變更則刪除 partial 重下
+5. 伺服器不支援 Range → 自動回退單連線（既有 `.part` Range 續傳）
+
+優先順序：
+
+1. aria2 啟用且 RPC 可連 → aria2
+2. 否則若允許分段且連線數 > 1 且支援 Range → 分段引擎
+3. 否則 → 單連線內建引擎
+
+**誰會用分段**
+
+| 來源 | 預設 |
+|------|------|
+| `direct` 通用直連 extractor | 跟隨「多連線分段」開關 |
+| 其他站點（Gofile／Bunkr／Iwara／MEGA） | **永不**分段（簽章／Cookie／外部工具） |
+| 其他站點（例如未來產出純 HTTP 檔的 extractor） | 需另開「站點也用分段」 |
+
+CLI：
+
+```bash
+uv run udl get URL -o ./out --connections 8
+uv run udl get URL -o ./out --no-segmented
+uv run udl get URL -o ./out --segmented-for-sites
+```
+
+`progress` 事件可帶 `segments`（各區段起迄／已下載）與 `connections`；GUI 任務列會顯示分段進度條。詳見 `docs/events.md`。
+
+## 通用直連（v0.9-A）
+
+router 在站點 extractor 都未匹配時，落到 `direct`：
+
+- 探測：HEAD，失敗再 Range GET `bytes=0-0`
+- 檔名：`Content-Disposition` → URL path → `host.bin`
+- 寫入統一 `item_metadata`（`item_id=direct-<sha256前綴>`），走歷史／去重／命名／規則／佇列
+
+```bash
+uv run udl resolve 'https://example.com/files/a.zip' --json
+uv run udl get 'https://example.com/files/a.zip' -o ./out --json
+```
 
 ## aria2 JSON-RPC（選用）
 
@@ -70,24 +120,31 @@ uv run udl get URL -o ./out --proxy-mode custom --proxy socks5://127.0.0.1:1080 
 
 # aria2
 uv run udl get URL -o ./out --aria2 --aria2-rpc http://127.0.0.1:6800/jsonrpc --aria2-secret TOKEN
+
+# 分段連線數
+uv run udl get URL -o ./out --connections 12
 ```
 
 `resolve`／`probe` 同樣接受 `--proxy-mode`／`--proxy`／`--user-agent`，以便 API 請求走相同網路路徑。
 
 ## GUI
 
-設定頁「網路」區塊（zh-TW）：全域／單任務限速、代理三模式、自訂 URL／帳密、User-Agent、aria2 開關與 RPC。  
-密碼欄僅在儲存時寫入 keychain；不會留在 `settings.json`。
+設定頁「網路」區塊（zh-TW）：全域／單任務限速、代理三模式、自訂 URL／帳密、User-Agent、aria2、**每檔連線數／分段開關／站點也用分段**。  
+密碼欄僅在儲存時寫入 keychain；不會留在 `settings.json`。  
+下載佇列任務詳情在多連線時顯示分段進度條。
 
 ## 模組對照
 
 | 模組 | 職責 |
 |------|------|
-| `udl.network` | 行程內設定、代理 URL、套用到 `requests.Session` |
+| `udl.network` | 行程內設定、代理 URL、套用到 `requests.Session`、連線數／分段旗標 |
 | `udl.secrets` | `keyring` 讀寫（`proxy.custom`、`aria2.rpc_secret`、日後登入） |
 | `udl.download.rate` | token-bucket 限速 |
-| `udl.download.http` | 共用引擎（限速／代理／UA／aria2 回退） |
+| `udl.download.http` | 共用引擎（限速／代理／UA／aria2 回退／呼叫分段） |
+| `udl.download.segment` | 固定／MEGA 協定 chunk 規劃器（`.udl.segments.json`） |
+| `udl.download.segmented` | HTTP IDM 動態分段＋狀態持久化（`.part.udl-seg.json`） |
 | `udl.download.aria2` | JSON-RPC 後端 |
+| `udl.extractors.direct` | 通用直連 fallback |
 
 ## 已知限制
 
@@ -95,3 +152,5 @@ uv run udl get URL -o ./out --aria2 --aria2-rpc http://127.0.0.1:6800/jsonrpc --
 - MEGAcmd `mega-get` 無對等 `--limit-speed`；僅能傳代理環境變數。
 - SOCKS 需 `PySocks`（已列入核心依賴）。
 - keyring 在無圖形／無密鑰環的 CI 或無頭環境會改寫入使用者資料目錄下的 `secrets.json`（權限 0600）並在 stderr 提示；正式桌面環境優先用 OS keychain。CLI 仍可用 `--proxy-password` 一次性傳入。
+- 分段引擎不取代 aria2；兩者擇一（aria2 優先）。
+- 不做 DRM／加密串流繞過，也不做系統級下載攔截。

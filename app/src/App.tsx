@@ -8,7 +8,7 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { humanizeError, statusLabel } from "./errors";
-import { formatBytes, siteTone } from "./format";
+import { formatBytes, parseSegments, siteTone } from "./format";
 import { type JobRow, type QueueFilter, newClientId } from "./jobTypes";
 import { QueueDashboard } from "./QueueDashboard";
 import {
@@ -426,6 +426,7 @@ export default function App() {
           }
           if (ev === "progress") {
             const fid = String(line.file);
+            const segments = parseSegments(line.segments);
             return {
               ...job,
               files: job.files.map((f) =>
@@ -436,6 +437,11 @@ export default function App() {
                       total:
                         typeof line.total === "number" ? line.total : f.total,
                       bps: Number(line.bps ?? f.bps),
+                      segments: segments ?? f.segments,
+                      connections:
+                        typeof line.connections === "number"
+                          ? line.connections
+                          : f.connections,
                       status: "active",
                     }
                   : f,
@@ -1475,6 +1481,7 @@ export default function App() {
                 <option value="iwara">Iwara</option>
                 <option value="bilibili">Bilibili</option>
                 <option value="mega">MEGA</option>
+                <option value="direct">Direct</option>
               </select>
             </label>
             <label className="field compact">
@@ -2571,6 +2578,56 @@ export default function App() {
                 </label>
               </div>
             )}
+            <h4>多連線分段下載</h4>
+            <p className="hint">
+              IDM 風格動態分段（連線完成後切分最大剩餘區塊）；不支援 Range 時自動單連線。Gofile／Bunkr／Iwara／MEGA 不使用。aria2 啟用且可連線時仍優先 aria2。
+            </p>
+            <div className="settings-grid">
+              <label className="field compact">
+                <span>每檔連線數</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={32}
+                  value={settingsDraft.connections}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      connections: Number(e.target.value) || 1,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                />
+              </label>
+            </div>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.segmentedEnabled}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    segmentedEnabled: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>啟用多連線分段（直連與可選站點）</span>
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.segmentedForSites}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    segmentedForSites: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>站點 extractor 的純 HTTP 檔案也使用分段（排除 Gofile／Bunkr／Iwara／MEGA）</span>
+            </label>
             <h4>Bilibili CDN／Host</h4>
             <p className="hint">
               偏好 CDN 節點會改寫 playurl 主機名並依健康度排序；自訂 Host 僅加在媒體下載請求。不繞過區域鎖。

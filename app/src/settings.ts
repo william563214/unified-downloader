@@ -3,7 +3,13 @@ export type CoverNaming = "poster" | "folder";
 export type NameConflictMode = "rename" | "overwrite" | "error";
 export type ProxyMode = "none" | "system" | "custom";
 
-export type SiteId = "gofile" | "bunkr" | "iwara" | "bilibili" | "mega";
+export type SiteId =
+  | "gofile"
+  | "bunkr"
+  | "iwara"
+  | "bilibili"
+  | "mega"
+  | "direct";
 
 export const site_ids: SiteId[] = [
   "gofile",
@@ -11,6 +17,7 @@ export const site_ids: SiteId[] = [
   "iwara",
   "bilibili",
   "mega",
+  "direct",
 ];
 
 export type RuleMatch = {
@@ -75,6 +82,10 @@ export type AppSettings = {
   aria2Enabled: boolean;
   aria2RpcUrl: string;
   aria2RpcSecret: string;
+  // multi-connection segmented (v0.9-A)
+  connections: number;
+  segmentedEnabled: boolean;
+  segmentedForSites: boolean;
   // bilibili CDN / Host (v0.7-B)
   cdnHosts: string;
   preferCdn: boolean;
@@ -95,6 +106,7 @@ export const default_site_flags = (): Record<SiteId, boolean> => ({
   iwara: true,
   bilibili: true,
   mega: true,
+  direct: true,
 });
 
 export const default_settings: AppSettings = {
@@ -127,6 +139,9 @@ export const default_settings: AppSettings = {
   aria2Enabled: false,
   aria2RpcUrl: "http://127.0.0.1:6800/jsonrpc",
   aria2RpcSecret: "",
+  connections: 8,
+  segmentedEnabled: true,
+  segmentedForSites: false,
   cdnHosts: "",
   preferCdn: false,
   customHost: "",

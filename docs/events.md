@@ -98,6 +98,24 @@ Bilibili 清單翻頁／巢狀展開進度（在最終 `probe` 之前可能多�
 {"ev":"progress","job":"<job-id>","file":"<file-id>","bytes":4096,"total":12345,"bps":1048576.0}
 ```
 
+多連線分段（v0.9-A）時可附帶各區段資訊：
+
+```json
+{
+  "ev": "progress",
+  "job": "<job-id>",
+  "file": "<file-id>",
+  "bytes": 1048576,
+  "total": 10485760,
+  "bps": 2097152.0,
+  "connections": 4,
+  "segments": [
+    {"id": 0, "start": 0, "end": 2621439, "current": 2621440, "downloaded": 2621440, "total": 2621440, "done": true},
+    {"id": 1, "start": 2621440, "end": 5242879, "current": 3145728, "downloaded": 524288, "total": 2621440, "done": false}
+  ]
+}
+```
+
 ### `merging`
 
 後處理合併階段（例如 FFmpeg 合併 DASH 影＋音）。GUI 可顯示「合併中」。

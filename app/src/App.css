@@ -329,10 +329,45 @@ input:focus {
   border-color: #b7cfe3;
 }
 
+.tone-direct {
+  background: #eef3ea;
+  color: #3d5a2c;
+  border-color: #c5d4b8;
+}
+
 .tone-unknown {
   background: #ecece8;
   color: #5c675f;
   border-color: #d5d5cf;
+}
+
+.segment-bar {
+  display: flex;
+  gap: 1px;
+  height: 6px;
+  margin-top: 4px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #e4e6e1;
+}
+
+.segment-cell {
+  position: relative;
+  min-width: 2px;
+  height: 100%;
+  background: #d0d4cc;
+  overflow: hidden;
+}
+
+.segment-cell > i {
+  display: block;
+  height: 100%;
+  background: #4a7c3f;
+}
+
+.segment-cell.done > i {
+  background: #2f5d28;
+  width: 100% !important;
 }
 
 .bili-options {

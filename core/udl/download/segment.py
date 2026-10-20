@@ -1,9 +1,10 @@
 """Generic multi-connection segmented download planner.
 
-Designed so MEGA built-in and a future v0.9-A direct HTTP engine can share
-the same chunk layout / resume state format. MEGA-specific decryption stays
-in the MEGA downloader; this module only plans byte ranges and persists
-completed chunk ids.
+MEGA built-in uses fixed／protocol chunk layouts via this module.
+HTTP IDM-style dynamic segmentation lives in ``udl.download.segmented``
+(separate resume file ``.udl-seg.json`` with ETag／Last-Modified validators).
+MEGA-specific decryption stays in the MEGA downloader; this module only
+plans byte ranges and persists completed chunk ids.
 """
 
 from __future__ import annotations

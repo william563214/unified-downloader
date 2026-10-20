@@ -38,12 +38,16 @@ export function detectSite(url: string): { site: string; label: string } | null 
     if (host.includes("mega.nz") || host.includes("mega.co.nz") || host.includes("mega.io")) {
       return { site: "mega", label: "MEGA" };
     }
+    if (host) return { site: "direct", label: "Direct" };
   } catch {
     if (u.includes("gofile")) return { site: "gofile", label: "Gofile" };
     if (u.includes("bunkr")) return { site: "bunkr", label: "Bunkr" };
     if (u.includes("iwara")) return { site: "iwara", label: "Iwara" };
     if (u.includes("bilibili") || u.includes("b23.tv")) return { site: "bilibili", label: "Bilibili" };
     if (u.includes("mega.")) return { site: "mega", label: "MEGA" };
+    if (u.startsWith("http://") || u.startsWith("https://")) {
+      return { site: "direct", label: "Direct" };
+    }
   }
   return null;
 }

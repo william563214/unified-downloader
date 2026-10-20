@@ -78,7 +78,12 @@ class extractor(ABC):
         skip_indexes: set[int] | None = None,
     ) -> tuple[int, int]:
         """download all files from an extract_result. returns (ok, failed)."""
-        from udl.download.http import download_item, download_many, options_from_network
+        from udl.download.http import (
+            download_item,
+            download_many,
+            options_from_network,
+            should_use_segmented,
+        )
 
         job = job_id or result.site
         opts = options_from_network(
@@ -87,6 +92,8 @@ class extractor(ABC):
             retries=retries,
             cancel=cancel,
         )
+        # site-aware: denylist + optional segmented_for_sites
+        opts.segmented = should_use_segmented(opts, site=result.site)
         items: list[download_item] = []
         skipped = 0
         for idx, f in enumerate(result.files):
@@ -118,6 +125,7 @@ class extractor(ABC):
                         already_downloaded=True,
                     )
                 continue
+            file_meta_dict = f.meta or {}
             items.append(
                 download_item(
                     url=f.url,
@@ -126,6 +134,9 @@ class extractor(ABC):
                     name=f.name,
                     expected_size=f.size,
                     headers=f.headers or None,
+                    etag=file_meta_dict.get("etag"),
+                    last_modified=file_meta_dict.get("last_modified"),
+                    accept_ranges=file_meta_dict.get("accept_ranges"),
                 )
             )
             if emit:

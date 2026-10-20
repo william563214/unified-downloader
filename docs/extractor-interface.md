@@ -73,6 +73,7 @@ class my_extractor(extractor):
 | iwara | `iwara.py` + `iwara_xversion.py` | implemented | Moeary/IwaraTool MIT |
 | bilibili | `bilibili/` | implemented | ScottSloan/Bili23-Downloader GPL-3.0 |
 | mega | `external/mega.py` | external | megatools（優先）／MEGAcmd `mega-get`（子行程） |
+| direct | `direct.py` | implemented | 通用直連（router 最後匹配；HEAD／Range 探測） |
 
 ## MEGA（v0.4 外部工具）
 
