@@ -64,6 +64,7 @@ export type JobRow = {
   megaSelect?: string | null;
   queueName?: string;
   autoExtractOverride?: "inherit" | "on" | "off";
+  extractPasswordMode?: "list" | "single" | "off";
   extractPassword?: string | null;
   files: FileRow[];
   ok?: number;

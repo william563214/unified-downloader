@@ -251,6 +251,7 @@
 - [x] 核心 `udl.postprocess.zip_extract`（stdlib `zipfile`）：同名子資料夾／同目錄、可選刪原檔；zip-slip／symlink／zip bomb；UTF-8／cp437→cp932／gbk；加密 ZIP → `needs_password`（可選 `udl.secrets` zip.password）
 - [x] 事件 `extracting`／`extracted`／`failed`＋歷史／修復中心 `retry-extract`；GUI 狀態顯示
 - [x] 分類規則 hook 預留（接 [#27](https://github.com/william563214/unified-downloader/issues/27)）；文件 `docs/auto-extract.md`
+- [x] 有序 ZIP 密碼表（[#32](https://github.com/william563214/unified-downloader/issues/32)）：僅存 `udl.secrets`；依序試密；成功可置頂；per-job list／single／off；修復中心一次性密碼＋可選加入清單
 
 ### 規劃中（非本 PR）
 

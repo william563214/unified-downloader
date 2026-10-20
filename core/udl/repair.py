@@ -521,6 +521,8 @@ def apply_repair_actions(
     relink_path: str | None = None,
     output_dir: str | None = None,
     extract_password: str | None = None,
+    add_password_to_list: bool = False,
+    password_label: str = "",
 ) -> dict[str, Any]:
     """apply one repair action to selected issues / ids."""
     action = action.replace("-", "_")
@@ -528,6 +530,7 @@ def apply_repair_actions(
     results: dict[str, Any] = {"action": action, "ok": [], "errors": []}
 
     if action == "retry_extract":
+        from udl.postprocess import zip_passwords as zp
         from udl.postprocess.zip_extract import extract_options, retry_extract_path
 
         targets: list[dict[str, Any]] = []
@@ -578,17 +581,20 @@ def apply_repair_actions(
                 prev_dest = Path(str(prev["dest"]))
                 if prev_dest == archive_path.parent:
                     dest = "same_folder"
+            # one-off password tried first then global list (list mode prepend)
             opts = extract_options(
                 enabled=True,
                 override="on",
                 destination=dest,  # type: ignore[arg-type]
                 password=extract_password,
-                use_secret_password=extract_password is None,
+                password_mode="list",
+                use_secret_password=True,
             )
             extracted = retry_extract_path(
                 archive,
                 opts,
                 password=extract_password,
+                password_mode="list",
                 job=str(issue["job_id"]) if issue.get("job_id") else None,
                 file=str(issue["file_id"]) if issue.get("file_id") else None,
             )
@@ -596,7 +602,10 @@ def apply_repair_actions(
                 if not isinstance(meta, dict):
                     meta = {}
                 extra = dict(meta.get("extra") or {})
-                extra["extract"] = extracted.to_dict()
+                # strip any accidental password fields before persistence
+                extract_payload = extracted.to_dict()
+                extract_payload.pop("password", None)
+                extra["extract"] = extract_payload
                 meta["extra"] = extra
                 conn.execute(
                     """
@@ -614,10 +623,22 @@ def apply_repair_actions(
                 )
                 conn.commit()
             if extracted.ok:
+                added = None
+                if add_password_to_list and extract_password:
+                    try:
+                        added = zp.add_password(
+                            extract_password,
+                            label=password_label or "",
+                        )
+                    except ValueError as exc:
+                        results["errors"].append(
+                            {"path": archive, "error": str(exc), "code": "password_add"}
+                        )
                 results["ok"].append(
                     {
                         "path": archive,
                         "extract": extracted.to_dict(),
+                        "password_added": added,
                     }
                 )
             else:
