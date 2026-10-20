@@ -65,28 +65,36 @@ upstream copyright and were adapted under compatible licenses.
   a non-commercial usage agreement; GPL itself does not forbid
   commercial use — both are documented here.
 
+### MEGA (built-in) — `core/udl/extractors/mega/`
+- Upstream inspiration: https://github.com/tonikelope/megabasterd
+- License: GPL-3.0
+- Ported from commit: c4b8b76dcf03e726aac77f8959ab90f920765124
+- Notes: Python reimplementation of MEGA API client, AES-CTR decrypt,
+  key/IV/meta-MAC and attribute handling, MegaBasterd-style multi-connection
+  segmented download with resume state, CBC-MAC integrity verify, public
+  file/folder links (modern + legacy), account login (incl. v2 PBKDF2),
+  and localhost-only decrypting HTTP stream preview. Session stored via
+  `udl.secrets` key `mega.session`. Shared segment planner lives in
+  `udl.download.segment` for later unification with a generic direct engine.
+  Explicitly **not** ported: SmartProxy, Quota Recovery, IP rotation, or
+  any transfer-quota bypass.
+
 ## External tools (subprocess only — not linked / not imported)
 
-### MEGA — `core/udl/extractors/external/mega.py`
-- Preferred: **megatools** (`megatools dl` / `megadl`)
+### MEGA external fallback — `core/udl/extractors/external/mega.py`
+- Optional backend (`--mega-backend external` / settings); default is built-in.
+- Preferred CLI: **megatools** (`megatools dl` / `megadl`)
   - Upstream: https://xff.cz/megatools/ / https://xff.cz/git/megatools
   - License: GPL-2.0 with OpenSSL exemption (treated as GPL-2.0-only for
     linking purposes). **Must not be imported or statically/dynamically
     linked into the udl process**; invoke only as a separate executable.
-  - Why preferred: single headless binary, parseable progress lines, works
-    without a background daemon on macOS / Windows / Linux.
-- Fallback: **MEGAcmd** (`mega-get`)
+- Fallback CLI: **MEGAcmd** (`mega-get`)
   - Upstream: https://github.com/meganz/MEGAcmd
   - License: mostly BSD-2-Clause (interactive shell binary is GPL).
-  - May require `mega-cmd-server` in the background; progress is a
-    TRANSFERRING bar that udl parses when present.
-- Supported URLs: `mega.nz/file/…`, `/folder/…`, legacy `#!` / `#F!`
-  (also `mega.co.nz` / `mega.io` hosts).
-- Missing tool: JSON-lines `error` with `code=mega_tool_missing` and
-  install guidance (brew / scoop / apt / https://mega.io/cmd). Optional
-  override: `--mega-tool` or `UDL_MEGA_TOOL`.
-- Explicitly **not** implemented: MegaBasterd SmartProxy, Quota Recovery,
-  IP rotation, or any transfer-quota bypass.
+  - May require `mega-cmd-server` in the background.
+- Override: `--mega-tool` or `UDL_MEGA_TOOL`.
+- Explicitly **not** implemented: SmartProxy, Quota Recovery, IP rotation,
+  or any transfer-quota bypass.
 
 ## Bundled / first-run FFmpeg downloads
 

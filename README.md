@@ -80,6 +80,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - **修復頁**：掃描缺檔／`.part`／大小／hash／orphan，可重新排隊、重新連結、清殘檔、刪過期紀錄。
 - **FFmpeg 首次佈建**：偵測不到時可下載目前 OS／arch 靜態建置並驗證 checksum（見 `NOTICE`）。CLI：`udl ffmpeg status` / `udl ffmpeg install`。
 - **網路**：見 `docs/networking.md`（全域限速、代理三模式、可選 aria2 RPC、自訂 UA）。
+- **MEGA**：內建 Python 客戶端（分段＋CBC-MAC；見 `docs/mega.md`）；可選 megatools／MEGAcmd 外部後端。
 
 ### 截圖（佔位）
 

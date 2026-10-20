@@ -47,6 +47,13 @@ a = Analysis(
         "PIL",
         "PIL.Image",
         "PIL.PngImagePlugin",
+        "Crypto",
+        "Crypto.Cipher",
+        "Crypto.Cipher.AES",
+        "Crypto.PublicKey",
+        "Crypto.PublicKey.RSA",
+        "Crypto.Util",
+        "Crypto.Util.Counter",
     ]
     + _udl_mods
     + _keyring_mods

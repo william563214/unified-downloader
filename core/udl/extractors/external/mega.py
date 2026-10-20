@@ -1,4 +1,7 @@
-"""MEGA public-link extractor via external CLI (subprocess only).
+"""MEGA public-link extractor via external CLI (optional fallback).
+
+Default MEGA path is the built-in client in `udl.extractors.mega`.
+This module remains for `--mega-backend external` / settings.
 
 Preferred tool: megatools (`megatools dl`) — single headless binary with
 parseable progress on macOS Windows and Linux GPL-2.0 with OpenSSL exception

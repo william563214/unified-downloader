@@ -79,8 +79,10 @@ export type AppSettings = {
   cdnHosts: string;
   preferCdn: boolean;
   customHost: string;
-  // tools / shell (v0.8)
+  // MEGA built-in / external fallback
+  megaBackend: "builtin" | "external";
   megaToolPath: string;
+  // tools / shell (v0.8)
   clipboardWatcher: boolean;
   notificationsEnabled: boolean;
   minimizeToTray: boolean;
@@ -128,6 +130,7 @@ export const default_settings: AppSettings = {
   cdnHosts: "",
   preferCdn: false,
   customHost: "",
+  megaBackend: "builtin",
   megaToolPath: "",
   clipboardWatcher: false,
   notificationsEnabled: true,

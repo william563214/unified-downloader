@@ -82,6 +82,21 @@
 - [x] 全域自訂 User-Agent
 - [x] GUI 設定「網路」區塊（zh-TW）＋ `docs/networking.md`
 
+## MEGA built-in（全域基礎設施之後）
+
+移植 tonikelope/megabasterd（GPL-3.0）協定能力為內建 Python 實作；外部 megatools／MEGAcmd 改為可選備援。
+
+- [x] MEGA API 客戶端（cs、sequence id、錯誤碼、重試／backoff）
+- [x] AES-CTR 解密、key／IV／meta-MAC、屬性解密
+- [x] 公開 file／folder（含舊 `#!`／`#F!` 與新 `/file/`／`/folder/`、子路徑）
+- [x] 多連線分段下載、chunk 對齊解密、重啟續傳、結束 CBC-MAC
+- [x] 接全域限速／代理／UA；`udl.download.segment` 供日後與 v0.9-A 統一
+- [x] GUI 資料夾樹勾選（含大小）＋設定後端切換
+- [x] 帳號登入（含 v2）＋ `udl.secrets`／`mega.session`；雲端硬碟
+- [x] localhost 串流預覽（隨機 token、即時解密）
+- [x] 509／over-quota 清楚提示；**不**做 SmartProxy／換 IP／配額繞過
+- [x] 接入 metadata／history／去重／NFO／封面／命名
+- [x] `docs/mega.md`；NOTICE 保留 MegaBasterd 出處與上游 commit
 
 ## v0.6 — Iwara 對齊 Moeary／IwaraTool
 
@@ -193,5 +208,5 @@
 - Pixeldrain（明確排除）
 - 通用「任意網站」fallback
 - 程式碼簽章／公證（v0.1 明確跳過）
-- 付費牆／VIP／區域限制／MEGA 配額繞過
-- 移植 MegaBasterd（改走 megatools／MEGAcmd 子行程）
+- 付費牆／VIP／區域限制／MEGA 配額繞過（含 SmartProxy／換 IP）
+- MegaBasterd GUI／SmartProxy 不移植（協定能力已內建於 `udl.extractors.mega`）
