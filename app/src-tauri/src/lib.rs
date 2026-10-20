@@ -6,7 +6,11 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{
+    AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
@@ -116,6 +120,25 @@ struct AppSettings {
     prefer_cdn: bool,
     #[serde(default)]
     custom_host: String,
+    // shell / UX (v0.8)
+    #[serde(default)]
+    mega_tool_path: String,
+    #[serde(default)]
+    clipboard_watcher: bool,
+    #[serde(default = "default_true")]
+    notifications_enabled: bool,
+    #[serde(default)]
+    minimize_to_tray: bool,
+    #[serde(default = "default_theme_mode")]
+    theme_mode: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_theme_mode() -> String {
+    "system".into()
 }
 
 fn default_on_duplicate() -> String {
@@ -209,6 +232,11 @@ impl Default for AppSettings {
             cdn_hosts: String::new(),
             prefer_cdn: false,
             custom_host: String::new(),
+            mega_tool_path: String::new(),
+            clipboard_watcher: false,
+            notifications_enabled: true,
+            minimize_to_tray: false,
+            theme_mode: default_theme_mode(),
         }
     }
 }
@@ -445,6 +473,11 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, S
     settings.proxy_mode = match mode.as_str() {
         "system" | "custom" => mode,
         _ => "none".into(),
+    };
+    let theme = settings.theme_mode.trim().to_lowercase();
+    settings.theme_mode = match theme.as_str() {
+        "light" | "dark" | "system" => theme,
+        _ => default_theme_mode(),
     };
     if settings.aria2_rpc_url.trim().is_empty() {
         settings.aria2_rpc_url = default_aria2_rpc_url();
@@ -1196,6 +1229,11 @@ async fn start_download(
         }
     }
     append_network_args(&mut args, &settings);
+    let mega = settings.mega_tool_path.trim();
+    if !mega.is_empty() {
+        args.push("--mega-tool".into());
+        args.push(mega.to_string());
+    }
     let (mut rx, child) = spawn_udl(&app, args)?;
 
     state
@@ -1955,14 +1993,134 @@ async fn iwara_import_following(
     run_udl_json(&app, args).await
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdaterInfo {
+    enabled: bool,
+    reason: String,
+    pubkey_present: bool,
+}
+
+fn updater_pubkey() -> String {
+    std::env::var("TAURI_UPDATER_PUBKEY")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            // optional baked key from tauri.conf.json plugins.updater.pubkey
+            None
+        })
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn updater_status() -> UpdaterInfo {
+    let key = updater_pubkey();
+    let baked = option_env!("UDL_UPDATER_PUBKEY").unwrap_or("").trim();
+    let pubkey_present = !key.is_empty() || !baked.is_empty();
+    if pubkey_present {
+        UpdaterInfo {
+            enabled: true,
+            reason: "已設定簽章公鑰，可檢查 GitHub Releases 更新".into(),
+            pubkey_present: true,
+        }
+    } else {
+        UpdaterInfo {
+            enabled: false,
+            reason: "未設定更新簽章公鑰（TAURI_UPDATER_PUBKEY／UDL_UPDATER_PUBKEY），自動更新已停用；請從 GitHub Releases 手動安裝。詳見 docs/updater.md".into(),
+            pubkey_present: false,
+        }
+    }
+}
+
+#[tauri::command]
+fn show_main_window(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("main") {
+        win.show().map_err(|e| e.to_string())?;
+        win.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_tray_tooltip(app: AppHandle, text: String) -> Result<(), String> {
+    if let Some(tray) = app.tray_by_id("main") {
+        tray.set_tooltip(Some(text)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let show_i = MenuItem::with_id(app, "show", "顯示視窗", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "結束", true, None::<&str>)?;
+    let sep = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(app, &[&show_i, &sep, &quit_i])?;
+
+    let _tray = TrayIconBuilder::with_id("main")
+        .tooltip("整合下載器")
+        .icon(app.default_window_icon().cloned().ok_or("no default icon")?)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => {
+                let _ = show_main_window(app.clone());
+            }
+            "quit" => {
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let app = tray.app_handle();
+                let _ = show_main_window(app.clone());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let updater_enabled = {
+        let env_key = updater_pubkey();
+        let baked = option_env!("UDL_UPDATER_PUBKEY").unwrap_or("").trim();
+        !env_key.is_empty() || !baked.is_empty()
+    };
+
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(JobState {
             children: Mutex::new(HashMap::new()),
+        });
+
+    if updater_enabled {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
+    builder
+        .setup(|app| {
+            if let Err(e) = setup_tray(app.handle()) {
+                eprintln!("tray setup skipped: {e}");
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let settings = load_settings_file(window.app_handle());
+                if settings.minimize_to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
@@ -2013,7 +2171,10 @@ pub fn run() {
             iwara_login,
             iwara_logout,
             iwara_whoami,
-            iwara_import_following
+            iwara_import_following,
+            updater_status,
+            show_main_window,
+            set_tray_tooltip
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

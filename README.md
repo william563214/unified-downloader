@@ -69,14 +69,25 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - 取消會結束子行程（行程組 SIGTERM→SIGKILL）。
 - **不**實作 SmartProxy／Quota Recovery／換 IP 等配額繞過；遇到 509 只回報清楚錯誤。
 
-### GUI 設定與佇列
+### GUI 設定與佇列（v0.8 殼層）
 
-- **設定頁**：預設下載資料夾、同時任務數、單一任務檔案並發、重複檔策略（skip／overwrite／rename）、命名模板（即時預覽）／分類規則、NFO／封面後處理（全域＋站點）、Iwara 畫質／Cloudflare（預設關）、Bilibili 分 P／畫質、FFmpeg 路徑、**網路**（限速／代理／UA／aria2）；寫入應用資料目錄 `settings.json`（並同步 `udl.config.json`；代理密碼進 OS keychain）。
-- **佇列**：並發下載、暫停／取消／重試、zh-TW 錯誤訊息、開啟檔案／資料夾、焦點時偵測剪貼簿連結；狀態寫入 SQLite，重啟後未完成任務自動恢復。
+- **統一佇列**：跨站進行中／排隊／暫停／失敗；每任務進度、速度、ETA；暫停／繼續／取消／重試、排序、並發、批次操作；失敗可「開啟修復」。
+- **輸入**：多網址貼上、拖放連結到視窗、可選剪貼簿監看（預設關）；偵測時顯示站點 badge。
+- **系統**：完成／失敗通知（可關）、系統列圖示狀態、關閉視窗最小化到托盤（可關）；主題跟隨系統（亦可強制淺／深色）。
+- **設定頁（單頁分區）**：下載目錄、命名／規則、NFO／封面、網路、Iwara／Bilibili 帳號相關、FFmpeg、MEGA 工具路徑；可匯入／匯出 JSON（不含密鑰）。寫入應用資料目錄 `settings.json`（並同步 `udl.config.json`；代理密碼進 OS keychain）。
+- **自動更新**：接 GitHub Releases；**未設定簽章公鑰時停用**（見 `docs/updater.md`）。未簽章安裝包仍可手動安裝。
 - **歷史頁**：搜尋、站點／狀態／日期／標籤篩選、排序、刪除條目（可選刪檔）；有本機封面時顯示縮圖。
 - **修復頁**：掃描缺檔／`.part`／大小／hash／orphan，可重新排隊、重新連結、清殘檔、刪過期紀錄。
 - **FFmpeg 首次佈建**：偵測不到時可下載目前 OS／arch 靜態建置並驗證 checksum（見 `NOTICE`）。CLI：`udl ffmpeg status` / `udl ffmpeg install`。
 - **網路**：見 `docs/networking.md`（全域限速、代理三模式、可選 aria2 RPC、自訂 UA）。
+
+### 截圖（佔位）
+
+> 以下為 GUI 截圖佔位，釋出前請替換成實際畫面（淺色／深色各一較佳）。
+>
+> - `docs/screenshots/queue-dashboard.png` — 統一佇列（進度／ETA／批次操作）
+> - `docs/screenshots/settings.png` — 整合設定頁（分區＋匯入匯出）
+> - `docs/screenshots/theme-dark.png` — 跟隨系統深色主題
 
 ### 命名／規則／修復 CLI（v0.5）
 
