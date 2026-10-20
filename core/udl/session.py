@@ -6,11 +6,18 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from udl.checksum import (
+    checksum_result,
+    expected_checksum,
+    resolve_expected,
+    verify_file,
+)
 from udl.config import load_config, udl_config
 from udl.events import emitter
 from udl.extractors.base import extract_result
 from udl.metadata import item_metadata
 from udl.naming import detect_media_type, pick_template, resolve_output_path
+from udl.postprocess.hook import hook_options, run_hook
 from udl.rules import apply_rules
 from udl.store.db import connect
 from udl.store.duplicates import duplicate_mode, resolve_duplicate
@@ -252,16 +259,54 @@ def finalize_download(
     error_message: str | None = None,
     skip_indexes: set[int] | None = None,
     file_dest_overrides: dict[int, Path] | None = None,
+    file_failures: dict[int, dict[str, Any]] | None = None,
 ) -> None:
     skip_indexes = skip_indexes or set()
     file_dest_overrides = file_dest_overrides or {}
+    file_failures = file_failures or {}
     for idx, f in enumerate(result.files):
         if idx in skip_indexes:
             continue
         dest_dir = output_dir / f.relative_dir if f.relative_dir else output_dir
         dest = file_dest_overrides.get(idx, dest_dir / f.name)
         file_meta = f.metadata or result.metadata
-        if dest.exists() and dest.is_file():
+        failure = file_failures.get(idx)
+        if failure:
+            # store expected digest in sha256 so repair verify_hash surfaces mismatch
+            expected_hex = failure.get("expected")
+            algo = failure.get("algo") or "sha256"
+            meta_payload: dict[str, Any]
+            if file_meta is not None:
+                meta_payload = file_meta.to_dict(omit_empty=True)
+            else:
+                meta_payload = {"site": result.site}
+            extra = dict(meta_payload.get("extra") or {})
+            extra["checksum"] = {
+                "ok": False,
+                "algo": algo,
+                "expected": expected_hex,
+                "actual": failure.get("actual"),
+                "source": failure.get("source"),
+                "message": failure.get("message"),
+            }
+            if failure.get("hook"):
+                extra["hook"] = failure["hook"]
+            meta_payload["extra"] = extra
+            record_file_done(
+                conn,
+                job_id=job_id,
+                site=result.site,
+                file_id=f"{job_id}:{idx}",
+                name=f.name,
+                path=dest,
+                status="error",
+                item_id=file_meta.item_id if file_meta else None,
+                canonical_url=file_meta.canonical_url if file_meta else None,
+                sha256=expected_hex if algo == "sha256" else None,
+                metadata=meta_payload,
+                compute_hash=False,
+            )
+        elif dest.exists() and dest.is_file():
             record_file_done(
                 conn,
                 job_id=job_id,
@@ -312,6 +357,105 @@ def finalize_download(
         title=result.title,
         site=result.site,
     )
+
+
+def post_download_verify(
+    result: extract_result,
+    output_dir: Path,
+    *,
+    job_id: str,
+    skip_indexes: set[int] | None = None,
+    file_dest_overrides: dict[int, Path] | None = None,
+    cli_checksum: expected_checksum | None = None,
+    checksum_auto: bool = True,
+    hook: hook_options | None = None,
+    emit: emitter | None = None,
+) -> tuple[dict[int, dict[str, Any]], list[checksum_result]]:
+    """verify checksums and run optional post-download hook.
+
+    returns (file_failures, checksum_results). failures keyed by file index.
+    """
+    skip_indexes = skip_indexes or set()
+    file_dest_overrides = file_dest_overrides or {}
+    hook = hook or hook_options()
+    failures: dict[int, dict[str, Any]] = {}
+    results: list[checksum_result] = []
+
+    for idx, f in enumerate(result.files):
+        if idx in skip_indexes:
+            continue
+        dest_dir = output_dir / f.relative_dir if f.relative_dir else output_dir
+        dest = file_dest_overrides.get(idx, dest_dir / f.name)
+        if not dest.is_file():
+            continue
+        file_id = f"{job_id}:{idx}"
+        file_meta = f.metadata or result.metadata
+        expected = resolve_expected(
+            path=dest,
+            metadata=file_meta,
+            cli=cli_checksum,
+            auto=checksum_auto,
+        )
+        if expected is not None:
+            checked = verify_file(dest, expected)
+            results.append(checked)
+            if emit is not None:
+                emit.checksum(
+                    job=job_id,
+                    file=file_id,
+                    ok=checked.ok,
+                    algo=checked.algo,
+                    expected=checked.expected,
+                    actual=checked.actual,
+                    source=checked.source,
+                    path=checked.path,
+                    message=checked.message,
+                )
+            if not checked.ok:
+                failures[idx] = {
+                    "algo": checked.algo,
+                    "expected": checked.expected,
+                    "actual": checked.actual,
+                    "source": checked.source,
+                    "message": checked.message or "checksum mismatch",
+                }
+                if emit is not None:
+                    emit.error(
+                        job=job_id,
+                        file=file_id,
+                        message=checked.message or "checksum mismatch",
+                        code="checksum_mismatch",
+                    )
+
+        hook_res = run_hook(
+            dest,
+            hook,
+            emit=emit,
+            job=job_id,
+            file=file_id,
+        )
+        if hook_res is not None and not hook_res.ok:
+            entry = failures.setdefault(
+                idx,
+                {
+                    "algo": expected.algo if expected else "sha256",
+                    "expected": expected.hex if expected else None,
+                    "actual": None,
+                    "source": expected.source if expected else None,
+                    "message": hook_res.message or "post-download hook failed",
+                },
+            )
+            entry["hook"] = hook_res.to_dict()
+            entry["message"] = hook_res.message or entry.get("message")
+            if emit is not None:
+                emit.error(
+                    job=job_id,
+                    file=file_id,
+                    message=hook_res.message or "post-download hook failed",
+                    code="hook_failed",
+                )
+
+    return failures, results
 
 
 def file_digest(path: Path) -> tuple[int | None, str | None]:

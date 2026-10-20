@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (v0.9-D)
+
+- Download All：`udl page URL` 掃描網頁候選連結；GUI「頁面」勾選入佇列
+- 下載後校驗 MD5／SHA-1／SHA-256（CLI／metadata／sidecar）；不符進修復中心
+- 可選下載後掃毒／指令 hook（Defender／ClamAV 預設集，預設關閉）
+- 文件：`docs/page-download.md`、`docs/checksum-hook.md`
+
 ## 0.7.0
 
 - Bilibili v0.7 對齊 Bili23：多類型解析、彈幕／字幕／章節、codec、CDN／Host

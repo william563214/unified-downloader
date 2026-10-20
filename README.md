@@ -19,7 +19,7 @@ unified-downloader/
 │  ├─ events.py           # JSON-lines 事件（含 metadata / duplicate / postprocess）
 │  └─ cli.py              # resolve / probe / get / history / queue / iwara / secrets / …
 ├─ app/                   # Tauri v2 + React/TS GUI（sidecar 叫 udl）
-├─ docs/                  # 事件協定、metadata、networking、extractor、iwara-browse
+├─ docs/                  # 事件、metadata、networking、page-download、checksum-hook…
 ├─ packaging/             # PyInstaller spec
 └─ scripts/               # sidecar 建置腳本
 ```
@@ -77,7 +77,9 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - **設定頁（單頁分區）**：下載目錄、命名／規則、NFO／封面、網路、Iwara／Bilibili 帳號相關、FFmpeg、MEGA 工具路徑；可匯入／匯出 JSON（不含密鑰）。寫入應用資料目錄 `settings.json`（並同步 `udl.config.json`；代理密碼進 OS keychain）。
 - **自動更新**：接 GitHub Releases；**未設定簽章公鑰時停用**（見 `docs/updater.md`）。未簽章安裝包仍可手動安裝。
 - **歷史頁**：搜尋、站點／狀態／日期／標籤篩選、排序、刪除條目（可選刪檔）；有本機封面時顯示縮圖。
-- **修復頁**：掃描缺檔／`.part`／大小／hash／orphan，可重新排隊、重新連結、清殘檔、刪過期紀錄。
+- **修復頁**：掃描缺檔／`.part`／大小／hash／checksum／orphan，可重新排隊、重新連結、清殘檔、刪過期紀錄。
+- **頁面擷取（v0.9-D）**：貼網頁 URL → 列出直連／站點候選 → 勾選入佇列；CLI `udl page`（見 `docs/page-download.md`）。
+- **校驗／掃毒（v0.9-D）**：下載後 MD5／SHA-1／SHA-256；可選 Defender／ClamAV 指令（預設關）；見 `docs/checksum-hook.md`。
 - **FFmpeg 首次佈建**：偵測不到時可下載目前 OS／arch 靜態建置並驗證 checksum（見 `NOTICE`）。CLI：`udl ffmpeg status` / `udl ffmpeg install`。
 - **網路**：見 `docs/networking.md`（全域限速、代理三模式、可選 aria2 RPC、自訂 UA）。
 - **MEGA**：內建 Python 客戶端（分段＋CBC-MAC；見 `docs/mega.md`）；可選 megatools／MEGAcmd 外部後端。
@@ -164,6 +166,9 @@ uv run udl resolve "https://mega.nz/file/<id>#<key>"
 uv run udl get "https://mega.nz/file/<id>#<key>" -o ./out --json
 uv run udl ffmpeg status --json
 # uv run udl ffmpeg install   # macOS arm64 / Windows x64 靜態建置
+uv run udl page "https://example.com/" --json --ext mp4,zip
+uv run udl get "URL" -o ./out --json --sha256 <hex>
+uv run udl get "URL" -o ./out --json --post-cmd-preset clamav
 ```
 
 ### GUI

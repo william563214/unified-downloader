@@ -38,6 +38,7 @@ import BilibiliAccount from "./BilibiliAccount";
 import BilibiliParse from "./BilibiliParse";
 import MegaAccount from "./MegaAccount";
 import MegaParse from "./MegaParse";
+import PageDownload from "./PageDownload";
 import { AccountSection } from "./iwara/AccountSection";
 import { BrowsePage } from "./iwara/BrowsePage";
 import { HomePage } from "./iwara/HomePage";
@@ -91,6 +92,7 @@ type UpdaterInfo = {
 
 type Page =
   | "download"
+  | "page"
   | "bilibili"
   | "mega"
   | "account"
@@ -126,6 +128,38 @@ async function notifyJob(title: string, body: string): Promise<void> {
     }
   } catch {
     /* notifications optional */
+  }
+}
+
+function formatBytes(n?: number): string {
+  if (n == null || Number.isNaN(n)) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  return `${(n / 1024 ** 3).toFixed(2)} GB`;
+}
+
+function formatSpeed(bps?: number): string {
+  if (bps == null || bps <= 0) return "—";
+  return `${formatBytes(bps)}/s`;
+}
+
+function siteTone(site: string | null | undefined): string {
+  switch (site) {
+    case "gofile":
+      return "tone-gofile";
+    case "bunkr":
+      return "tone-bunkr";
+    case "iwara":
+      return "tone-iwara";
+    case "bilibili":
+      return "tone-bili";
+    case "mega":
+      return "tone-mega";
+    case "direct":
+      return "tone-direct";
+    default:
+      return "tone-unknown";
   }
 }
 
@@ -1316,6 +1350,13 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={page === "page" ? "nav active" : "nav"}
+            onClick={() => setPage("page")}
+          >
+            頁面
+          </button>
+          <button
+            type="button"
             className={page === "bilibili" ? "nav active" : "nav"}
             onClick={() => setPage("bilibili")}
           >
@@ -1409,7 +1450,24 @@ export default function App() {
         </section>
       )}
 
-      {page === "bilibili" ? (
+      {page === "page" ? (
+        <div className="page-shell">
+          <PageDownload
+            output={output || settings.downloadDir}
+            onEnqueue={(jobs) => {
+              for (const job of jobs) {
+                enqueueDownload({
+                  url: job.url,
+                  site: job.site,
+                  title: job.title,
+                  output: output || settings.downloadDir,
+                });
+              }
+              setPage("download");
+            }}
+          />
+        </div>
+      ) : page === "bilibili" ? (
         <div className="page-shell">
           <BilibiliParse
             settings={settings}
@@ -2673,6 +2731,88 @@ export default function App() {
                 spellCheck={false}
               />
             </label>
+
+            <h3>校驗與掃毒</h3>
+            <p className="hint">
+              下載後可比對 MD5／SHA-1／SHA-256（站點 metadata 或 .sha256 旁檔）；不符會標記失敗並出現在修復中心。掃毒指令預設關閉。
+            </p>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.checksumAuto !== false}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    checksumAuto: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>自動套用站點／sidecar 校驗碼</span>
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={Boolean(settingsDraft.avHookEnabled)}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    avHookEnabled: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>啟用下載後指令／掃毒（預設關閉）</span>
+            </label>
+            {settingsDraft.avHookEnabled && (
+              <>
+                <label className="field compact">
+                  <span>預設集</span>
+                  <select
+                    value={settingsDraft.avHookPreset || ""}
+                    onChange={(e) => {
+                      const value = e.target.value as AppSettings["avHookPreset"];
+                      setSettingsDraft((s) => ({ ...s, avHookPreset: value }));
+                      setSettingsDirty(true);
+                    }}
+                  >
+                    <option value="">自訂指令</option>
+                    <option value="defender">Windows Defender</option>
+                    <option value="clamav">ClamAV clamscan</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>指令（可用 {"{path}"}）</span>
+                  <input
+                    value={settingsDraft.avHookCommand || ""}
+                    onChange={(e) => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        avHookCommand: e.target.value,
+                      }));
+                      setSettingsDirty(true);
+                    }}
+                    placeholder="clamscan {path}"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="field compact">
+                  <span>逾時（秒）</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={settingsDraft.avHookTimeout || 120}
+                    onChange={(e) => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        avHookTimeout: Number(e.target.value) || 120,
+                      }));
+                      setSettingsDirty(true);
+                    }}
+                  />
+                </label>
+              </>
+            )}
           </div>
 
 

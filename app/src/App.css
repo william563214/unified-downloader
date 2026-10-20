@@ -1035,7 +1035,6 @@ button.danger {
   color: var(--danger);
 }
 
-
 /* —— v0.8 shell / theme / queue —— */
 :root,
 html[data-theme="light"] {
@@ -1202,4 +1201,56 @@ html[data-theme="dark"] .queue,
 html[data-theme="dark"] .settings,
 html[data-theme="dark"] .banner {
   background: color-mix(in srgb, var(--paper) 88%, black);
+}
+
+.page-download .filters .field.compact {
+  min-width: 140px;
+  flex: 1;
+}
+
+.page-candidate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.page-candidate {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.page-candidate .badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.page-candidate .badge.site {
+  color: var(--accent-2);
+}
+
+.page-candidate .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-candidate .meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.tone-direct {
+  background: color-mix(in srgb, #3d5a80 18%, white);
 }

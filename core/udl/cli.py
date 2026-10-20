@@ -12,6 +12,7 @@ from threading import Event
 from typing import Any
 
 from udl import __version__
+from udl.checksum import expected_from_cli
 from udl.cli_iwara import add_iwara_parser, cmd_iwara
 from udl.cli_mega import add_mega_parser, cmd_mega
 from udl.config import load_config, save_config, udl_config
@@ -19,7 +20,9 @@ from udl.events import dump_schema, emitter
 from udl.metadata import item_metadata
 from udl.naming import preview_template
 from udl.network import configure_network, settings_from_cli_args
+from udl.page import page_filter, parse_extensions, parse_size_bound, parse_types, scan_page
 from udl.postprocess.artifacts import run_postprocess
+from udl.postprocess.hook import hook_options
 from udl.postprocess.options import parse_site_toggle_list, postprocess_options
 from udl.repair import apply_repair_actions, scan_repair
 from udl.router import get_extractor, resolve
@@ -30,6 +33,7 @@ from udl.session import (
     metadata_payload,
     open_store,
     plan_file_destinations,
+    post_download_verify,
     prepare_download,
 )
 from udl.store.duplicates import duplicate_mode
@@ -462,7 +466,83 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="path to udl.config.json / .toml (naming templates + classification rules)",
     )
+    p_get.add_argument(
+        "--checksum",
+        default=None,
+        help="expected digest as algo:hex (md5|sha1|sha256) or bare hex",
+    )
+    p_get.add_argument("--md5", default=None, help="expected MD5 hex digest")
+    p_get.add_argument("--sha1", default=None, help="expected SHA-1 hex digest")
+    p_get.add_argument("--sha256", default=None, help="expected SHA-256 hex digest")
+    p_get.add_argument(
+        "--no-checksum-auto",
+        action="store_true",
+        help="do not auto-pick checksum from site metadata or .sha256 sidecar",
+    )
+    p_get.add_argument(
+        "--post-cmd",
+        default=None,
+        help="post-download command template ({path} = local file); off unless set",
+    )
+    p_get.add_argument(
+        "--post-cmd-preset",
+        choices=("defender", "clamav", "windows_defender", "clamscan"),
+        default=None,
+        help="post-download antivirus preset (defender / clamav)",
+    )
+    p_get.add_argument(
+        "--post-cmd-timeout",
+        type=int,
+        default=None,
+        help="post-download command timeout seconds (default 120)",
+    )
     _add_network_args(p_get, download=True)
+
+    p_page = sub.add_parser(
+        "page",
+        help="scan a web page for downloadable candidate links (Download All)",
+    )
+    p_page.add_argument("url", help="web page URL")
+    p_page.add_argument(
+        "--json",
+        action="store_true",
+        help="emit a JSON page event (default: pretty JSON object)",
+    )
+    p_page.add_argument(
+        "--ext",
+        default=None,
+        help="comma-separated extensions filter e.g. mp4,mkv,zip",
+    )
+    p_page.add_argument(
+        "--type",
+        dest="types",
+        default=None,
+        help="comma-separated kinds: video,audio,image,archive,document,file,site",
+    )
+    p_page.add_argument("--size-min", default=None, help="min size via HEAD e.g. 1M")
+    p_page.add_argument("--size-max", default=None, help="max size via HEAD e.g. 2G")
+    p_page.add_argument("--regex", default=None, help="regex filter on url/name/text")
+    p_page.add_argument(
+        "--glob",
+        default=None,
+        help="glob filter on name/url; use | for alternatives",
+    )
+    p_page.add_argument(
+        "--same-domain",
+        action="store_true",
+        help="only keep candidates on the page host",
+    )
+    p_page.add_argument(
+        "--images",
+        action="store_true",
+        help="include <img> sources",
+    )
+    p_page.add_argument(
+        "--no-head",
+        action="store_true",
+        help="skip HEAD size probes",
+    )
+    _add_network_args(p_page)
 
     p_schema = sub.add_parser("schema", help="print JSON-lines event schema")
     p_schema.add_argument(
@@ -1093,6 +1173,7 @@ def cmd_get(args: argparse.Namespace) -> int:
 
     ok = 0
     failed = 0
+    file_failures: dict[int, dict[str, Any]] = {}
     try:
         if already_all:
             ok = len(result.files)
@@ -1170,6 +1251,56 @@ def cmd_get(args: argparse.Namespace) -> int:
         if callable(close):
             close()
 
+    if not cancel.is_set() and failed == 0 and not already_all:
+        try:
+            cli_checksum = expected_from_cli(
+                checksum=getattr(args, "checksum", None),
+                md5=getattr(args, "md5", None),
+                sha1=getattr(args, "sha1", None),
+                sha256=getattr(args, "sha256", None),
+            )
+        except ValueError as exc:
+            if args.json:
+                emit.error(job=job_id, message=str(exc), code="checksum_invalid")
+            else:
+                print(f"invalid checksum: {exc}", file=sys.stderr)
+            if conn is not None:
+                finalize_download(
+                    conn,
+                    job_id=job_id,
+                    result=result,
+                    output_dir=out,
+                    ok=ok,
+                    failed=max(failed, 1),
+                    error_message=str(exc),
+                    skip_indexes=skip_indexes,
+                    file_dest_overrides=overrides,
+                )
+                conn.close()
+            return 1
+        checksum_auto = bool(cfg.checksum_auto) and not bool(
+            getattr(args, "no_checksum_auto", False)
+        )
+        hook = _hook_from_args(args, cfg)
+        file_failures, _checked = post_download_verify(
+            result,
+            out,
+            job_id=job_id,
+            skip_indexes=skip_indexes,
+            file_dest_overrides=overrides,
+            cli_checksum=cli_checksum,
+            checksum_auto=checksum_auto,
+            hook=hook,
+            emit=emit if args.json else None,
+        )
+        if file_failures:
+            failed += len(file_failures)
+            ok = max(0, ok - len(file_failures))
+
+    err_msg = None
+    if file_failures:
+        err_msg = next(iter(file_failures.values())).get("message") or "checksum/hook failed"
+
     if conn is not None:
         finalize_download(
             conn,
@@ -1179,8 +1310,10 @@ def cmd_get(args: argparse.Namespace) -> int:
             ok=ok,
             failed=failed,
             cancelled=cancel.is_set(),
+            error_message=err_msg,
             skip_indexes=skip_indexes,
             file_dest_overrides=overrides,
+            file_failures=file_failures or None,
         )
 
     pp_opts = _postprocess_from_args(args)
@@ -1226,6 +1359,60 @@ def cmd_get(args: argparse.Namespace) -> int:
     if cancel.is_set():
         return 130
     return 0 if failed == 0 else 1
+
+
+def _hook_from_args(args: argparse.Namespace, cfg: udl_config) -> hook_options:
+    preset = getattr(args, "post_cmd_preset", None) or cfg.post_cmd_preset or None
+    command = getattr(args, "post_cmd", None)
+    if command is None:
+        command = cfg.post_cmd
+    timeout = getattr(args, "post_cmd_timeout", None)
+    if timeout is None:
+        timeout = cfg.post_cmd_timeout
+    cfg_on = bool(cfg.post_cmd_enabled and (cfg.post_cmd or cfg.post_cmd_preset))
+    enabled = bool(command or preset) or cfg_on
+    if getattr(args, "post_cmd", None) is not None or getattr(args, "post_cmd_preset", None):
+        enabled = True
+    return hook_options(
+        enabled=enabled,
+        command=str(command or ""),
+        preset=str(preset).strip() if preset else None,
+        timeout=int(timeout or 120),
+    )
+
+
+def cmd_page(args: argparse.Namespace) -> int:
+    try:
+        _apply_network(args)
+    except ValueError as exc:
+        print(f"invalid network option: {exc}", file=sys.stderr)
+        return 2
+    try:
+        size_min = parse_size_bound(args.size_min)
+        size_max = parse_size_bound(args.size_max)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    filt = page_filter(
+        extensions=parse_extensions(args.ext),
+        types=parse_types(args.types),
+        size_min=size_min,
+        size_max=size_max,
+        regex=args.regex,
+        glob=args.glob,
+        same_domain=bool(args.same_domain),
+        include_images=bool(args.images),
+        head_sizes=not bool(args.no_head),
+    )
+    result = scan_page(args.url, filters=filt)
+    payload = result.to_dict()
+    if args.json:
+        emitter().page(**{k: v for k, v in payload.items() if k != "ev"})
+    else:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    if result.message and not result.candidates:
+        return 1
+    return 0
 
 
 def _postprocess_from_args(args: argparse.Namespace) -> postprocess_options:
@@ -1753,6 +1940,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_probe(args)
     if args.command == "get":
         return cmd_get(args)
+    if args.command == "page":
+        return cmd_page(args)
     if args.command == "schema":
         return cmd_schema(args)
     if args.command == "sites":
