@@ -118,9 +118,18 @@ export type AppSettings = {
   extractDeleteZip: boolean;
   extractMaxUncompressed: number;
   extractMaxRatio: number;
+  extractPromotePassword: boolean;
 };
 
 export type AutoExtractOverride = "inherit" | "on" | "off";
+export type ExtractPasswordMode = "list" | "single" | "off";
+
+export type ZipPasswordEntry = {
+  id: string;
+  label: string;
+  index: number;
+  length: number;
+};
 
 export const default_site_flags = (): Record<SiteId, boolean> => ({
   gofile: true,
@@ -189,6 +198,7 @@ export const default_settings: AppSettings = {
   extractDeleteZip: false,
   extractMaxUncompressed: 4 * 1024 * 1024 * 1024,
   extractMaxRatio: 100,
+  extractPromotePassword: true,
 };
 
 /** fields never written to exported settings JSON */
@@ -244,6 +254,7 @@ export function importSettingsJson(
     merged.extractMaxUncompressed = 4 * 1024 * 1024 * 1024;
   }
   if (!merged.extractMaxRatio) merged.extractMaxRatio = 100;
+  if (merged.extractPromotePassword == null) merged.extractPromotePassword = true;
   return merged;
 }
 
@@ -388,5 +399,6 @@ export function settingsToConfigPayload(settings: AppSettings): Record<string, u
     extract_delete_zip: settings.extractDeleteZip,
     extract_max_uncompressed: settings.extractMaxUncompressed,
     extract_max_ratio: settings.extractMaxRatio,
+    extract_promote_password: settings.extractPromotePassword,
   };
 }

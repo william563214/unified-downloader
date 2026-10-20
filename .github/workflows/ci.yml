@@ -32,6 +32,7 @@ jobs:
           UDL_CONFIG="$RUNNER_TEMP/udl-ci.config.json" uv run udl config show --json >/dev/null
           UDL_DB="$RUNNER_TEMP/udl-ci.sqlite3" uv run udl repair scan --json --no-orphans >/dev/null
           UDL_CONFIG="$RUNNER_TEMP/udl-ci.config.json" uv run udl rules list --json >/dev/null
+          uv run udl zip-passwords list --json >/dev/null
           uv run udl page "https://example.com/" --json --no-head >/dev/null
           uv run udl resolve "https://example.com/" --json >/dev/null || true
           uv run udl bili login status --json >/dev/null || true

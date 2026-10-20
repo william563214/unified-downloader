@@ -16,15 +16,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 from udl.events import emitter
-from udl.secrets import get_secret, zip_password_key
+from udl.postprocess.zip_passwords import passwords_for_try, promote_password
 
 # lowercase constants per project convention
 zip_magic = b"PK\x03\x04"
-zip_password_secret_key = zip_password_key
 default_max_uncompressed = 4 * 1024 * 1024 * 1024
 default_max_ratio = 100.0
 extract_destination = Literal["subfolder", "same_folder"]
 extract_override = Literal["inherit", "on", "off"]
+password_mode = Literal["list", "single", "off"]
 
 # unix symlink file type in zip external_attr high word
 _unix_ifmt = 0o170000
@@ -42,6 +42,8 @@ class extract_options:
     max_uncompressed: int = default_max_uncompressed
     max_ratio: float = default_max_ratio
     password: str | None = None
+    password_mode: password_mode = "list"
+    promote_on_success: bool = True
     use_secret_password: bool = True
 
     def resolved_enabled(self) -> bool:
@@ -59,6 +61,8 @@ class extract_options:
             "delete_zip": self.delete_zip,
             "max_uncompressed": self.max_uncompressed,
             "max_ratio": self.max_ratio,
+            "password_mode": self.password_mode,
+            "promote_on_success": self.promote_on_success,
             "use_secret_password": self.use_secret_password,
             # never serialize password material
         }
@@ -85,6 +89,18 @@ class extract_options:
         ).strip().lower()
         if override not in {"inherit", "on", "off"}:
             override = "inherit"
+        mode = str(
+            data.get("password_mode")
+            or data.get("extract_password_mode")
+            or data.get("extractPasswordMode")
+            or "list"
+        ).strip().lower()
+        if mode in {"single", "one", "password"}:
+            mode = "single"
+        elif mode in {"off", "none", "disable", "disabled"}:
+            mode = "off"
+        else:
+            mode = "list"
         try:
             max_bytes = int(
                 data.get("max_uncompressed")
@@ -108,6 +124,13 @@ class extract_options:
             use_secret = data.get("useSecretPassword")
         if use_secret is None:
             use_secret = True
+        promote = data.get("promote_on_success")
+        if promote is None:
+            promote = data.get("extract_promote_password")
+        if promote is None:
+            promote = data.get("extractPromotePassword")
+        if promote is None:
+            promote = True
         enabled = bool(
             data.get("enabled")
             if "enabled" in data
@@ -127,6 +150,8 @@ class extract_options:
             max_uncompressed=max(1, max_bytes),
             max_ratio=max(1.0, max_ratio),
             password=password_s,
+            password_mode=mode,  # type: ignore[arg-type]
+            promote_on_success=bool(promote),
             use_secret_password=bool(use_secret),
         )
 
@@ -141,6 +166,8 @@ class extract_result:
     code: str | None = None
     message: str | None = None
     extracted_paths: list[str] = field(default_factory=list)
+    password_index: int | None = None
+    password_count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,6 +179,8 @@ class extract_result:
             "code": self.code,
             "message": self.message,
             "extracted_paths": list(self.extracted_paths),
+            "password_index": self.password_index,
+            "password_count": self.password_count,
         }
 
 
@@ -170,14 +199,27 @@ def is_zip_candidate(path: str | Path) -> bool:
     return head == zip_magic
 
 
-def resolve_password(options: extract_options) -> str | None:
+def resolve_password_candidates(
+    options: extract_options,
+) -> list[tuple[str | None, str]]:
+    """ordered (entry_id|None, password) candidates. capped to user-supplied list."""
+    mode = options.password_mode
+    if mode == "off":
+        return []
+    if mode == "single":
+        if options.password:
+            return [(None, options.password)]
+        return []
+    # list mode: optional one-off password first then global table
+    candidates: list[tuple[str | None, str]] = []
     if options.password:
-        return options.password
+        candidates.append((None, options.password))
     if options.use_secret_password:
-        secret = get_secret(zip_password_secret_key)
-        if secret:
-            return secret
-    return None
+        for entry_id, password in passwords_for_try():
+            if options.password and password == options.password:
+                continue
+            candidates.append((entry_id, password))
+    return candidates
 
 
 def decode_zip_filename(info: zipfile.ZipInfo) -> str:
@@ -309,13 +351,11 @@ def extract_zip(
             ok=None,
         )
 
-    password = resolve_password(options)
     try:
         result = _extract_safe(
             archive,
             dest_root,
             options=options,
-            password=password,
         )
     except Exception as exc:  # noqa: BLE001
         result = extract_result(
@@ -389,12 +429,42 @@ def extract_zip(
     return result
 
 
+def _probe_password(
+    zf: zipfile.ZipFile,
+    infos: list[zipfile.ZipInfo],
+    candidates: list[tuple[str | None, str]],
+) -> tuple[bytes | None, int | None, str | None, int]:
+    """try candidates in order against first encrypted member.
+
+    returns (pwd_bytes, 1-based index, entry_id, candidate_count).
+    index/entry_id are None when archive is not encrypted.
+    """
+    count = len(candidates)
+    encrypted = [info for info in infos if info.flag_bits & 0x1]
+    if not encrypted:
+        return None, None, None, count
+    probe = encrypted[0]
+    for index, (entry_id, password) in enumerate(candidates, start=1):
+        pwd_bytes = password.encode("utf-8")
+        try:
+            with zf.open(probe, "r", pwd=pwd_bytes) as src:
+                # read a small chunk to force decrypt / CRC check start
+                src.read(64)
+            return pwd_bytes, index, entry_id, count
+        except RuntimeError:
+            continue
+        except zipfile.BadZipFile:
+            continue
+        except Exception:  # noqa: BLE001 — try next user password only
+            continue
+    return None, None, None, count
+
+
 def _extract_safe(
     archive: Path,
     dest_root: Path,
     *,
     options: extract_options,
-    password: str | None,
 ) -> extract_result:
     if not archive.is_file():
         return extract_result(
@@ -416,10 +486,12 @@ def _extract_safe(
             message="not a valid zip archive",
         )
 
-    pwd_bytes = password.encode("utf-8") if password else None
     extracted: list[str] = []
     total_uncompressed = 0
     total_compressed = 0
+    password_index: int | None = None
+    password_count: int | None = None
+    used_entry_id: str | None = None
 
     with zf:
         infos = zf.infolist()
@@ -486,14 +558,34 @@ def _extract_safe(
                     ),
                 )
 
-        if encrypted and not pwd_bytes:
-            return extract_result(
-                ok=False,
-                path=str(archive),
-                dest=str(dest_root),
-                code="needs_password",
-                message="zip is password-protected",
+        candidates = resolve_password_candidates(options)
+        password_count = len(candidates) if encrypted else None
+        pwd_bytes: bytes | None = None
+        if encrypted:
+            if not candidates:
+                return extract_result(
+                    ok=False,
+                    path=str(archive),
+                    dest=str(dest_root),
+                    code="needs_password",
+                    message="zip is password-protected",
+                    password_count=0,
+                )
+            pwd_bytes, password_index, used_entry_id, password_count = _probe_password(
+                zf, infos, candidates
             )
+            if pwd_bytes is None:
+                return extract_result(
+                    ok=False,
+                    path=str(archive),
+                    dest=str(dest_root),
+                    code="needs_password",
+                    message=(
+                        f"zip password required or incorrect "
+                        f"(tried {password_count} of {password_count})"
+                    ),
+                    password_count=password_count,
+                )
 
         dest_root.mkdir(parents=True, exist_ok=True)
         dest_resolved = dest_root.resolve()
@@ -550,6 +642,7 @@ def _extract_safe(
                         dest=str(dest_root),
                         code="needs_password",
                         message="zip password required or incorrect",
+                        password_count=password_count,
                     )
                 return extract_result(
                     ok=False,
@@ -576,14 +669,35 @@ def _extract_safe(
         except OSError:
             deleted = False
 
+    if (
+        options.promote_on_success
+        and used_entry_id
+        and password_index is not None
+        and password_index > 1
+    ):
+        try:
+            promote_password(used_entry_id)
+        except Exception:  # noqa: BLE001
+            pass
+
+    if password_index is not None and password_count:
+        message = (
+            f"extracted {len(extracted)} files "
+            f"(password {password_index} of {password_count})"
+        )
+    else:
+        message = f"extracted {len(extracted)} files"
+
     return extract_result(
         ok=True,
         path=str(archive),
         dest=str(dest_root),
         members=len(extracted),
         deleted_archive=deleted,
-        message=f"extracted {len(extracted)} files",
+        message=message,
         extracted_paths=extracted,
+        password_index=password_index,
+        password_count=password_count,
     )
 
 
@@ -605,12 +719,21 @@ def retry_extract_path(
     options: extract_options | None = None,
     *,
     password: str | None = None,
+    password_mode: password_mode | None = None,
+    promote_on_success: bool | None = None,
     emit: emitter | None = None,
     job: str | None = None,
     file: str | None = None,
 ) -> extract_result:
     """re-run extraction for repair center / GUI retry."""
     opts = options or extract_options(enabled=True, override="on")
+    mode: password_mode
+    if password_mode is not None:
+        mode = password_mode
+    elif password:
+        mode = "single"
+    else:
+        mode = "list"
     opts = extract_options(
         enabled=True,
         override="on",
@@ -619,7 +742,11 @@ def retry_extract_path(
         max_uncompressed=opts.max_uncompressed,
         max_ratio=opts.max_ratio,
         password=password if password is not None else opts.password,
-        use_secret_password=opts.use_secret_password if password is None else False,
+        password_mode=mode,
+        promote_on_success=(
+            opts.promote_on_success if promote_on_success is None else promote_on_success
+        ),
+        use_secret_password=True,
     )
     result = extract_zip(
         archive,

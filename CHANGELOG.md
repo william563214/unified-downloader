@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- ZIP 有序密碼表：依序試密（僅 udl.secrets）；成功可置頂；per-job list／single／off
+- 修復中心一次性密碼重試並可選加入清單；歷史僅記 password N of M（closes #32）
 - 下載後可選自動解壓 ZIP（全域預設關；per-job inherit／on／off）
 - 核心 postprocessor：zip-slip／symlink／bomb 防護、日／中文檔名編碼、加密 ZIP needs_password
 - 事件 `extracting`／`extracted`／`failed`；歷史與修復中心 `retry-extract`

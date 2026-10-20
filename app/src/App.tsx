@@ -17,6 +17,7 @@ import {
   type ClassifyRule,
   type CoverNaming,
   type DuplicateMode,
+  type ExtractPasswordMode,
   type FfmpegStatus,
   type HistoryEntry,
   type NameConflictMode,
@@ -24,6 +25,7 @@ import {
   type QueueEntry,
   type RepairIssue,
   type RepairScanResult,
+  type ZipPasswordEntry,
   default_settings,
   default_site_flags,
   emptyRule,
@@ -188,9 +190,21 @@ export default function App() {
   const [relinkPath, setRelinkPath] = useState("");
   const [extractPasswordDraft, setExtractPasswordDraft] = useState("");
   const [storeExtractPassword, setStoreExtractPassword] = useState(false);
+  const [extractPasswordLabel, setExtractPasswordLabel] = useState("");
   const [autoExtractOverride, setAutoExtractOverride] =
     useState<AutoExtractOverride>("inherit");
+  const [jobExtractPasswordMode, setJobExtractPasswordMode] =
+    useState<ExtractPasswordMode>("list");
   const [jobExtractPassword, setJobExtractPassword] = useState("");
+  const [zipPasswordEntries, setZipPasswordEntries] = useState<ZipPasswordEntry[]>(
+    [],
+  );
+  const [zipPasswordDraft, setZipPasswordDraft] = useState("");
+  const [zipPasswordLabelDraft, setZipPasswordLabelDraft] = useState("");
+  const [zipPasswordBusy, setZipPasswordBusy] = useState(false);
+  const [editingZipPasswordId, setEditingZipPasswordId] = useState<string | null>(
+    null,
+  );
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(
     null,
   );
@@ -330,6 +344,10 @@ export default function App() {
             default_settings.extractMaxUncompressed,
           extractMaxRatio:
             loaded.extractMaxRatio || default_settings.extractMaxRatio,
+          extractPromotePassword:
+            loaded.extractPromotePassword == null
+              ? true
+              : Boolean(loaded.extractPromotePassword),
         };
         setSettings(merged);
         setSettingsDraft(merged);
@@ -347,8 +365,24 @@ export default function App() {
         /* defaults */
       }
       await refreshFfmpeg();
+      try {
+        const result = await invoke<{
+          count?: number;
+          entries?: ZipPasswordEntry[];
+        }>("zip_passwords_list");
+        setZipPasswordEntries(Array.isArray(result.entries) ? result.entries : []);
+      } catch {
+        setZipPasswordEntries([]);
+      }
     })();
   }, [refreshFfmpeg]);
+
+  useEffect(() => {
+    if (page === "settings") {
+      void refreshZipPasswords();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
 
   const runResolve = useCallback(async (value: string) => {
     const trimmed = value.trim();
@@ -812,6 +846,7 @@ export default function App() {
           megaSelect: job.megaSelect ?? null,
           speedLimit,
           autoExtractOverride: job.autoExtractOverride ?? "inherit",
+          extractPasswordMode: job.extractPasswordMode ?? "list",
           extractPassword: job.extractPassword ?? null,
         });
         setJobs((prev) =>
@@ -1153,9 +1188,13 @@ export default function App() {
       queueName: overrides?.queueName ?? "default",
       autoExtractOverride:
         overrides?.autoExtractOverride ?? autoExtractOverride ?? "inherit",
+      extractPasswordMode:
+        overrides?.extractPasswordMode ?? jobExtractPasswordMode ?? "list",
       extractPassword:
         overrides?.extractPassword ??
-        (jobExtractPassword.trim() ? jobExtractPassword.trim() : null),
+        (jobExtractPasswordMode === "single" && jobExtractPassword.trim()
+          ? jobExtractPassword.trim()
+          : null),
       files: [],
       status: "queued",
     };
@@ -1463,6 +1502,18 @@ export default function App() {
     setSettingsDirty(true);
   }
 
+  async function refreshZipPasswords() {
+    try {
+      const result = await invoke<{
+        count?: number;
+        entries?: ZipPasswordEntry[];
+      }>("zip_passwords_list");
+      setZipPasswordEntries(Array.isArray(result.entries) ? result.entries : []);
+    } catch {
+      setZipPasswordEntries([]);
+    }
+  }
+
   async function runRepairScan() {
     setRepairBusy(true);
     setError(null);
@@ -1491,15 +1542,6 @@ export default function App() {
     setRepairBusy(true);
     setError(null);
     try {
-      if (
-        action === "retry-extract" &&
-        storeExtractPassword &&
-        extractPasswordDraft.trim()
-      ) {
-        await invoke("set_zip_password", {
-          password: extractPasswordDraft.trim(),
-        });
-      }
       await invoke("repair_fix", {
         action,
         issues: selected,
@@ -1513,7 +1555,16 @@ export default function App() {
           action === "retry-extract" && extractPasswordDraft.trim()
             ? extractPasswordDraft.trim()
             : undefined,
+        addPasswordToList:
+          action === "retry-extract" ? storeExtractPassword : undefined,
+        passwordLabel:
+          action === "retry-extract" && extractPasswordLabel.trim()
+            ? extractPasswordLabel.trim()
+            : undefined,
       });
+      if (action === "retry-extract") {
+        await refreshZipPasswords();
+      }
       await runRepairScan();
     } catch (e) {
       setError(humanizeError(String(e)));
@@ -2012,8 +2063,17 @@ export default function App() {
               type="password"
               value={extractPasswordDraft}
               onChange={(e) => setExtractPasswordDraft(e.target.value)}
-              placeholder="不寫入日誌；可選存 keychain"
+              placeholder="一次性密碼；不寫入日誌／歷史"
               autoComplete="off"
+            />
+          </label>
+          <label className="field compact">
+            <span>加入清單時的標籤（選用）</span>
+            <input
+              value={extractPasswordLabel}
+              onChange={(e) => setExtractPasswordLabel(e.target.value)}
+              placeholder="例如：常用"
+              spellCheck={false}
             />
           </label>
           <label className="check">
@@ -2022,7 +2082,7 @@ export default function App() {
               checked={storeExtractPassword}
               onChange={(e) => setStoreExtractPassword(e.target.checked)}
             />
-            <span>將密碼存入 OS keychain（udl.secrets zip.password）</span>
+            <span>重試成功後將此密碼加入有序密碼表（udl.secrets）</span>
           </label>
           <label className="field">
             <span>重新連結路徑（relink）</span>
@@ -3252,8 +3312,8 @@ export default function App() {
             <h3>自動解壓 ZIP</h3>
             <p className="hint">
               下載完成且校驗／掃毒通過後，可自動解壓 .zip（或 ZIP magic）。預設關閉；含
-              zip-slip／symlink／zip bomb 防護。加密 ZIP 不破解，需密碼時標記
-              needs_password。
+              zip-slip／symlink／zip bomb 防護。加密 ZIP 依有序密碼表嘗試（僅
+              stdlib zipfile 支援的 ZipCrypto／AES）；全部失敗標記 needs_password。
             </p>
             <label className="check">
               <input
@@ -3333,6 +3393,205 @@ export default function App() {
                 }}
               />
             </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.extractPromotePassword !== false}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    extractPromotePassword: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>成功時將該清單密碼移到最前（預設開啟）</span>
+            </label>
+
+            <h4>ZIP 密碼表</h4>
+            <p className="hint">
+              有序清單僅存於 OS keychain（udl.secrets）。畫面不顯示明文；歷史只會記錄
+              「password N of M」。
+            </p>
+            <div className="folder-row">
+              <input
+                type="password"
+                value={zipPasswordDraft}
+                onChange={(e) => setZipPasswordDraft(e.target.value)}
+                placeholder={
+                  editingZipPasswordId ? "新密碼（留空則只改標籤）" : "新增密碼"
+                }
+                autoComplete="off"
+              />
+              <input
+                value={zipPasswordLabelDraft}
+                onChange={(e) => setZipPasswordLabelDraft(e.target.value)}
+                placeholder="標籤（選用）"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className="ghost"
+                disabled={zipPasswordBusy}
+                onClick={() => {
+                  void (async () => {
+                    setZipPasswordBusy(true);
+                    setError(null);
+                    try {
+                      if (editingZipPasswordId) {
+                        await invoke("zip_passwords_update", {
+                          id: editingZipPasswordId,
+                          password: zipPasswordDraft.trim() || null,
+                          label: zipPasswordLabelDraft,
+                        });
+                      } else {
+                        if (!zipPasswordDraft.trim()) {
+                          setError("請輸入密碼");
+                          return;
+                        }
+                        await invoke("zip_passwords_add", {
+                          password: zipPasswordDraft.trim(),
+                          label: zipPasswordLabelDraft.trim() || null,
+                        });
+                      }
+                      setZipPasswordDraft("");
+                      setZipPasswordLabelDraft("");
+                      setEditingZipPasswordId(null);
+                      await refreshZipPasswords();
+                    } catch (e) {
+                      setError(humanizeError(String(e)));
+                    } finally {
+                      setZipPasswordBusy(false);
+                    }
+                  })();
+                }}
+              >
+                {editingZipPasswordId ? "更新" : "新增"}
+              </button>
+              {editingZipPasswordId && (
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    setEditingZipPasswordId(null);
+                    setZipPasswordDraft("");
+                    setZipPasswordLabelDraft("");
+                  }}
+                >
+                  取消編輯
+                </button>
+              )}
+            </div>
+            {zipPasswordEntries.length === 0 ? (
+              <p className="hint">尚未新增密碼。</p>
+            ) : (
+              <ul className="jobs" aria-label="ZIP 密碼表">
+                {zipPasswordEntries.map((entry, index) => (
+                  <li key={entry.id} className="job">
+                    <div className="job-top">
+                      <div className="job-title">
+                        <strong>
+                          #{entry.index}{" "}
+                          {entry.label ? entry.label : "（無標籤）"}
+                        </strong>
+                        <span>
+                          長度 {entry.length} · id {entry.id}
+                        </span>
+                      </div>
+                      <div className="job-actions">
+                        <button
+                          type="button"
+                          className="ghost"
+                          disabled={zipPasswordBusy || index === 0}
+                          onClick={() => {
+                            void (async () => {
+                              const ids = zipPasswordEntries.map((e) => e.id);
+                              const next = [...ids];
+                              const tmp = next[index - 1];
+                              next[index - 1] = next[index];
+                              next[index] = tmp;
+                              setZipPasswordBusy(true);
+                              try {
+                                await invoke("zip_passwords_reorder", { ids: next });
+                                await refreshZipPasswords();
+                              } catch (e) {
+                                setError(humanizeError(String(e)));
+                              } finally {
+                                setZipPasswordBusy(false);
+                              }
+                            })();
+                          }}
+                          title="上移"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost"
+                          disabled={
+                            zipPasswordBusy || index >= zipPasswordEntries.length - 1
+                          }
+                          onClick={() => {
+                            void (async () => {
+                              const ids = zipPasswordEntries.map((e) => e.id);
+                              const next = [...ids];
+                              const tmp = next[index + 1];
+                              next[index + 1] = next[index];
+                              next[index] = tmp;
+                              setZipPasswordBusy(true);
+                              try {
+                                await invoke("zip_passwords_reorder", { ids: next });
+                                await refreshZipPasswords();
+                              } catch (e) {
+                                setError(humanizeError(String(e)));
+                              } finally {
+                                setZipPasswordBusy(false);
+                              }
+                            })();
+                          }}
+                          title="下移"
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => {
+                            setEditingZipPasswordId(entry.id);
+                            setZipPasswordLabelDraft(entry.label || "");
+                            setZipPasswordDraft("");
+                          }}
+                        >
+                          編輯
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost danger"
+                          disabled={zipPasswordBusy}
+                          onClick={() => {
+                            void (async () => {
+                              setZipPasswordBusy(true);
+                              try {
+                                await invoke("zip_passwords_remove", {
+                                  id: entry.id,
+                                });
+                                await refreshZipPasswords();
+                              } catch (e) {
+                                setError(humanizeError(String(e)));
+                              } finally {
+                                setZipPasswordBusy(false);
+                              }
+                            })();
+                          }}
+                        >
+                          刪除
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
 
@@ -3726,16 +3985,35 @@ export default function App() {
             </label>
             {(autoExtractOverride === "on" ||
               (autoExtractOverride === "inherit" && settings.autoExtractZip)) && (
-              <label className="field">
-                <span>ZIP 密碼（選用）</span>
-                <input
-                  type="password"
-                  value={jobExtractPassword}
-                  onChange={(e) => setJobExtractPassword(e.target.value)}
-                  placeholder="加密 ZIP 時填入；不寫入日誌"
-                  autoComplete="off"
-                />
-              </label>
+              <>
+                <label className="field compact">
+                  <span>ZIP 密碼嘗試</span>
+                  <select
+                    value={jobExtractPasswordMode}
+                    onChange={(e) =>
+                      setJobExtractPasswordMode(
+                        e.target.value as ExtractPasswordMode,
+                      )
+                    }
+                  >
+                    <option value="list">使用全域密碼表</option>
+                    <option value="single">本任務單一密碼</option>
+                    <option value="off">不嘗試密碼</option>
+                  </select>
+                </label>
+                {jobExtractPasswordMode === "single" && (
+                  <label className="field">
+                    <span>本任務 ZIP 密碼</span>
+                    <input
+                      type="password"
+                      value={jobExtractPassword}
+                      onChange={(e) => setJobExtractPassword(e.target.value)}
+                      placeholder="不寫入日誌／設定檔"
+                      autoComplete="off"
+                    />
+                  </label>
+                )}
+              </>
             )}
 
             {probeInfo?.title && isBilibili && (

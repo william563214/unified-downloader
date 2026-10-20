@@ -586,7 +586,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_get.add_argument(
         "--extract-password",
         default=None,
-        help="ZIP password (never logged; prefer udl secrets zip.password)",
+        help="ZIP password for --extract-password-mode single (never logged)",
+    )
+    p_get.add_argument(
+        "--extract-password-mode",
+        choices=("list", "single", "off"),
+        default=None,
+        help="password tries: list (global table) / single / off (default list)",
+    )
+    p_get.add_argument(
+        "--no-extract-promote-password",
+        action="store_true",
+        help="do not move a successful list password to the front",
     )
     _add_network_args(p_get, download=True)
 
@@ -858,6 +869,41 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="ZIP password for retry-extract (never logged)",
     )
+    p_repair_fix.add_argument(
+        "--add-password-to-list",
+        action="store_true",
+        help="after successful retry-extract add --extract-password to the list",
+    )
+    p_repair_fix.add_argument(
+        "--password-label",
+        default="",
+        help="optional label when adding password to the list",
+    )
+
+    p_zip_pw = sub.add_parser(
+        "zip-passwords",
+        help="ordered ZIP password table (stored only in udl.secrets)",
+    )
+    zip_pw_sub = p_zip_pw.add_subparsers(dest="zip_passwords_command", required=True)
+    p_zip_list = zip_pw_sub.add_parser("list", help="list entries (no password plaintext)")
+    p_zip_list.add_argument("--json", action="store_true")
+    p_zip_add = zip_pw_sub.add_parser("add", help="append a password")
+    p_zip_add.add_argument("password", nargs="?", default=None, help="or read stdin")
+    p_zip_add.add_argument("--label", default="", help="optional display label")
+    p_zip_add.add_argument("--json", action="store_true")
+    p_zip_set = zip_pw_sub.add_parser("set", help="update label and/or password by id")
+    p_zip_set.add_argument("id", help="entry id from list")
+    p_zip_set.add_argument("--password", default=None, help="replace password")
+    p_zip_set.add_argument("--label", default=None, help="replace label")
+    p_zip_set.add_argument("--json", action="store_true")
+    p_zip_rm = zip_pw_sub.add_parser("remove", help="delete an entry by id")
+    p_zip_rm.add_argument("id", help="entry id")
+    p_zip_rm.add_argument("--json", action="store_true")
+    p_zip_ord = zip_pw_sub.add_parser("reorder", help="reorder by comma-separated ids")
+    p_zip_ord.add_argument("ids", help="id1,id2,...")
+    p_zip_ord.add_argument("--json", action="store_true")
+    p_zip_clear = zip_pw_sub.add_parser("clear", help="remove all ZIP passwords")
+    p_zip_clear.add_argument("--json", action="store_true")
 
     p_secrets = sub.add_parser(
         "secrets", help="OS keychain helpers for proxy / login tokens"
@@ -1570,6 +1616,15 @@ def _extract_from_args(args: argparse.Namespace, cfg: udl_config) -> extract_opt
         max_ratio = cfg.extract_max_ratio
     delete_zip = bool(getattr(args, "extract_delete_zip", False) or cfg.extract_delete_zip)
     password = getattr(args, "extract_password", None)
+    mode = getattr(args, "extract_password_mode", None) or "list"
+    if mode not in {"list", "single", "off"}:
+        mode = "list"
+    if password and mode == "list" and getattr(args, "extract_password_mode", None) is None:
+        # bare --extract-password without mode means single-password override
+        mode = "single"
+    promote = bool(cfg.extract_promote_password) and not bool(
+        getattr(args, "no_extract_promote_password", False)
+    )
     return extract_options(
         enabled=bool(cfg.auto_extract_zip),
         override=override,  # type: ignore[arg-type]
@@ -1578,8 +1633,85 @@ def _extract_from_args(args: argparse.Namespace, cfg: udl_config) -> extract_opt
         max_uncompressed=int(max_uncompressed or 4 * 1024 * 1024 * 1024),
         max_ratio=float(max_ratio or 100.0),
         password=str(password) if password else None,
+        password_mode=mode,  # type: ignore[arg-type]
+        promote_on_success=promote,
         use_secret_password=True,
     )
+
+
+def cmd_zip_passwords(args: argparse.Namespace) -> int:
+    from udl.postprocess import zip_passwords as zp
+
+    cmd = args.zip_passwords_command
+    if cmd == "list":
+        rows = zp.list_password_public()
+        if args.json:
+            print(json.dumps({"count": len(rows), "entries": rows}, ensure_ascii=False))
+        else:
+            if not rows:
+                print("(empty)", file=sys.stderr)
+            for row in rows:
+                label = row.get("label") or ""
+                print(f"{row['index']}. {row['id']}  len={row['length']}  {label}")
+        return 0
+    if cmd == "add":
+        password = args.password
+        if password is None:
+            password = sys.stdin.read()
+            if password.endswith("\n"):
+                password = password[:-1]
+        try:
+            entry = zp.add_password(password, label=args.label or "")
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(entry, ensure_ascii=False))
+        else:
+            print(entry["id"])
+        return 0
+    if cmd == "set":
+        try:
+            entry = zp.update_password(
+                args.id,
+                password=args.password,
+                label=args.label,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if entry is None:
+            print("not found", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(entry, ensure_ascii=False))
+        else:
+            print(entry["id"])
+        return 0
+    if cmd == "remove":
+        ok = zp.remove_password(args.id)
+        if args.json:
+            print(json.dumps({"ok": ok, "id": args.id}, ensure_ascii=False))
+        elif not ok:
+            print("not found", file=sys.stderr)
+            return 1
+        return 0 if ok else 1
+    if cmd == "reorder":
+        ids = [p.strip() for p in str(args.ids).split(",") if p.strip()]
+        rows = zp.reorder_passwords(ids)
+        if args.json:
+            print(json.dumps({"entries": rows}, ensure_ascii=False))
+        else:
+            print(",".join(r["id"] for r in rows))
+        return 0
+    if cmd == "clear":
+        count = zp.clear_passwords()
+        if args.json:
+            print(json.dumps({"removed": count}, ensure_ascii=False))
+        else:
+            print(count)
+        return 0
+    return 2
 
 
 def cmd_page(args: argparse.Namespace) -> int:
@@ -2197,6 +2329,10 @@ def cmd_repair(args: argparse.Namespace) -> int:
                 relink_path=args.relink_path,
                 output_dir=args.output,
                 extract_password=getattr(args, "extract_password", None),
+                add_password_to_list=bool(
+                    getattr(args, "add_password_to_list", False)
+                ),
+                password_label=str(getattr(args, "password_label", "") or ""),
             )
             _print_json(payload, bool(args.json))
             return 0 if not payload.get("errors") else 1
@@ -2236,6 +2372,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_config(args)
     if args.command == "repair":
         return cmd_repair(args)
+    if args.command == "zip-passwords":
+        return cmd_zip_passwords(args)
     if args.command == "secrets":
         return cmd_secrets(args)
     if args.command == "iwara":

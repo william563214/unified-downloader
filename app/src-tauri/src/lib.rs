@@ -174,6 +174,8 @@ struct AppSettings {
     extract_max_uncompressed: u64,
     #[serde(default = "default_extract_max_ratio")]
     extract_max_ratio: f64,
+    #[serde(default = "default_true")]
+    extract_promote_password: bool,
 }
 
 fn default_true() -> bool {
@@ -343,6 +345,7 @@ impl Default for AppSettings {
             extract_delete_zip: false,
             extract_max_uncompressed: default_extract_max_uncompressed(),
             extract_max_ratio: default_extract_max_ratio(),
+            extract_promote_password: true,
         }
     }
 }
@@ -666,6 +669,7 @@ fn settings_to_udl_config(settings: &AppSettings) -> serde_json::Value {
         "extract_delete_zip": settings.extract_delete_zip,
         "extract_max_uncompressed": settings.extract_max_uncompressed,
         "extract_max_ratio": settings.extract_max_ratio,
+        "extract_promote_password": settings.extract_promote_password,
     })
 }
 
@@ -748,28 +752,133 @@ async fn clear_proxy_password(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn set_zip_password(app: AppHandle, password: String) -> Result<(), String> {
-    // optional keychain storage for encrypted ZIP; never logged
-    let args = vec![
-        "secrets".into(),
-        "set".into(),
-        "zip.password".into(),
+async fn set_zip_password(
+    app: AppHandle,
+    password: String,
+    label: Option<String>,
+) -> Result<serde_json::Value, String> {
+    // append to ordered password table in udl.secrets; never logged
+    let mut args = vec![
+        "zip-passwords".into(),
+        "add".into(),
+        "--json".into(),
         password,
     ];
+    if let Some(lbl) = label.filter(|s| !s.trim().is_empty()) {
+        args.push("--label".into());
+        args.push(lbl);
+    }
     let (mut rx, _child) = spawn_udl(&app, args)?;
-    let (_stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
     if code.unwrap_or(1) != 0 {
         return Err(format!("store zip password failed: {stderr}"));
     }
-    Ok(())
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse zip-passwords add: {e}; raw={stdout}"))
 }
 
 #[tauri::command]
-async fn clear_zip_password(app: AppHandle) -> Result<(), String> {
-    let args = vec!["secrets".into(), "delete".into(), "zip.password".into()];
+async fn clear_zip_password(app: AppHandle) -> Result<serde_json::Value, String> {
+    let args = vec!["zip-passwords".into(), "clear".into(), "--json".into()];
     let (mut rx, _child) = spawn_udl(&app, args)?;
-    let (_stdout, _stderr, _code) = collect_stdout_json(&mut rx).await?;
-    Ok(())
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("clear zip passwords failed: {stderr}"));
+    }
+    serde_json::from_str(stdout.trim()).or_else(|_| Ok(serde_json::json!({"ok": true})))
+}
+
+#[tauri::command]
+async fn zip_passwords_list(app: AppHandle) -> Result<serde_json::Value, String> {
+    let args = vec!["zip-passwords".into(), "list".into(), "--json".into()];
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("zip-passwords list failed: {stderr}"));
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse zip-passwords list: {e}; raw={stdout}"))
+}
+
+#[tauri::command]
+async fn zip_passwords_add(
+    app: AppHandle,
+    password: String,
+    label: Option<String>,
+) -> Result<serde_json::Value, String> {
+    set_zip_password(app, password, label).await
+}
+
+#[tauri::command]
+async fn zip_passwords_update(
+    app: AppHandle,
+    id: String,
+    password: Option<String>,
+    label: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "zip-passwords".into(),
+        "set".into(),
+        id,
+        "--json".into(),
+    ];
+    if let Some(pw) = password.filter(|s| !s.is_empty()) {
+        args.push("--password".into());
+        args.push(pw);
+    }
+    if let Some(lbl) = label {
+        args.push("--label".into());
+        args.push(lbl);
+    }
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("zip-passwords set failed: {stderr}"));
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse zip-passwords set: {e}; raw={stdout}"))
+}
+
+#[tauri::command]
+async fn zip_passwords_remove(app: AppHandle, id: String) -> Result<serde_json::Value, String> {
+    let args = vec![
+        "zip-passwords".into(),
+        "remove".into(),
+        id,
+        "--json".into(),
+    ];
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("zip-passwords remove failed: {stderr}"));
+    }
+    serde_json::from_str(stdout.trim()).or_else(|_| Ok(serde_json::json!({"ok": true})))
+}
+
+#[tauri::command]
+async fn zip_passwords_reorder(
+    app: AppHandle,
+    ids: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let joined = ids
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(",");
+    let args = vec![
+        "zip-passwords".into(),
+        "reorder".into(),
+        joined,
+        "--json".into(),
+    ];
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("zip-passwords reorder failed: {stderr}"));
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse zip-passwords reorder: {e}; raw={stdout}"))
 }
 
 async fn run_bili_login_json(
@@ -1418,6 +1527,7 @@ async fn start_download(
     speed_limit: Option<String>,
     auto_extract_override: Option<String>,
     extract_password: Option<String>,
+    extract_password_mode: Option<String>,
 ) -> Result<String, String> {
     let settings = load_settings_file(&app);
     let job_id = job_id
@@ -1643,6 +1753,20 @@ async fn start_download(
         args.push("--extract-max-ratio".into());
         args.push(settings.extract_max_ratio.to_string());
     }
+    if !settings.extract_promote_password {
+        args.push("--no-extract-promote-password".into());
+    }
+    let pw_mode = extract_password_mode
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("list");
+    let pw_mode = match pw_mode {
+        "single" | "one" => "single",
+        "off" | "none" => "off",
+        _ => "list",
+    };
+    args.push("--extract-password-mode".into());
+    args.push(pw_mode.into());
     if let Some(pw) = extract_password {
         let pw = pw.trim();
         if !pw.is_empty() {
@@ -2325,6 +2449,8 @@ async fn repair_fix(
     output: Option<String>,
     issues: Option<serde_json::Value>,
     extract_password: Option<String>,
+    add_password_to_list: Option<bool>,
+    password_label: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let mut args = vec![
         "repair".into(),
@@ -2359,6 +2485,13 @@ async fn repair_fix(
     if let Some(pw) = extract_password.filter(|s| !s.trim().is_empty()) {
         args.push("--extract-password".into());
         args.push(pw);
+    }
+    if add_password_to_list.unwrap_or(false) {
+        args.push("--add-password-to-list".into());
+    }
+    if let Some(label) = password_label.filter(|s| !s.trim().is_empty()) {
+        args.push("--password-label".into());
+        args.push(label);
     }
     let (mut rx, _child) = spawn_udl(&app, args)?;
     let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
@@ -2975,6 +3108,11 @@ pub fn run() {
             clear_proxy_password,
             set_zip_password,
             clear_zip_password,
+            zip_passwords_list,
+            zip_passwords_add,
+            zip_passwords_update,
+            zip_passwords_remove,
+            zip_passwords_reorder,
             get_app_paths,
             resolve_url,
             page_scan,

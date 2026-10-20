@@ -45,6 +45,7 @@ class udl_config:
     extract_delete_zip: bool = False
     extract_max_uncompressed: int = 4 * 1024 * 1024 * 1024
     extract_max_ratio: float = 100.0
+    extract_promote_password: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +64,7 @@ class udl_config:
             "extract_delete_zip": self.extract_delete_zip,
             "extract_max_uncompressed": self.extract_max_uncompressed,
             "extract_max_ratio": self.extract_max_ratio,
+            "extract_promote_password": self.extract_promote_password,
         }
 
     @classmethod
@@ -130,6 +132,16 @@ class udl_config:
             ),
             extract_max_uncompressed=max(1, max_uncompressed),
             extract_max_ratio=max(1.0, max_ratio),
+            extract_promote_password=(
+                True
+                if data.get("extract_promote_password") is None
+                and data.get("extractPromotePassword") is None
+                else bool(
+                    data.get("extract_promote_password")
+                    if "extract_promote_password" in data
+                    else data.get("extractPromotePassword")
+                )
+            ),
         )
 
 
@@ -183,6 +195,7 @@ def merge_config_dict(base: udl_config, overlay: dict[str, Any] | None) -> udl_c
         "extract_delete_zip",
         "extract_max_uncompressed",
         "extract_max_ratio",
+        "extract_promote_password",
     ):
         if key in overlay and overlay[key] is not None:
             data[key] = overlay[key]
