@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 下載後可選自動解壓 ZIP（全域預設關；per-job inherit／on／off）
+- 核心 postprocessor：zip-slip／symlink／bomb 防護、日／中文檔名編碼、加密 ZIP needs_password
+- 事件 `extracting`／`extracted`／`failed`；歷史與修復中心 `retry-extract`
+- 文件：`docs/auto-extract.md`；ROADMAP／events 更新（closes #30）
 - v0.9-C 排程：具名佇列、時段、完成後動作、流量配額、時段限速檔
 - CLI `udl queue schedule …`；GUI「排程」頁；`docs/scheduler.md`
 - gallery-dl 備援：GPL-2.0-only 僅子行程整合（禁止 import）；router 在 Direct 之前

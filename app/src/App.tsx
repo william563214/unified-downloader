@@ -13,6 +13,7 @@ import { type JobRow, type QueueFilter, newClientId } from "./jobTypes";
 import { QueueDashboard } from "./QueueDashboard";
 import {
   type AppSettings,
+  type AutoExtractOverride,
   type ClassifyRule,
   type CoverNaming,
   type DuplicateMode,
@@ -185,6 +186,11 @@ export default function App() {
   const [selectedRepair, setSelectedRepair] = useState<Set<string>>(new Set());
   const [repairVerifyHash, setRepairVerifyHash] = useState(false);
   const [relinkPath, setRelinkPath] = useState("");
+  const [extractPasswordDraft, setExtractPasswordDraft] = useState("");
+  const [storeExtractPassword, setStoreExtractPassword] = useState(false);
+  const [autoExtractOverride, setAutoExtractOverride] =
+    useState<AutoExtractOverride>("inherit");
+  const [jobExtractPassword, setJobExtractPassword] = useState("");
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(
     null,
   );
@@ -315,6 +321,15 @@ export default function App() {
               : Boolean(loaded.notificationsEnabled),
           minimizeToTray: Boolean(loaded.minimizeToTray),
           themeMode: loaded.themeMode || "system",
+          autoExtractZip: Boolean(loaded.autoExtractZip),
+          extractTo:
+            loaded.extractTo === "same_folder" ? "same_folder" : "subfolder",
+          extractDeleteZip: Boolean(loaded.extractDeleteZip),
+          extractMaxUncompressed:
+            loaded.extractMaxUncompressed ||
+            default_settings.extractMaxUncompressed,
+          extractMaxRatio:
+            loaded.extractMaxRatio || default_settings.extractMaxRatio,
         };
         setSettings(merged);
         setSettingsDraft(merged);
@@ -486,6 +501,76 @@ export default function App() {
                       message: line.message
                         ? String(line.message)
                         : "合併影音中…",
+                    }
+                  : f,
+              ),
+            };
+          }
+          if (ev === "extracting") {
+            const fid = line.file ? String(line.file) : null;
+            return {
+              ...job,
+              message: line.message ? String(line.message) : "解壓 ZIP 中…",
+              files: job.files.map((f) =>
+                !fid || f.id === fid || fid.startsWith(`${f.id}`)
+                  ? {
+                      ...f,
+                      status: "extracting",
+                      message: line.message
+                        ? String(line.message)
+                        : "解壓 ZIP 中…",
+                    }
+                  : f,
+              ),
+            };
+          }
+          if (ev === "extracted") {
+            const fid = line.file ? String(line.file) : null;
+            const members =
+              typeof line.members === "number" ? line.members : null;
+            const message =
+              line.message != null
+                ? String(line.message)
+                : members != null
+                  ? `已解壓 ${members} 個檔案`
+                  : "已解壓";
+            return {
+              ...job,
+              message,
+              files: job.files.map((f) =>
+                !fid || f.id === fid || fid.startsWith(`${f.id}`)
+                  ? {
+                      ...f,
+                      status: "done",
+                      message,
+                      path: line.dest
+                        ? String(line.dest)
+                        : line.path
+                          ? String(line.path)
+                          : f.path,
+                    }
+                  : f,
+              ),
+            };
+          }
+          if (ev === "failed" && (line.phase === "extract" || line.code)) {
+            const code = line.code ? String(line.code) : null;
+            const message = humanizeError(
+              line.message ? String(line.message) : null,
+              code,
+            );
+            const fid = line.file ? String(line.file) : null;
+            return {
+              ...job,
+              message,
+              files: job.files.map((f) =>
+                !fid || f.id === fid || fid.startsWith(`${f.id}`)
+                  ? {
+                      ...f,
+                      status: "error",
+                      message,
+                      needsPassword: code === "needs_password",
+                      path: line.path ? String(line.path) : f.path,
                     }
                   : f,
               ),
@@ -726,6 +811,8 @@ export default function App() {
           nodeNames: job.nodeNames ?? null,
           megaSelect: job.megaSelect ?? null,
           speedLimit,
+          autoExtractOverride: job.autoExtractOverride ?? "inherit",
+          extractPassword: job.extractPassword ?? null,
         });
         setJobs((prev) =>
           prev.map((j) =>
@@ -1064,6 +1151,11 @@ export default function App() {
       nodeNames: overrides?.nodeNames ?? null,
       megaSelect: overrides?.megaSelect ?? null,
       queueName: overrides?.queueName ?? "default",
+      autoExtractOverride:
+        overrides?.autoExtractOverride ?? autoExtractOverride ?? "inherit",
+      extractPassword:
+        overrides?.extractPassword ??
+        (jobExtractPassword.trim() ? jobExtractPassword.trim() : null),
       files: [],
       status: "queued",
     };
@@ -1399,6 +1491,15 @@ export default function App() {
     setRepairBusy(true);
     setError(null);
     try {
+      if (
+        action === "retry-extract" &&
+        storeExtractPassword &&
+        extractPasswordDraft.trim()
+      ) {
+        await invoke("set_zip_password", {
+          password: extractPasswordDraft.trim(),
+        });
+      }
       await invoke("repair_fix", {
         action,
         issues: selected,
@@ -1408,6 +1509,10 @@ export default function App() {
           .filter((v): v is number => typeof v === "number"),
         relinkPath: action === "relink" ? relinkPath : undefined,
         output: settings.downloadDir || output || undefined,
+        extractPassword:
+          action === "retry-extract" && extractPasswordDraft.trim()
+            ? extractPasswordDraft.trim()
+            : undefined,
       });
       await runRepairScan();
     } catch (e) {
@@ -1846,7 +1951,10 @@ export default function App() {
         <section className="composer settings" aria-label="修復中心">
           <div className="queue-head">
             <h2>修復中心</h2>
-            <p>比對歷史資料庫與檔案系統：缺檔、半成品、大小／hash 不符、orphan</p>
+            <p>
+              比對歷史資料庫與檔案系統：缺檔、半成品、大小／hash 不符、ZIP
+              解壓失敗、orphan
+            </p>
           </div>
           <label className="check">
             <input
@@ -1889,7 +1997,33 @@ export default function App() {
             >
               移除過期紀錄
             </button>
+            <button
+              type="button"
+              className="ghost"
+              disabled={repairBusy || selectedRepair.size === 0}
+              onClick={() => void runRepairFix("retry-extract")}
+            >
+              重試解壓
+            </button>
           </div>
+          <label className="field">
+            <span>ZIP 密碼（重試解壓／needs_password）</span>
+            <input
+              type="password"
+              value={extractPasswordDraft}
+              onChange={(e) => setExtractPasswordDraft(e.target.value)}
+              placeholder="不寫入日誌；可選存 keychain"
+              autoComplete="off"
+            />
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={storeExtractPassword}
+              onChange={(e) => setStoreExtractPassword(e.target.checked)}
+            />
+            <span>將密碼存入 OS keychain（udl.secrets zip.password）</span>
+          </label>
           <label className="field">
             <span>重新連結路徑（relink）</span>
             <div className="folder-row">
@@ -3114,6 +3248,91 @@ export default function App() {
                 </label>
               </>
             )}
+
+            <h3>自動解壓 ZIP</h3>
+            <p className="hint">
+              下載完成且校驗／掃毒通過後，可自動解壓 .zip（或 ZIP magic）。預設關閉；含
+              zip-slip／symlink／zip bomb 防護。加密 ZIP 不破解，需密碼時標記
+              needs_password。
+            </p>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={Boolean(settingsDraft.autoExtractZip)}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    autoExtractZip: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>下載後自動解壓 ZIP（預設關閉）</span>
+            </label>
+            <label className="field compact">
+              <span>解壓位置</span>
+              <select
+                value={settingsDraft.extractTo || "subfolder"}
+                onChange={(e) => {
+                  const value = e.target.value as AppSettings["extractTo"];
+                  setSettingsDraft((s) => ({ ...s, extractTo: value }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="subfolder">同名子資料夾（預設）</option>
+                <option value="same_folder">與 ZIP 相同資料夾</option>
+              </select>
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={Boolean(settingsDraft.extractDeleteZip)}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    extractDeleteZip: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>解壓成功後刪除原 ZIP（預設關閉）</span>
+            </label>
+            <label className="field compact">
+              <span>未壓縮總大小上限（位元組）</span>
+              <input
+                type="number"
+                min={1}
+                value={
+                  settingsDraft.extractMaxUncompressed ||
+                  default_settings.extractMaxUncompressed
+                }
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    extractMaxUncompressed:
+                      Number(e.target.value) ||
+                      default_settings.extractMaxUncompressed,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+            </label>
+            <label className="field compact">
+              <span>壓縮比上限</span>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={settingsDraft.extractMaxRatio || 100}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    extractMaxRatio: Number(e.target.value) || 100,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+            </label>
           </div>
 
 
@@ -3488,6 +3707,36 @@ export default function App() {
                 </button>
               </div>
             </label>
+
+            <label className="field compact">
+              <span>自動解壓 ZIP（本任務）</span>
+              <select
+                value={autoExtractOverride}
+                onChange={(e) =>
+                  setAutoExtractOverride(e.target.value as AutoExtractOverride)
+                }
+              >
+                <option value="inherit">
+                  跟隨全域
+                  {settings.autoExtractZip ? "（目前：開）" : "（目前：關）"}
+                </option>
+                <option value="on">強制開啟</option>
+                <option value="off">強制關閉</option>
+              </select>
+            </label>
+            {(autoExtractOverride === "on" ||
+              (autoExtractOverride === "inherit" && settings.autoExtractZip)) && (
+              <label className="field">
+                <span>ZIP 密碼（選用）</span>
+                <input
+                  type="password"
+                  value={jobExtractPassword}
+                  onChange={(e) => setJobExtractPassword(e.target.value)}
+                  placeholder="加密 ZIP 時填入；不寫入日誌"
+                  autoComplete="off"
+                />
+              </label>
+            )}
 
             {probeInfo?.title && isBilibili && (
               <p className="hint">

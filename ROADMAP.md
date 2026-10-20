@@ -244,6 +244,14 @@
 - [x] Release mere aggregation 打包獨立 `gallery-dl`（附 LICENSE／SOURCE）；失敗則改提示安裝
 - [x] `docs/gallery-dl.md`、`docs/TESTING.md` 手動項目；更新 ROADMAP／NOTICE
 
+### 自動解壓 ZIP（postprocessor）
+
+- [x] 全域設定「下載後自動解壓 ZIP」（預設關）＋新增下載／佇列 per-job 覆寫 inherit／on／off（[#30](https://github.com/william563214/unified-downloader/issues/30)）
+- [x] 偵測：`.zip` 或 magic `PK\x03\x04`；僅在下載完成且 checksum／AV hook 通過後執行
+- [x] 核心 `udl.postprocess.zip_extract`（stdlib `zipfile`）：同名子資料夾／同目錄、可選刪原檔；zip-slip／symlink／zip bomb；UTF-8／cp437→cp932／gbk；加密 ZIP → `needs_password`（可選 `udl.secrets` zip.password）
+- [x] 事件 `extracting`／`extracted`／`failed`＋歷史／修復中心 `retry-extract`；GUI 狀態顯示
+- [x] 分類規則 hook 預留（接 [#27](https://github.com/william563214/unified-downloader/issues/27)）；文件 `docs/auto-extract.md`
+
 ### 規劃中（非本 PR）
 
 - [ ] **瀏覽器擴充功能**（Chrome／Edge MV3）：重用 [william563214/download_classify](https://github.com/william563214/download_classify) — 右鍵選單、下載接管、native messaging／localhost＋token

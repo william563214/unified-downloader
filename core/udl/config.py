@@ -39,6 +39,12 @@ class udl_config:
     post_cmd: str = ""
     post_cmd_preset: str = ""
     post_cmd_timeout: int = 120
+    # auto-extract ZIP after download (default off)
+    auto_extract_zip: bool = False
+    extract_to: str = "subfolder"
+    extract_delete_zip: bool = False
+    extract_max_uncompressed: int = 4 * 1024 * 1024 * 1024
+    extract_max_ratio: float = 100.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +58,11 @@ class udl_config:
             "post_cmd": self.post_cmd,
             "post_cmd_preset": self.post_cmd_preset,
             "post_cmd_timeout": self.post_cmd_timeout,
+            "auto_extract_zip": self.auto_extract_zip,
+            "extract_to": self.extract_to,
+            "extract_delete_zip": self.extract_delete_zip,
+            "extract_max_uncompressed": self.extract_max_uncompressed,
+            "extract_max_ratio": self.extract_max_ratio,
         }
 
     @classmethod
@@ -75,6 +86,27 @@ class udl_config:
         checksum_auto = data.get("checksum_auto")
         if checksum_auto is None:
             checksum_auto = True
+        extract_to = str(
+            data.get("extract_to") or data.get("extractTo") or "subfolder"
+        ).strip().lower()
+        if extract_to in {"same", "same_folder", "flat"}:
+            extract_to = "same_folder"
+        else:
+            extract_to = "subfolder"
+        try:
+            max_uncompressed = int(
+                data.get("extract_max_uncompressed")
+                or data.get("extractMaxUncompressed")
+                or 4 * 1024 * 1024 * 1024
+            )
+        except (TypeError, ValueError):
+            max_uncompressed = 4 * 1024 * 1024 * 1024
+        try:
+            max_ratio = float(
+                data.get("extract_max_ratio") or data.get("extractMaxRatio") or 100.0
+            )
+        except (TypeError, ValueError):
+            max_ratio = 100.0
         return cls(
             name_template=str(data.get("name_template") or data.get("template") or ""),
             site_templates={str(k): str(v) for k, v in site_templates.items()},
@@ -86,6 +118,18 @@ class udl_config:
             post_cmd=str(data.get("post_cmd") or ""),
             post_cmd_preset=str(data.get("post_cmd_preset") or ""),
             post_cmd_timeout=max(1, timeout),
+            auto_extract_zip=bool(
+                data.get("auto_extract_zip")
+                if "auto_extract_zip" in data
+                else data.get("autoExtractZip")
+            ),
+            extract_to=extract_to,
+            extract_delete_zip=bool(
+                data.get("extract_delete_zip")
+                or data.get("extractDeleteZip")
+            ),
+            extract_max_uncompressed=max(1, max_uncompressed),
+            extract_max_ratio=max(1.0, max_ratio),
         )
 
 
@@ -134,6 +178,11 @@ def merge_config_dict(base: udl_config, overlay: dict[str, Any] | None) -> udl_c
         "post_cmd",
         "post_cmd_preset",
         "post_cmd_timeout",
+        "auto_extract_zip",
+        "extract_to",
+        "extract_delete_zip",
+        "extract_max_uncompressed",
+        "extract_max_ratio",
     ):
         if key in overlay and overlay[key] is not None:
             data[key] = overlay[key]

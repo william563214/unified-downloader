@@ -18,6 +18,7 @@ from udl.extractors.base import extract_result
 from udl.metadata import item_metadata
 from udl.naming import detect_media_type, pick_template, resolve_output_path
 from udl.postprocess.hook import hook_options, run_hook
+from udl.postprocess.zip_extract import extract_options, extract_zip
 from udl.rules import apply_rules
 from udl.store.db import connect
 from udl.store.duplicates import duplicate_mode, resolve_duplicate
@@ -281,16 +282,19 @@ def finalize_download(
             else:
                 meta_payload = {"site": result.site}
             extra = dict(meta_payload.get("extra") or {})
-            extra["checksum"] = {
-                "ok": False,
-                "algo": algo,
-                "expected": expected_hex,
-                "actual": failure.get("actual"),
-                "source": failure.get("source"),
-                "message": failure.get("message"),
-            }
+            if failure.get("checksum") or failure.get("expected") is not None:
+                extra["checksum"] = failure.get("checksum") or {
+                    "ok": False,
+                    "algo": algo,
+                    "expected": expected_hex,
+                    "actual": failure.get("actual"),
+                    "source": failure.get("source"),
+                    "message": failure.get("message"),
+                }
             if failure.get("hook"):
                 extra["hook"] = failure["hook"]
+            if failure.get("extract"):
+                extra["extract"] = failure["extract"]
             meta_payload["extra"] = extra
             record_file_done(
                 conn,
@@ -369,15 +373,18 @@ def post_download_verify(
     cli_checksum: expected_checksum | None = None,
     checksum_auto: bool = True,
     hook: hook_options | None = None,
+    extract: extract_options | None = None,
     emit: emitter | None = None,
 ) -> tuple[dict[int, dict[str, Any]], list[checksum_result]]:
-    """verify checksums and run optional post-download hook.
+    """verify checksums run optional AV hook then optional ZIP extract.
 
+    extract runs only when checksum and hook (if configured) pass for the file.
     returns (file_failures, checksum_results). failures keyed by file index.
     """
     skip_indexes = skip_indexes or set()
     file_dest_overrides = file_dest_overrides or {}
     hook = hook or hook_options()
+    extract = extract or extract_options()
     failures: dict[int, dict[str, Any]] = {}
     results: list[checksum_result] = []
 
@@ -390,6 +397,7 @@ def post_download_verify(
             continue
         file_id = f"{job_id}:{idx}"
         file_meta = f.metadata or result.metadata
+        file_ok = True
         expected = resolve_expected(
             path=dest,
             metadata=file_meta,
@@ -412,12 +420,21 @@ def post_download_verify(
                     message=checked.message,
                 )
             if not checked.ok:
+                file_ok = False
                 failures[idx] = {
                     "algo": checked.algo,
                     "expected": checked.expected,
                     "actual": checked.actual,
                     "source": checked.source,
                     "message": checked.message or "checksum mismatch",
+                    "checksum": {
+                        "ok": False,
+                        "algo": checked.algo,
+                        "expected": checked.expected,
+                        "actual": checked.actual,
+                        "source": checked.source,
+                        "message": checked.message or "checksum mismatch",
+                    },
                 }
                 if emit is not None:
                     emit.error(
@@ -435,6 +452,7 @@ def post_download_verify(
             file=file_id,
         )
         if hook_res is not None and not hook_res.ok:
+            file_ok = False
             entry = failures.setdefault(
                 idx,
                 {
@@ -454,6 +472,40 @@ def post_download_verify(
                     message=hook_res.message or "post-download hook failed",
                     code="hook_failed",
                 )
+
+        if not file_ok:
+            continue
+
+        meta_dict = file_meta.to_dict(omit_empty=True) if file_meta is not None else None
+        extract_res = extract_zip(
+            dest,
+            extract,
+            emit=emit,
+            job=job_id,
+            file=file_id,
+            source_url=result.url,
+            metadata=meta_dict,
+        )
+        if extract_res is not None and not extract_res.ok:
+            entry = failures.setdefault(
+                idx,
+                {
+                    "algo": expected.algo if expected else "sha256",
+                    "expected": expected.hex if expected else None,
+                    "actual": None,
+                    "source": expected.source if expected else None,
+                    "message": extract_res.message or "extract failed",
+                },
+            )
+            entry["extract"] = extract_res.to_dict()
+            entry["message"] = extract_res.message or entry.get("message")
+        elif extract_res is not None and extract_res.ok:
+            if file_meta is not None:
+                file_meta.extra["extract"] = extract_res.to_dict()
+            elif f.metadata is None and result.metadata is not None:
+                result.metadata.extra.setdefault("extract_by_file", {})[
+                    file_id
+                ] = extract_res.to_dict()
 
     return failures, results
 

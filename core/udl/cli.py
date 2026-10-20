@@ -26,6 +26,7 @@ from udl.page import page_filter, parse_extensions, parse_size_bound, parse_type
 from udl.postprocess.artifacts import run_postprocess
 from udl.postprocess.hook import hook_options
 from udl.postprocess.options import parse_site_toggle_list, postprocess_options
+from udl.postprocess.zip_extract import extract_options
 from udl.repair import apply_repair_actions, scan_repair
 from udl.router import get_extractor, resolve
 from udl.rules import parse_rules, test_rules_against_metadata
@@ -548,6 +549,45 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="post-download command timeout seconds (default 120)",
     )
+    p_get.add_argument(
+        "--auto-extract",
+        action="store_true",
+        default=None,
+        help="auto-extract ZIP after download (overrides config; default off)",
+    )
+    p_get.add_argument(
+        "--no-auto-extract",
+        action="store_true",
+        help="disable auto-extract for this job",
+    )
+    p_get.add_argument(
+        "--extract-to",
+        choices=("subfolder", "same_folder"),
+        default=None,
+        help="extract into archive-named subfolder or same folder (default subfolder)",
+    )
+    p_get.add_argument(
+        "--extract-delete-zip",
+        action="store_true",
+        help="delete original ZIP after successful extract (default off)",
+    )
+    p_get.add_argument(
+        "--extract-max-uncompressed",
+        type=int,
+        default=None,
+        help="zip bomb cap: max total uncompressed bytes (default 4GiB)",
+    )
+    p_get.add_argument(
+        "--extract-max-ratio",
+        type=float,
+        default=None,
+        help="zip bomb cap: max uncompressed/compressed ratio (default 100)",
+    )
+    p_get.add_argument(
+        "--extract-password",
+        default=None,
+        help="ZIP password (never logged; prefer udl secrets zip.password)",
+    )
     _add_network_args(p_get, download=True)
 
     p_page = sub.add_parser(
@@ -789,7 +829,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_repair_fix = repair_sub.add_parser("fix", help="apply a repair action")
     p_repair_fix.add_argument(
         "action",
-        choices=("requeue", "relink", "remove-stale", "cleanup-partials"),
+        choices=(
+            "requeue",
+            "relink",
+            "remove-stale",
+            "cleanup-partials",
+            "retry-extract",
+        ),
     )
     p_repair_fix.add_argument("--json", action="store_true")
     p_repair_fix.add_argument("--job-id", action="append", dest="job_ids", default=None)
@@ -806,6 +852,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--issues",
         default=None,
         help="JSON array of issue objects from repair scan",
+    )
+    p_repair_fix.add_argument(
+        "--extract-password",
+        default=None,
+        help="ZIP password for retry-extract (never logged)",
     )
 
     p_secrets = sub.add_parser(
@@ -1396,6 +1447,7 @@ def cmd_get(args: argparse.Namespace) -> int:
             getattr(args, "no_checksum_auto", False)
         )
         hook = _hook_from_args(args, cfg)
+        extract = _extract_from_args(args, cfg)
         file_failures, _checked = post_download_verify(
             result,
             out,
@@ -1405,6 +1457,7 @@ def cmd_get(args: argparse.Namespace) -> int:
             cli_checksum=cli_checksum,
             checksum_auto=checksum_auto,
             hook=hook,
+            extract=extract,
             emit=emit if args.json else None,
         )
         if file_failures:
@@ -1413,7 +1466,10 @@ def cmd_get(args: argparse.Namespace) -> int:
 
     err_msg = None
     if file_failures:
-        err_msg = next(iter(file_failures.values())).get("message") or "checksum/hook failed"
+        err_msg = (
+            next(iter(file_failures.values())).get("message")
+            or "checksum/hook/extract failed"
+        )
 
     if conn is not None:
         finalize_download(
@@ -1494,6 +1550,35 @@ def _hook_from_args(args: argparse.Namespace, cfg: udl_config) -> hook_options:
         command=str(command or ""),
         preset=str(preset).strip() if preset else None,
         timeout=int(timeout or 120),
+    )
+
+
+def _extract_from_args(args: argparse.Namespace, cfg: udl_config) -> extract_options:
+    override = "inherit"
+    if bool(getattr(args, "no_auto_extract", False)):
+        override = "off"
+    elif getattr(args, "auto_extract", None) is True:
+        override = "on"
+    destination = getattr(args, "extract_to", None) or cfg.extract_to or "subfolder"
+    if destination not in {"subfolder", "same_folder"}:
+        destination = "subfolder"
+    max_uncompressed = getattr(args, "extract_max_uncompressed", None)
+    if max_uncompressed is None:
+        max_uncompressed = cfg.extract_max_uncompressed
+    max_ratio = getattr(args, "extract_max_ratio", None)
+    if max_ratio is None:
+        max_ratio = cfg.extract_max_ratio
+    delete_zip = bool(getattr(args, "extract_delete_zip", False) or cfg.extract_delete_zip)
+    password = getattr(args, "extract_password", None)
+    return extract_options(
+        enabled=bool(cfg.auto_extract_zip),
+        override=override,  # type: ignore[arg-type]
+        destination=destination,  # type: ignore[arg-type]
+        delete_zip=delete_zip,
+        max_uncompressed=int(max_uncompressed or 4 * 1024 * 1024 * 1024),
+        max_ratio=float(max_ratio or 100.0),
+        password=str(password) if password else None,
+        use_secret_password=True,
     )
 
 
@@ -2111,6 +2196,7 @@ def cmd_repair(args: argparse.Namespace) -> int:
                 file_row_ids=args.file_row_ids,
                 relink_path=args.relink_path,
                 output_dir=args.output,
+                extract_password=getattr(args, "extract_password", None),
             )
             _print_json(payload, bool(args.json))
             return 0 if not payload.get("errors") else 1

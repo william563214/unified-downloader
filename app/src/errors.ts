@@ -21,6 +21,13 @@ const code_messages: Record<string, string> = {
     "找不到 gallery-dl，請安裝（pip/brew）或在設定指定路徑；發行版可能已附獨立程式",
   gallerydl_disabled: "gallery-dl 備援已停用",
   cancelled: "已取消",
+  checksum_mismatch: "校驗碼不符",
+  hook_failed: "下載後掃毒／指令失敗",
+  extract_failed: "ZIP 解壓失敗",
+  needs_password: "ZIP 需要密碼",
+  zip_slip: "ZIP 含不安全路徑（已拒絕）",
+  zip_symlink: "ZIP 含符號連結（已拒絕）",
+  zip_bomb: "ZIP 解壓大小／壓縮比超限（已拒絕）",
 };
 
 const text_patterns: Array<[RegExp, string]> = [
@@ -69,6 +76,8 @@ export function statusLabel(
       return "已暫停";
     case "merging":
       return "合併中";
+    case "extracting":
+      return "解壓中";
     case "done":
       return "完成";
     case "error":
