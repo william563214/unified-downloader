@@ -150,6 +150,43 @@
 - [x] 修復 orphan：僅掃歷史 output 根＋已知副檔名＋忽略清單
 - [x] MEGA 去重：node handle＋size（避免粗粒度 handle 誤 skip）
 
+## v0.8 — GUI 殼層／統一佇列（本線）
+
+跨站 GUI 與 Tauri 殼層打磨；**不**改動 Bilibili extractor／解析頁核心（交 v0.8-B），**不**搶 v0.8-A 的測試文件／postprocess／history／repair 修補。合併前 rebase 到 `main`。
+
+### 統一佇列儀表板
+
+- [x] 跨站 active／queued／paused／failed 一覽
+- [x] 每任務進度／速度／ETA；暫停／繼續／取消／重試；排序；並發設定；批次操作
+- [x] 失敗任務顯示錯誤＋「開啟修復」
+
+### 輸入 UX
+
+- [x] 多網址貼上；視窗拖放文字／連結；可選剪貼簿監看（預設關）並提示加入
+- [x] 偵測時顯示站點 badge
+
+### 系統整合
+
+- [x] 任務完成／失敗系統通知（可關）
+- [x] 系統列／選單列圖示＋快捷狀態；關閉視窗最小化到托盤（可關）
+
+### 設定整合
+
+- [x] 單一設定頁分區：下載目錄、命名／規則、後處理 NFO／封面、網路、帳號（Iwara／Bilibili）、FFmpeg、MEGA 工具路徑
+- [x] 匯入／匯出設定 JSON（排除密鑰）
+
+### 更新／主題／文件
+
+- [x] Tauri updater 接 GitHub Releases；無簽章公鑰則停用（見 `docs/updater.md`）
+- [x] 深／淺色跟隨系統；站點頁共用殼層版面
+- [x] 更新 ROADMAP 與 README 截圖佔位說明
+
+### 平行線（其他 agent）
+
+- v0.8-A：測試文件＋ postprocess／history／repair 修補
+- v0.8-B：Bilibili extractor／解析頁
+
+
 ## 不做／延後
 
 - gallery-dl 當 library（授權衝突）；若備援只允許獨立子行程

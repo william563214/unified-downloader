@@ -11,6 +11,12 @@
     "core:window:allow-set-focus",
     "opener:default",
     "dialog:default",
+    "notification:default",
+    "core:tray:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
     "shell:allow-open",
     {
       "identifier": "shell:allow-spawn",

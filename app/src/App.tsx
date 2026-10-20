@@ -2,7 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 import { humanizeError, statusLabel } from "./errors";
+import { formatBytes, siteTone } from "./format";
+import { type JobRow, type QueueFilter, newClientId } from "./jobTypes";
+import { QueueDashboard } from "./QueueDashboard";
 import {
   type AppSettings,
   type ClassifyRule,
@@ -18,10 +26,14 @@ import {
   default_settings,
   default_site_flags,
   emptyRule,
-  extractUrl,
+  exportSettingsJson,
+  extractUrls,
+  detectSite,
   history_cover_path,
+  importSettingsJson,
   site_ids,
 } from "./settings";
+import { applyTheme, type ThemeMode } from "./theme";
 import BilibiliAccount from "./BilibiliAccount";
 import BilibiliParse from "./BilibiliParse";
 import { AccountSection } from "./iwara/AccountSection";
@@ -64,65 +76,15 @@ type ProbeResult = {
   message: string | null;
 };
 
-type FileRow = {
-  id: string;
-  name: string;
-  path?: string;
-  total?: number;
-  bytes: number;
-  bps: number;
-  status:
-    | "queued"
-    | "active"
-    | "merging"
-    | "done"
-    | "error"
-    | "cancelled"
-    | "skipped";
-  message?: string;
-  alreadyDownloaded?: boolean;
-};
-
-type JobStatus =
-  | "queued"
-  | "running"
-  | "paused"
-  | "done"
-  | "error"
-  | "cancelled";
-
-type JobRow = {
-  id: string;
-  clientId: string;
-  url: string;
-  site: string;
-  title: string;
-  output: string;
-  quality: string | null;
-  part: string | null;
-  cloudflareBypass: boolean | null;
-  codec?: string | null;
-  audioQuality?: string | null;
-  container?: string | null;
-  danmaku?: string | null;
-  subtitle?: string | null;
-  subtitleLang?: string | null;
-  embedDanmaku?: boolean;
-  embedSubtitle?: boolean;
-  filterTitle?: string | null;
-  partRange?: string | null;
-  expandAll?: boolean;
-  nodeNames?: string | null;
-  files: FileRow[];
-  ok?: number;
-  failed?: number;
-  status: JobStatus;
-  message?: string;
-};
-
 type UdlEventPayload = {
   job_id: string;
   line: Record<string, unknown>;
+};
+
+type UpdaterInfo = {
+  enabled: boolean;
+  reason: string;
+  pubkeyPresent: boolean;
 };
 
 type Page =
@@ -136,38 +98,32 @@ type Page =
   | "iwara-subs"
   | "iwara-home";
 
-function formatBytes(n?: number): string {
-  if (n == null || Number.isNaN(n)) return "—";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
-  return `${(n / 1024 ** 3).toFixed(2)} GB`;
-}
-
-function formatSpeed(bps?: number): string {
-  if (bps == null || bps <= 0) return "—";
-  return `${formatBytes(bps)}/s`;
-}
-
-function siteTone(site: string | null | undefined): string {
-  switch (site) {
-    case "gofile":
-      return "tone-gofile";
-    case "bunkr":
-      return "tone-bunkr";
-    case "iwara":
-      return "tone-iwara";
-    case "bilibili":
-      return "tone-bili";
-    case "mega":
-      return "tone-mega";
-    default:
-      return "tone-unknown";
+async function notifyJob(title: string, body: string): Promise<void> {
+  try {
+    let granted = await isPermissionGranted();
+    if (!granted) {
+      const permission = await requestPermission();
+      granted = permission === "granted";
+    }
+    if (granted) {
+      sendNotification({ title, body });
+      return;
+    }
+  } catch {
+    /* fall through to web Notification */
   }
-}
-
-function newClientId(): string {
-  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    if (typeof Notification !== "undefined") {
+      if (Notification.permission === "granted") {
+        new Notification(title, { body });
+      } else if (Notification.permission !== "denied") {
+        const p = await Notification.requestPermission();
+        if (p === "granted") new Notification(title, { body });
+      }
+    }
+  } catch {
+    /* notifications optional */
+  }
 }
 
 export default function App() {
@@ -191,6 +147,12 @@ export default function App() {
   const [ffmpegBusy, setFfmpegBusy] = useState(false);
   const [ffmpegPrompt, setFfmpegPrompt] = useState(false);
   const [clipboardHint, setClipboardHint] = useState<string | null>(null);
+  const [clipboardUrls, setClipboardUrls] = useState<string[]>([]);
+  const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
+  const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
+  const [dragOver, setDragOver] = useState(false);
+  const [updaterInfo, setUpdaterInfo] = useState<UpdaterInfo | null>(null);
+  const [urlDraft, setUrlDraft] = useState("");
   const [historyRows, setHistoryRows] = useState<HistoryEntry[]>([]);
   const [historyQuery, setHistoryQuery] = useState("");
   const [historySite, setHistorySite] = useState("");
@@ -211,18 +173,66 @@ export default function App() {
   const [relinkPath, setRelinkPath] = useState("");
   const startingRef = useRef(false);
   const resumedRef = useRef(false);
+  const jobsRef = useRef<JobRow[]>([]);
+  const settingsRef = useRef(settings);
+  const notifiedRef = useRef<Set<string>>(new Set());
 
   const isBilibili = resolveInfo?.site === "bilibili" && resolveInfo.supported;
+  const detectedUrls = useMemo(() => extractUrls(urlDraft || url), [urlDraft, url]);
+  const primaryDetected = detectedUrls[0] ? detectSite(detectedUrls[0]) : null;
 
-  const canDownload = useMemo(
-    () =>
-      Boolean(url.trim()) &&
-      Boolean(output) &&
-      resolveInfo?.supported === true &&
-      !resolving &&
-      !probing,
-    [url, output, resolveInfo, resolving, probing],
-  );
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  useEffect(() => {
+    applyTheme((settings.themeMode || "system") as ThemeMode);
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyTheme((settingsRef.current.themeMode || "system") as ThemeMode);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [settings.themeMode]);
+
+  useEffect(() => {
+    void invoke<UpdaterInfo>("updater_status")
+      .then(setUpdaterInfo)
+      .catch(() =>
+        setUpdaterInfo({
+          enabled: false,
+          reason: "無法讀取更新狀態",
+          pubkeyPresent: false,
+        }),
+      );
+  }, []);
+
+  useEffect(() => {
+    const active = jobs.filter((j) => j.status === "running" || j.status === "queued").length;
+    const failed = jobs.filter((j) => j.status === "error").length;
+    const tip = `整合下載器 · 進行 ${active} · 失敗 ${failed}`;
+    void invoke("set_tray_tooltip", { text: tip }).catch(() => {});
+  }, [jobs]);
+
+  const canDownload = useMemo(() => {
+    const out = Boolean(output || settings.downloadDir);
+    if (!out || resolving || probing) return false;
+    if (detectedUrls.length > 1) {
+      return detectedUrls.some((u) => detectSite(u) != null);
+    }
+    return Boolean((urlDraft || url).trim()) && resolveInfo?.supported === true;
+  }, [
+    url,
+    urlDraft,
+    output,
+    settings.downloadDir,
+    resolveInfo,
+    resolving,
+    probing,
+    detectedUrls,
+  ]);
 
   const refreshFfmpeg = useCallback(async () => {
     try {
@@ -266,6 +276,14 @@ export default function App() {
           classificationRules: Array.isArray(loaded.classificationRules)
             ? loaded.classificationRules
             : [],
+          megaToolPath: loaded.megaToolPath ?? "",
+          clipboardWatcher: Boolean(loaded.clipboardWatcher),
+          notificationsEnabled:
+            loaded.notificationsEnabled == null
+              ? true
+              : Boolean(loaded.notificationsEnabled),
+          minimizeToTray: Boolean(loaded.minimizeToTray),
+          themeMode: loaded.themeMode || "system",
         };
         setSettings(merged);
         setSettingsDraft(merged);
@@ -717,27 +735,90 @@ export default function App() {
   }, [jobs, settings.maxConcurrent, launchJob]);
 
   useEffect(() => {
+    for (const job of jobs) {
+      if (job.status !== "done" && job.status !== "error") continue;
+      const key = `${job.clientId}:${job.status}:${job.id || ""}`;
+      if (notifiedRef.current.has(key)) continue;
+      notifiedRef.current.add(key);
+      if (!settings.notificationsEnabled) continue;
+      if (job.status === "done") {
+        void notifyJob("下載完成", `${job.site} · ${job.title}`);
+      } else {
+        void notifyJob("下載失敗", `${job.site} · ${job.message || job.title}`);
+      }
+    }
+  }, [jobs, settings.notificationsEnabled]);
+
+  useEffect(() => {
+    const offerClipboard = async () => {
+      if (!settings.clipboardWatcher) return;
+      try {
+        if (!navigator.clipboard?.readText) return;
+        const text = await navigator.clipboard.readText();
+        const found = extractUrls(text);
+        if (found.length === 0) return;
+        const known = new Set(
+          [url, urlDraft, ...jobsRef.current.map((j) => j.url)].map((s) => s.trim()),
+        );
+        const fresh = found.filter((u) => !known.has(u));
+        if (fresh.length === 0) return;
+        setClipboardUrls(fresh);
+        setClipboardHint(fresh[0]);
+      } catch {
+        /* clipboard permission optional */
+      }
+    };
+    // watcher off by default; when on, poll + focus
+    void offerClipboard();
+    const interval = settings.clipboardWatcher
+      ? window.setInterval(() => void offerClipboard(), 4000)
+      : 0;
     const onFocus = () => {
-      void (async () => {
-        try {
-          if (!navigator.clipboard?.readText) return;
-          const text = await navigator.clipboard.readText();
-          const found = extractUrl(text);
-          if (!found) return;
-          if (found === url.trim()) return;
-          setClipboardHint(found);
-        } catch {
-          /* clipboard permission optional */
-        }
-      })();
+      if (settings.clipboardWatcher) void offerClipboard();
     };
     window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onFocus);
     return () => {
       window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onFocus);
+      if (interval) window.clearInterval(interval);
     };
-  }, [url]);
+  }, [settings.clipboardWatcher, url, urlDraft]);
+
+  useEffect(() => {
+    const onDragOver = (e: DragEvent) => {
+      if (!e.dataTransfer) return;
+      const types = Array.from(e.dataTransfer.types || []);
+      if (types.includes("text/uri-list") || types.includes("text/plain") || types.includes("Files")) {
+        e.preventDefault();
+        setDragOver(true);
+      }
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (e.target === document.documentElement || e.target === document.body) {
+        setDragOver(false);
+      }
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const text =
+        e.dataTransfer?.getData("text/uri-list") ||
+        e.dataTransfer?.getData("text/plain") ||
+        "";
+      const found = extractUrls(text);
+      if (found.length === 0) return;
+      setUrlDraft(found.join("\n"));
+      setUrl(found[0]);
+      setPage("download");
+    };
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, []);
 
   async function chooseFolder(forSettings = false) {
     const selected = await open({
@@ -766,21 +847,25 @@ export default function App() {
     }
   }
 
-  function enqueueDownload(overrides?: Partial<JobRow>) {
-    if (!canDownload && !overrides?.url) return;
-    setError(null);
-    const site = overrides?.site ?? resolveInfo?.site ?? "unknown";
+  function enqueueOne(targetUrl: string, overrides?: Partial<JobRow>) {
+    const detected = detectSite(targetUrl);
+    const site =
+      overrides?.site ??
+      (targetUrl === url.trim() ? resolveInfo?.site : null) ??
+      detected?.site ??
+      "unknown";
     const job: JobRow = {
       id: "",
       clientId: newClientId(),
-      url: overrides?.url ?? url.trim(),
+      url: targetUrl,
       site,
       title:
         overrides?.title ??
-        probeInfo?.title ??
-        resolveInfo?.label ??
+        (targetUrl === url.trim() ? probeInfo?.title : null) ??
+        (targetUrl === url.trim() ? resolveInfo?.label : null) ??
+        detected?.label ??
         "下載中",
-      output: overrides?.output ?? output,
+      output: overrides?.output ?? (output || settings.downloadDir),
       quality:
         overrides?.quality ??
         (site === "bilibili"
@@ -810,6 +895,62 @@ export default function App() {
       status: "queued",
     };
     setJobs((prev) => [job, ...prev]);
+  }
+
+  function enqueueDownload(overrides?: Partial<JobRow>) {
+    const targets = overrides?.url
+      ? [overrides.url]
+      : detectedUrls.length > 0
+        ? detectedUrls
+        : url.trim()
+          ? [url.trim()]
+          : [];
+    if (targets.length === 0) return;
+    if (!overrides?.url && !canDownload) return;
+    setError(null);
+    for (const target of targets) {
+      enqueueOne(target, overrides);
+    }
+    setClipboardHint(null);
+    setClipboardUrls([]);
+  }
+
+  function reorderJob(clientId: string, direction: -1 | 1) {
+    setJobs((prev) => {
+      const index = prev.findIndex((j) => j.clientId === clientId);
+      if (index < 0) return prev;
+      const next = index + direction;
+      if (next < 0 || next >= prev.length) return prev;
+      const copy = [...prev];
+      const tmp = copy[index];
+      copy[index] = copy[next];
+      copy[next] = tmp;
+      return copy;
+    });
+  }
+
+  function toggleJobSelect(clientId: string) {
+    setSelectedJobs((prev) => {
+      const next = new Set(prev);
+      if (next.has(clientId)) next.delete(clientId);
+      else next.add(clientId);
+      return next;
+    });
+  }
+
+  async function persistConcurrency(n: number) {
+    const value = Math.min(8, Math.max(1, n || 1));
+    setSettings((s) => ({ ...s, maxConcurrent: value }));
+    setSettingsDraft((s) => ({ ...s, maxConcurrent: value }));
+    try {
+      const saved = await invoke<AppSettings>("save_settings", {
+        settings: { ...settings, maxConcurrent: value },
+      });
+      setSettings(saved);
+      setSettingsDraft(saved);
+    } catch (e) {
+      setError(humanizeError(String(e)));
+    }
   }
 
   function enqueueFromBilibiliParse(opts: {
@@ -911,6 +1052,10 @@ export default function App() {
           : j,
       ),
     );
+  }
+
+  function resumeJob(job: JobRow) {
+    retryJob(job);
   }
 
   async function openFolder(path: string) {
@@ -1116,14 +1261,19 @@ export default function App() {
       : settings.iwaraQuality;
 
   return (
-    <div className="app">
-      <header className="hero">
+    <div className={dragOver ? "app drag-over" : "app"}>
+      {dragOver && (
+        <div className="drop-overlay" aria-hidden>
+          <p>放開以加入連結</p>
+        </div>
+      )}
+      <header className="hero shell-hero">
         <div className="brand-mark" aria-hidden />
         <div className="brand-copy">
           <p className="brand">整合下載器</p>
-          <h1>貼上網址，辨識站點，一次下載</h1>
+          <h1>統一佇列，跨站下載</h1>
           <p className="lede">
-            統一核心支援 Gofile、Bunkr、Iwara、Bilibili 與 MEGA。
+            貼上或多筆拖放網址；進度、暫停與修復集中管理。
           </p>
         </div>
         <nav className="top-nav" aria-label="主要導覽">
@@ -1132,7 +1282,7 @@ export default function App() {
             className={page === "download" ? "nav active" : "nav"}
             onClick={() => setPage("download")}
           >
-            下載
+            佇列
           </button>
           <button
             type="button"
@@ -1223,31 +1373,41 @@ export default function App() {
       )}
 
       {page === "bilibili" ? (
-        <BilibiliParse
-          settings={settings}
-          output={output || settings.downloadDir}
-          onEnqueue={enqueueFromBilibiliParse}
-        />
+        <div className="page-shell">
+          <BilibiliParse
+            settings={settings}
+            output={output || settings.downloadDir}
+            onEnqueue={enqueueFromBilibiliParse}
+          />
+        </div>
       ) : page === "account" ? (
-        <BilibiliAccount />
+        <div className="page-shell">
+          <BilibiliAccount />
+        </div>
       ) : page === "iwara" ? (
-        <BrowsePage
-          downloadDir={settings.downloadDir}
-          cloudflareBypass={Boolean(settings.iwaraCloudflareBypass)}
-          onEnqueueStarted={() => setPage("download")}
-        />
+        <div className="page-shell">
+          <BrowsePage
+            downloadDir={settings.downloadDir}
+            cloudflareBypass={Boolean(settings.iwaraCloudflareBypass)}
+            onEnqueueStarted={() => setPage("download")}
+          />
+        </div>
       ) : page === "iwara-home" ? (
-        <HomePage
-          downloadDir={settings.downloadDir}
-          cloudflareBypass={Boolean(settings.iwaraCloudflareBypass)}
-          onEnqueueStarted={() => setPage("download")}
-        />
+        <div className="page-shell">
+          <HomePage
+            downloadDir={settings.downloadDir}
+            cloudflareBypass={Boolean(settings.iwaraCloudflareBypass)}
+            onEnqueueStarted={() => setPage("download")}
+          />
+        </div>
       ) : page === "iwara-subs" ? (
-        <SubscriptionsPage
-          downloadDir={settings.downloadDir}
-          cloudflareBypass={Boolean(settings.iwaraCloudflareBypass)}
-          onEnqueueStarted={() => setPage("download")}
-        />
+        <div className="page-shell">
+          <SubscriptionsPage
+            downloadDir={settings.downloadDir}
+            cloudflareBypass={Boolean(settings.iwaraCloudflareBypass)}
+            onEnqueueStarted={() => setPage("download")}
+          />
+        </div>
       ) : page === "history" ? (
         <section className="composer settings" aria-label="下載歷史">
           <div className="queue-head">
@@ -1534,9 +1694,22 @@ export default function App() {
         <section className="composer settings" aria-label="設定">
           <div className="queue-head">
             <h2>設定</h2>
-            <p>偏好會儲存在本機應用資料目錄</p>
+            <p>單一設定頁：下載目錄、命名、後處理、網路、帳號、工具、外觀與更新</p>
           </div>
 
+          <div className="settings-toc" aria-label="設定區塊">
+            <a href="#settings-download">下載</a>
+            <a href="#settings-naming">命名／規則</a>
+            <a href="#settings-postprocess">後處理</a>
+            <a href="#settings-network">網路</a>
+            <a href="#settings-accounts">帳號</a>
+            <a href="#settings-tools">工具</a>
+            <a href="#settings-shell">通知／托盤</a>
+            <a href="#settings-import">匯入匯出</a>
+          </div>
+
+          <div className="settings-block" id="settings-download">
+            <h3>下載目錄與並發</h3>
           <label className="field">
             <span>預設下載資料夾</span>
             <div className="folder-row">
@@ -1607,7 +1780,9 @@ export default function App() {
             </label>
           </div>
 
-          <div className="settings-block">
+          </div>
+
+          <div className="settings-block" id="settings-postprocess">
             <h3>後處理（NFO／封面）</h3>
             <p className="hint">
               全域開關開啟後，再依站點勾選是否輸出；封面可選嵌入 mp4／mkv
@@ -1707,8 +1882,8 @@ export default function App() {
             </div>
           </div>
 
-          <div className="settings-block">
-            <h3>Iwara</h3>
+          <div className="settings-block" id="settings-accounts">
+            <h3>帳號 · Iwara</h3>
             <label className="field compact">
               <span>預設畫質</span>
               <select
@@ -1746,7 +1921,10 @@ export default function App() {
           </div>
 
           <div className="settings-block">
-            <h3>Bilibili</h3>
+            <h3>帳號 · Bilibili</h3>
+            <p className="hint">
+              QR／Cookie 登入請到導覽「帳號」頁；此處為下載預設。
+            </p>
             <div className="settings-grid">
               <label className="field compact">
                 <span>預設分 P</span>
@@ -1779,8 +1957,8 @@ export default function App() {
             </div>
           </div>
 
-          <div className="settings-block">
-            <h3>FFmpeg</h3>
+          <div className="settings-block" id="settings-tools">
+            <h3>工具 · FFmpeg</h3>
             <p className="hint">
               {ffmpegInfo?.found
                 ? `已找到：${ffmpegInfo.path}（${ffmpegInfo.source || "unknown"}）`
@@ -1826,6 +2004,51 @@ export default function App() {
           </div>
 
           <div className="settings-block">
+            <h3>工具 · MEGA</h3>
+            <p className="hint">
+              指定 megatools 或 mega-get 路徑（等同 --mega-tool／UDL_MEGA_TOOL）
+            </p>
+            <label className="field">
+              <span>MEGA 工具路徑</span>
+              <div className="folder-row">
+                <input
+                  value={settingsDraft.megaToolPath}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      megaToolPath: e.target.value,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="空白＝自動尋找 PATH"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    void (async () => {
+                      const selected = await open({
+                        multiple: false,
+                        title: "選擇 MEGA 工具",
+                      });
+                      if (typeof selected === "string") {
+                        setSettingsDraft((s) => ({
+                          ...s,
+                          megaToolPath: selected,
+                        }));
+                        setSettingsDirty(true);
+                      }
+                    })();
+                  }}
+                >
+                  瀏覽
+                </button>
+              </div>
+            </label>
+          </div>
+
+          <div className="settings-block" id="settings-naming">
             <h3>命名模板</h3>
             <p className="hint">
               使用 metadata 欄位，例如{" "}
@@ -2114,7 +2337,7 @@ export default function App() {
             {rulesTestResult && <p className="hint">{rulesTestResult}</p>}
           </div>
 
-<div className="settings-block">
+<div className="settings-block" id="settings-network">
             <h3>網路</h3>
             <p className="hint">
               限速、代理與 User-Agent 套用至所有站點；aria2 預設關閉，連不上時自動改用內建引擎。詳見 docs/networking.md。
@@ -2340,6 +2563,137 @@ export default function App() {
           </div>
 
 
+          <div className="settings-block" id="settings-shell">
+            <h3>通知／托盤／外觀</h3>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.notificationsEnabled}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    notificationsEnabled: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>任務完成／失敗時系統通知</span>
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.minimizeToTray}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    minimizeToTray: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>關閉視窗時最小化到系統列／選單列</span>
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.clipboardWatcher}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    clipboardWatcher: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>剪貼簿監看（預設關閉；偵測到支援網址時詢問是否加入）</span>
+            </label>
+            <label className="field compact">
+              <span>主題</span>
+              <select
+                value={settingsDraft.themeMode}
+                onChange={(e) => {
+                  const value = e.target.value as ThemeMode;
+                  setSettingsDraft((s) => ({ ...s, themeMode: value }));
+                  setSettingsDirty(true);
+                  applyTheme(value);
+                }}
+              >
+                <option value="system">跟隨系統</option>
+                <option value="light">淺色</option>
+                <option value="dark">深色</option>
+              </select>
+            </label>
+            <p className="hint">
+              系統列圖示會顯示進行中／失敗數量；左鍵點擊可顯示主視窗。
+            </p>
+          </div>
+
+          <div className="settings-block" id="settings-updater">
+            <h3>應用程式更新</h3>
+            <p className="hint">
+              {updaterInfo?.reason ||
+                "檢查 GitHub Releases；未設定簽章公鑰時停用自動更新。"}
+            </p>
+            <p className="hint">
+              狀態：{updaterInfo?.enabled ? "已啟用" : "已停用"} · 詳見 docs/updater.md
+            </p>
+          </div>
+
+          <div className="settings-block" id="settings-import">
+            <h3>匯入／匯出設定</h3>
+            <p className="hint">
+              匯出為 JSON，不含密鑰（代理密碼、aria2 secret、帳號憑證）。
+            </p>
+            <div className="actions">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  const blob = new Blob([exportSettingsJson(settingsDraft)], {
+                    type: "application/json",
+                  });
+                  const a = document.createElement("a");
+                  a.href = URL.createObjectURL(blob);
+                  a.download = "unified-downloader-settings.json";
+                  a.click();
+                  URL.revokeObjectURL(a.href);
+                }}
+              >
+                匯出 JSON
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  const input = document.createElement("input");
+                  input.type = "file";
+                  input.accept = "application/json,.json";
+                  input.onchange = () => {
+                    const file = input.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      try {
+                        const next = importSettingsJson(
+                          String(reader.result || ""),
+                          settingsDraft,
+                        );
+                        setSettingsDraft(next);
+                        setSettingsDirty(true);
+                      } catch (e) {
+                        setError(humanizeError(String(e)));
+                      }
+                    };
+                    reader.readAsText(file);
+                  };
+                  input.click();
+                }}
+              >
+                匯入 JSON
+              </button>
+            </div>
+          </div>
+
           <div className="actions">
             <button
               type="button"
@@ -2355,54 +2709,112 @@ export default function App() {
         <>
           <section className="composer" aria-label="下載表單">
             <label className="field">
-              <span>網址</span>
-              <div className="url-row">
-                <input
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
+              <span>網址（可多筆，一行一個；亦可拖放到視窗）</span>
+              <div className="url-row url-row-multi">
+                <textarea
+                  value={urlDraft || url}
+                  rows={Math.min(6, Math.max(2, detectedUrls.length || 2))}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setUrlDraft(value);
+                    const urls = extractUrls(value);
+                    setUrl(urls[0] || value.trim());
+                  }}
                   onPaste={(e) => {
                     const text = e.clipboardData.getData("text");
-                    const found = extractUrl(text);
-                    if (found && found !== text.trim()) {
+                    const found = extractUrls(text);
+                    if (found.length > 1) {
                       e.preventDefault();
-                      setUrl(found);
+                      const next = found.join("\n");
+                      setUrlDraft(next);
+                      setUrl(found[0]);
+                    } else if (found.length === 1 && found[0] !== text.trim()) {
+                      e.preventDefault();
+                      setUrlDraft(found[0]);
+                      setUrl(found[0]);
                     }
                   }}
-                  placeholder="gofile / bunkr / iwara / bilibili / mega.nz 連結"
+                  placeholder={"https://…\nhttps://…"}
                   spellCheck={false}
                   autoCapitalize="off"
                   autoCorrect="off"
                 />
-                {resolveInfo?.site ? (
-                  <span className={`badge ${siteTone(resolveInfo.site)}`}>
-                    {resolveInfo.label ?? resolveInfo.site}
-                    {resolveInfo.status === "stub" ? " · 即將推出" : ""}
-                  </span>
-                ) : resolving ? (
-                  <span className="badge tone-unknown">辨識中</span>
-                ) : url.trim() ? (
-                  <span className="badge tone-unknown">不支援</span>
-                ) : null}
+                <div className="url-badges">
+                  {detectedUrls.slice(0, 5).map((u) => {
+                    const site = detectSite(u);
+                    return (
+                      <span
+                        key={u}
+                        className={`badge ${siteTone(site?.site || resolveInfo?.site)}`}
+                        title={u}
+                      >
+                        {site?.label || resolveInfo?.label || "辨識中"}
+                      </span>
+                    );
+                  })}
+                  {detectedUrls.length > 5 && (
+                    <span className="badge tone-unknown">+{detectedUrls.length - 5}</span>
+                  )}
+                  {detectedUrls.length === 0 && resolving && (
+                    <span className="badge tone-unknown">辨識中</span>
+                  )}
+                  {detectedUrls.length === 1 &&
+                    !resolving &&
+                    resolveInfo &&
+                    !resolveInfo.supported && (
+                      <span className="badge tone-unknown">不支援</span>
+                    )}
+                  {primaryDetected && detectedUrls.length === 0 && (
+                    <span className={`badge ${siteTone(primaryDetected.site)}`}>
+                      {primaryDetected.label}
+                    </span>
+                  )}
+                </div>
               </div>
             </label>
 
-            {clipboardHint && clipboardHint !== url.trim() && (
+            {clipboardHint && settings.clipboardWatcher && (
               <div className="clipboard-hint">
-                <span>剪貼簿偵測到連結</span>
+                <span>
+                  剪貼簿偵測到 {clipboardUrls.length || 1} 個支援連結
+                  {detectSite(clipboardHint) ? (
+                    <span className={`badge ${siteTone(detectSite(clipboardHint)?.site)}`}>
+                      {detectSite(clipboardHint)?.label}
+                    </span>
+                  ) : null}
+                </span>
                 <button
                   type="button"
                   className="ghost"
                   onClick={() => {
-                    setUrl(clipboardHint);
+                    const list = clipboardUrls.length > 0 ? clipboardUrls : [clipboardHint];
+                    setUrlDraft(list.join("\n"));
+                    setUrl(list[0]);
                     setClipboardHint(null);
+                    setClipboardUrls([]);
                   }}
                 >
-                  貼上
+                  加入輸入框
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => {
+                    const list = clipboardUrls.length > 0 ? clipboardUrls : [clipboardHint];
+                    for (const u of list) enqueueOne(u);
+                    setClipboardHint(null);
+                    setClipboardUrls([]);
+                  }}
+                >
+                  直接入隊
                 </button>
                 <button
                   type="button"
                   className="ghost"
-                  onClick={() => setClipboardHint(null)}
+                  onClick={() => {
+                    setClipboardHint(null);
+                    setClipboardUrls([]);
+                  }}
                 >
                   忽略
                 </button>
@@ -2541,177 +2953,84 @@ export default function App() {
                 disabled={!canDownload}
                 onClick={() => enqueueDownload()}
               >
-                加入佇列
+                {detectedUrls.length > 1
+                  ? `加入佇列（${detectedUrls.length}）`
+                  : "加入佇列"}
               </button>
             </div>
           </section>
 
-          <section className="queue" aria-label="下載清單">
-            <div className="queue-head">
-              <h2>下載清單</h2>
-              <p>
-                {jobs.length === 0
-                  ? "尚未有任務"
-                  : `${jobs.length} 個任務 · 同時 ${settings.maxConcurrent} 個`}
-              </p>
-            </div>
-
-            {jobs.length === 0 ? (
-              <div className="empty">
-                <p>貼上公開連結後加入佇列，進度與速度會顯示在這裡。</p>
-              </div>
-            ) : (
-              <ul className="jobs">
-                {jobs.map((job) => (
-                  <li key={job.clientId} className="job">
-                    <div className="job-top">
-                      <span className={`badge ${siteTone(job.site)}`}>
-                        {job.site}
-                      </span>
-                      <div className="job-title">
-                        <strong>{job.title}</strong>
-                        <span>{job.url}</span>
-                      </div>
-                      <div className="job-actions">
-                        {job.status === "running" && (
-                          <>
-                            <button
-                              type="button"
-                              className="ghost"
-                              onClick={() => void pauseJob(job)}
-                            >
-                              暫停
-                            </button>
-                            <button
-                              type="button"
-                              className="ghost danger"
-                              onClick={() => void cancelJob(job)}
-                            >
-                              取消
-                            </button>
-                          </>
-                        )}
-                        {job.status === "queued" && (
-                          <button
-                            type="button"
-                            className="ghost danger"
-                            onClick={() => void cancelJob(job)}
-                          >
-                            取消
-                          </button>
-                        )}
-                        {(job.status === "error" ||
-                          job.status === "cancelled" ||
-                          job.status === "paused") && (
-                          <button
-                            type="button"
-                            className="ghost"
-                            onClick={() => retryJob(job)}
-                          >
-                            重試
-                          </button>
-                        )}
-                        {job.files.some((f) => f.path) && (
-                          <button
-                            type="button"
-                            className="ghost"
-                            onClick={() => {
-                              const file = job.files.find((f) => f.path);
-                              if (file?.path) void openFolder(file.path);
-                            }}
-                          >
-                            開啟檔案
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="ghost"
-                          onClick={() => void openFolder(job.output)}
-                        >
-                          開啟資料夾
-                        </button>
-                      </div>
-                    </div>
-
-                    <ul className="files">
-                      {job.files.length === 0 && job.status === "running" && (
-                        <li className="file muted">解析中…</li>
-                      )}
-                      {job.files.length === 0 && job.status === "queued" && (
-                        <li className="file muted">排隊等待中…</li>
-                      )}
-                      {job.files.map((file) => {
-                        const pct =
-                          file.total && file.total > 0
-                            ? Math.min(100, (file.bytes / file.total) * 100)
-                            : file.status === "done"
-                              ? 100
-                              : file.status === "merging"
-                                ? 95
-                                : 0;
-                        return (
-                          <li key={file.id} className="file">
-                            <div className="file-meta">
-                              <span className="name">{file.name}</span>
-                              <span className="stats">
-                                {formatBytes(file.bytes)}
-                                {file.total != null
-                                  ? ` / ${formatBytes(file.total)}`
-                                  : ""}
-                                {" · "}
-                                {formatSpeed(file.bps)}
-                                {" · "}
-                                {file.alreadyDownloaded
-                                  ? "已下載"
-                                  : statusLabel(file.status)}
-                              </span>
-                            </div>
-                            <div className="bar" aria-hidden>
-                              <i
-                                style={{
-                                  width: `${
-                                    file.status === "skipped" || file.alreadyDownloaded
-                                      ? 100
-                                      : pct
-                                  }%`,
-                                }}
-                              />
-                            </div>
-                            {file.message && file.status === "error" && (
-                              <p className="error">{file.message}</p>
-                            )}
-                            {file.message &&
-                              (file.status === "skipped" || file.alreadyDownloaded) && (
-                              <p className="hint">{file.message}</p>
-                            )}
-                            {(file.status === "done" || file.status === "skipped") &&
-                              file.path && (
-                              <button
-                                type="button"
-                                className="linkish"
-                                onClick={() => void openFolder(file.path!)}
-                              >
-                                開啟此檔
-                              </button>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
-
-                    {job.status !== "running" && (
-                      <p className="job-foot">
-                        狀態：{statusLabel(job.status)}
-                        {job.ok != null ? ` · 成功 ${job.ok}` : ""}
-                        {job.failed != null ? ` · 失敗 ${job.failed}` : ""}
-                        {job.message ? ` · ${job.message}` : ""}
-                      </p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          <QueueDashboard
+            jobs={jobs}
+            filter={queueFilter}
+            selected={selectedJobs}
+            maxConcurrent={settings.maxConcurrent}
+            onFilterChange={setQueueFilter}
+            onMaxConcurrentChange={(n) => void persistConcurrency(n)}
+            onToggleSelect={toggleJobSelect}
+            onSelectAllVisible={() => {
+              const ids = jobs
+                .filter((j) => {
+                  switch (queueFilter) {
+                    case "active":
+                      return j.status === "running";
+                    case "queued":
+                      return j.status === "queued";
+                    case "paused":
+                      return j.status === "paused";
+                    case "failed":
+                      return j.status === "error" || j.status === "cancelled";
+                    case "done":
+                      return j.status === "done";
+                    default:
+                      return true;
+                  }
+                })
+                .map((j) => j.clientId);
+              setSelectedJobs(new Set(ids));
+            }}
+            onClearSelection={() => setSelectedJobs(new Set())}
+            onPause={(job) => void pauseJob(job)}
+            onResume={resumeJob}
+            onCancel={(job) => void cancelJob(job)}
+            onRetry={retryJob}
+            onReorder={reorderJob}
+            onOpenFolder={(path) => void openFolder(path)}
+            onOpenRepair={() => setPage("repair")}
+            onBulkPause={() => {
+              for (const job of jobs) {
+                if (selectedJobs.has(job.clientId) && job.status === "running") {
+                  void pauseJob(job);
+                }
+              }
+            }}
+            onBulkCancel={() => {
+              for (const job of jobs) {
+                if (
+                  selectedJobs.has(job.clientId) &&
+                  (job.status === "running" || job.status === "queued")
+                ) {
+                  void cancelJob(job);
+                }
+              }
+            }}
+            onBulkRetry={() => {
+              for (const job of jobs) {
+                if (
+                  selectedJobs.has(job.clientId) &&
+                  (job.status === "error" ||
+                    job.status === "cancelled" ||
+                    job.status === "paused")
+                ) {
+                  retryJob(job);
+                }
+              }
+            }}
+            onBulkClearFinished={() => {
+              setJobs((prev) => prev.filter((j) => j.status !== "done"));
+              setSelectedJobs(new Set());
+            }}
+          />
         </>
       )}
     </div>

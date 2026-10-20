@@ -79,6 +79,12 @@ export type AppSettings = {
   cdnHosts: string;
   preferCdn: boolean;
   customHost: string;
+  // tools / shell (v0.8)
+  megaToolPath: string;
+  clipboardWatcher: boolean;
+  notificationsEnabled: boolean;
+  minimizeToTray: boolean;
+  themeMode: "system" | "light" | "dark";
 };
 
 export const default_site_flags = (): Record<SiteId, boolean> => ({
@@ -122,7 +128,56 @@ export const default_settings: AppSettings = {
   cdnHosts: "",
   preferCdn: false,
   customHost: "",
+  megaToolPath: "",
+  clipboardWatcher: false,
+  notificationsEnabled: true,
+  minimizeToTray: false,
+  themeMode: "system",
 };
+
+/** fields never written to exported settings JSON */
+export const secret_setting_keys = [
+  "aria2RpcSecret",
+  "proxyPassword",
+  "proxyUsername",
+] as const;
+
+export function exportSettingsJson(settings: AppSettings): string {
+  const payload: Record<string, unknown> = { ...settings };
+  for (const key of secret_setting_keys) {
+    delete payload[key];
+  }
+  // aria2 secret is on settings object
+  delete payload.aria2RpcSecret;
+  return `${JSON.stringify(payload, null, 2)}\n`;
+}
+
+export function importSettingsJson(
+  raw: string,
+  current: AppSettings,
+): AppSettings {
+  const parsed = JSON.parse(raw) as Partial<AppSettings>;
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("設定 JSON 格式無效");
+  }
+  const merged: AppSettings = {
+    ...current,
+    ...parsed,
+    nfoSites: { ...current.nfoSites, ...(parsed.nfoSites || {}) },
+    coverSites: { ...current.coverSites, ...(parsed.coverSites || {}) },
+    siteTemplates: { ...current.siteTemplates, ...(parsed.siteTemplates || {}) },
+    typeTemplates: { ...current.typeTemplates, ...(parsed.typeTemplates || {}) },
+    classificationRules: parsed.classificationRules ?? current.classificationRules,
+  };
+  // never import secrets from file
+  merged.aria2RpcSecret = current.aria2RpcSecret;
+  if (!merged.megaToolPath) merged.megaToolPath = "";
+  if (merged.clipboardWatcher == null) merged.clipboardWatcher = false;
+  if (merged.notificationsEnabled == null) merged.notificationsEnabled = true;
+  if (merged.minimizeToTray == null) merged.minimizeToTray = false;
+  if (!merged.themeMode) merged.themeMode = "system";
+  return merged;
+}
 
 export type FfmpegStatus = {
   found: boolean;
@@ -213,13 +268,7 @@ export type NamingPreview = {
   metadata: Record<string, unknown>;
 };
 
-const url_pattern = /https?:\/\/[^\s<>"'`]+/i;
-
-export function extractUrl(text: string): string | null {
-  const match = text.trim().match(url_pattern);
-  if (!match) return null;
-  return match[0].replace(/[.,);\]}>]+$/, "");
-}
+export { extractUrl, extractUrls, detectSite } from "./urls";
 
 export function history_cover_path(entry: HistoryEntry): string | null {
   if (entry.cover_path) return entry.cover_path;

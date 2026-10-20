@@ -51,6 +51,15 @@
   "plugins": {
     "shell": {
       "open": true
+    },
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/william563214/unified-downloader/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }
