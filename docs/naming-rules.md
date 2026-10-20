@@ -144,7 +144,9 @@ GUI 設定頁可編輯模板（含即時預覽）與規則（新增／排序／�
 | `partial` | `.part` 殘留 | cleanup-partials／requeue |
 | `size_mismatch` | 大小與歷史不符 | requeue／remove-stale |
 | `hash_mismatch` | `--verify-hash` 時 sha256 不符 | requeue／remove-stale |
-| `orphan_file` | 輸出目錄有檔但 DB 無紀錄 | relink |
+| `orphan_file` | 歷史 output 目錄內、符合已知副檔名且不在忽略清單、但 DB 無紀錄 | relink |
+
+orphan 掃描僅限歷史 job 的 `output_dir`（或 `--dir`），且只考慮常見媒體／sidecar 副檔名；預設忽略 `.DS_Store`、`Thumbs.db`、`desktop.ini`、`folder.jpg` 等。
 | `stale_record` | 歷史列缺路徑等 | remove-stale |
 
 ```bash

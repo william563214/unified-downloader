@@ -501,6 +501,7 @@ class mega_extractor(external_extractor):
         # ensure the external tool exists early so GUI/CLI get a clear event
         find_mega_tool(self.mega_tool_override)
         title = f"MEGA {info.kind} {info.handle}"
+        # item_id is the MEGA node handle dedupe also requires size see duplicates.py
         meta = item_metadata(
             site=self.site,
             item_id=info.handle,
@@ -508,14 +509,23 @@ class mega_extractor(external_extractor):
             title=title,
             collection=title if info.kind == "folder" else None,
             collection_id=info.handle if info.kind == "folder" else None,
-            extra={"kind": info.kind, "tool": "external"},
+            extra={
+                "kind": info.kind,
+                "tool": "external",
+                "node_handle": info.handle,
+            },
         )
         placeholder = extracted_file(
             url=info.url,
             name=title,
             relative_dir="",
             size=None,
-            meta={"handle": info.handle, "kind": info.kind, "key": info.key},
+            meta={
+                "handle": info.handle,
+                "node_handle": info.handle,
+                "kind": info.kind,
+                "key": info.key,
+            },
             metadata=meta,
         )
         return extract_result(

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from udl.store.hashutil import sha256_file
+from udl.store.hashutil import hash_file_for_history, sha256_file
 from udl.store.history import delete_history, get_history
 from udl.store.queue import queue_job, save_queue_job
 
@@ -20,6 +20,69 @@ issue_kind = Literal[
     "orphan_file",
     "stale_record",
 ]
+
+# only flag orphans that look like udl media / sidecar outputs
+orphan_known_extensions = {
+    ".mp4",
+    ".m4v",
+    ".mkv",
+    ".webm",
+    ".mov",
+    ".avi",
+    ".flv",
+    ".ts",
+    ".mpeg",
+    ".mpg",
+    ".mp3",
+    ".m4a",
+    ".flac",
+    ".wav",
+    ".aac",
+    ".opus",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".nfo",
+    ".xml",
+    ".ass",
+    ".ssa",
+    ".srt",
+    ".lrc",
+    ".txt",
+    ".json",
+    ".part",
+}
+orphan_ignore_names = {
+    ".ds_store",
+    "thumbs.db",
+    "desktop.ini",
+    ".localized",
+    "folder.jpg",
+    "albumart.jpg",
+    "cover.jpg",
+}
+
+
+def _is_candidate_orphan(
+    path: Path,
+    *,
+    allowed_exts: set[str],
+    ignore_names: set[str],
+) -> bool:
+    """restrict orphan reporting to likely udl outputs."""
+    name = path.name
+    lower = name.lower()
+    if lower in ignore_names:
+        return False
+    if lower.startswith("~$"):
+        return False
+    if lower.startswith(".") and not name.endswith(".part"):
+        return False
+    if name.endswith(".part"):
+        return True
+    return path.suffix.lower() in allowed_exts
 
 
 @dataclass
@@ -88,6 +151,8 @@ def scan_repair(
     output_dirs: list[str | Path] | None = None,
     verify_hash: bool = False,
     include_orphans: bool = True,
+    orphan_extensions: set[str] | None = None,
+    orphan_ignore: set[str] | None = None,
 ) -> repair_scan_result:
     """scan history records versus filesystem."""
     result = repair_scan_result()
@@ -232,6 +297,14 @@ def scan_repair(
     result.scanned_dirs = [str(d) for d in unique_dirs]
 
     if include_orphans:
+        allowed_exts = {
+            e.lower() if e.startswith(".") else f".{e.lower()}"
+            for e in (orphan_extensions or orphan_known_extensions)
+        }
+        ignore_names = {
+            n.lower() for n in (orphan_ignore or orphan_ignore_names)
+        }
+        # history output roots only never scan arbitrary trees outside them
         db_paths = {
             str(Path(r["path"]).resolve())
             for r in files
@@ -244,9 +317,13 @@ def scan_repair(
             for found in directory.rglob("*"):
                 if not found.is_file():
                     continue
+                if not _is_candidate_orphan(
+                    found, allowed_exts=allowed_exts, ignore_names=ignore_names
+                ):
+                    continue
                 name = found.name
                 if name.endswith(".part"):
-                    # partials already handled when matching history; still report orphans
+                    # partials already handled when matching history still report orphans
                     resolved = str(found.resolve())
                     if resolved not in tracked_paths and str(found) not in tracked_paths:
                         result.issues.append(
@@ -286,7 +363,9 @@ def update_file_path(
 ) -> dict[str, Any]:
     path = Path(new_path)
     size = path.stat().st_size if path.is_file() else None
-    digest = sha256_file(path) if recompute_hash and path.is_file() else None
+    digest = (
+        hash_file_for_history(path) if recompute_hash and path.is_file() else None
+    )
     conn.execute(
         """
         update history_files

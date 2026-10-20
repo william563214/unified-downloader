@@ -43,15 +43,15 @@ Python：`from udl.metadata import item_metadata`。
 | Bunkr | album／media slug | title、canonical_url、collection |
 | Iwara | video id | author、tags、duration、thumbnail、views／likes |
 | Bilibili | bvid／`bvid/pN`／au／season | author、pubdate、tags、desc、cover、views／likes、collection；`extra.kind`／`nfo_type` |
-| MEGA | handle | canonical_url、kind（file／folder）；其餘常為空 |
+| MEGA | node handle（`extra.node_handle`） | canonical_url、kind（file／folder）；其餘常為空 |
 
 ## 去重鍵
 
 優先順序（見 `udl.store.duplicates`）：
 
-1. `(site, item_id)`
+1. `(site, item_id)` — **MEGA** 在已知 size 時改為 `(site, node handle, size)`，避免資料夾級 handle 誤判兄弟檔
 2. `canonical_url`／`source_url`
-3. `sha256`（下載完成後寫入歷史）
+3. `sha256`（下載完成後寫入歷史；大檔預設 fast partial，可用 `UDL_HASH_MODE=full|fast|auto|off`）
 4. 本機既有輸出路徑
 
 策略：`--on-duplicate skip|overwrite|rename`（GUI 設定同步）。
@@ -82,7 +82,7 @@ Python：`from udl.metadata import item_metadata`。
 ### 封面
 
 - 來源：`cover_url` 優先，否則 `thumbnail_url`
-- 檔名：`--cover-name poster` → `<stem>-poster.jpg`；`folder` → `folder.jpg`
+- 檔名：`--cover-name poster` → `<stem>-poster.jpg`（預設）；`folder` → `folder.jpg`（同目錄只寫一次，不覆寫）
 - HTTP：走 `udl.download.http`，帶站點 Referer（與下載引擎一致）
 - webp／其他格式：優先以 FFmpeg 轉成 jpg
 - `--embed-cover`：mp4 用 `attached_pic`；mkv 用 attachment（需 FFmpeg）

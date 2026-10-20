@@ -126,6 +126,9 @@ def download_cover(
 
     dest = cover_dest_path(media_path, naming=naming, force_jpg=True)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    # folder.jpg is shared across files in the same directory do not overwrite
+    if naming == "folder" and dest.is_file() and dest.stat().st_size > 0:
+        return dest
     req_headers = cover_headers_for_site(meta.site, page_url=meta.canonical_url)
     if headers:
         req_headers.update(headers)
