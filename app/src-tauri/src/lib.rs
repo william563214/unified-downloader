@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
@@ -562,6 +562,121 @@ async fn bili_login_logout(app: AppHandle) -> Result<serde_json::Value, String> 
 }
 
 #[tauri::command]
+async fn bili_login_sms_captcha(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_bili_login_json(&app, vec!["sms-captcha".into()]).await
+}
+
+#[tauri::command]
+async fn bili_login_sms_send(
+    app: AppHandle,
+    tel: String,
+    cid: Option<String>,
+    token: String,
+    challenge: String,
+    validate: String,
+    seccode: String,
+) -> Result<serde_json::Value, String> {
+    run_bili_login_json(
+        &app,
+        vec![
+            "sms-send".into(),
+            "--tel".into(),
+            tel,
+            "--cid".into(),
+            cid.unwrap_or_else(|| "86".into()),
+            "--token".into(),
+            token,
+            "--challenge".into(),
+            challenge,
+            "--validate".into(),
+            validate,
+            "--seccode".into(),
+            seccode,
+        ],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn bili_login_sms(
+    app: AppHandle,
+    tel: String,
+    code: String,
+    captcha_key: String,
+    cid: Option<String>,
+) -> Result<serde_json::Value, String> {
+    run_bili_login_json(
+        &app,
+        vec![
+            "sms".into(),
+            "--tel".into(),
+            tel,
+            "--cid".into(),
+            cid.unwrap_or_else(|| "86".into()),
+            "--code".into(),
+            code,
+            "--captcha-key".into(),
+            captcha_key,
+        ],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn open_geetest_window(
+    app: AppHandle,
+    gt: String,
+    challenge: String,
+    token: String,
+) -> Result<(), String> {
+    let gt = gt.trim().to_string();
+    let challenge = challenge.trim().to_string();
+    let token = token.trim().to_string();
+    if gt.is_empty() || challenge.is_empty() {
+        return Err("gt and challenge required".into());
+    }
+    // close previous geetest window if any
+    if let Some(existing) = app.get_webview_window("geetest") {
+        let _ = existing.close();
+    }
+    let query = format!(
+        "gt={}&challenge={}&token={}",
+        urlencoding_encode(&gt),
+        urlencoding_encode(&challenge),
+        urlencoding_encode(&token)
+    );
+    let path = format!("geetest.html?{query}");
+    WebviewWindowBuilder::new(&app, "geetest", WebviewUrl::App(path.into()))
+        .title("Bilibili GeeTest")
+        .inner_size(440.0, 520.0)
+        .resizable(true)
+        .build()
+        .map_err(|e| format!("open geetest window: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn close_geetest_window(app: AppHandle) -> Result<(), String> {
+    if let Some(existing) = app.get_webview_window("geetest") {
+        existing.close().map_err(|e| format!("close geetest: {e}"))?;
+    }
+    Ok(())
+}
+
+fn urlencoding_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() * 3);
+    for b in value.as_bytes() {
+        match *b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+#[tauri::command]
 fn get_app_paths(app: AppHandle) -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({
         "appData": app_data_dir(&app)?.to_string_lossy(),
@@ -700,7 +815,13 @@ async fn probe_bilibili(
     urls: Vec<String>,
     page: Option<u32>,
     keyword: Option<String>,
+    expand_all: Option<bool>,
+    filter_title: Option<String>,
+    filter_duration_min: Option<f64>,
+    filter_duration_max: Option<f64>,
+    part_range: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    let expand = expand_all.unwrap_or(false);
     let mut args = vec!["probe".into()];
     for u in &urls {
         let trimmed = u.trim();
@@ -710,6 +831,11 @@ async fn probe_bilibili(
     }
     if args.len() == 1 {
         return Err("no urls".into());
+    }
+    if expand {
+        // JSON-lines so expand progress events can stream to the GUI
+        args.push("--json".into());
+        args.push("--expand-all".into());
     }
     if let Some(p) = page {
         args.push("--page".into());
@@ -722,13 +848,87 @@ async fn probe_bilibili(
             args.push(kw.to_string());
         }
     }
+    if let Some(ft) = filter_title {
+        let ft = ft.trim();
+        if !ft.is_empty() {
+            args.push("--filter-title".into());
+            args.push(ft.to_string());
+        }
+    }
+    if let Some(dmin) = filter_duration_min {
+        args.push("--filter-duration-min".into());
+        args.push(dmin.to_string());
+    }
+    if let Some(dmax) = filter_duration_max {
+        args.push("--filter-duration-max".into());
+        args.push(dmax.to_string());
+    }
+    if let Some(pr) = part_range {
+        let pr = pr.trim();
+        if !pr.is_empty() {
+            args.push("--part-range".into());
+            args.push(pr.to_string());
+        }
+    }
+
+    if !expand {
+        let (mut rx, _child) = spawn_udl(&app, args)?;
+        let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+        if code.unwrap_or(1) != 0 {
+            return Err(format!("udl probe exited {:?}: {stderr}", code));
+        }
+        return serde_json::from_str(stdout.trim())
+            .map_err(|e| format!("parse probe JSON: {e}; raw={stdout}; err={stderr}"));
+    }
+
     let (mut rx, _child) = spawn_udl(&app, args)?;
-    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    let mut probe_payload: Option<serde_json::Value> = None;
+    let mut stderr = String::new();
+    let mut code: Option<i32> = None;
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line_bytes) => {
+                let text = String::from_utf8_lossy(&line_bytes);
+                for raw in text.split('\n') {
+                    let raw = raw.trim();
+                    if raw.is_empty() {
+                        continue;
+                    }
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
+                        let ev = value.get("ev").and_then(|v| v.as_str()).unwrap_or("");
+                        if ev == "expand" {
+                            let _ = app.emit("bili-expand", value);
+                        } else if ev == "probe" {
+                            let mut cleaned = value;
+                            if let Some(obj) = cleaned.as_object_mut() {
+                                obj.remove("ev");
+                            }
+                            probe_payload = Some(cleaned);
+                        } else if ev == "error" {
+                            let msg = value
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("probe failed");
+                            return Err(msg.to_string());
+                        }
+                    }
+                }
+            }
+            CommandEvent::Stderr(line_bytes) => {
+                stderr.push_str(&String::from_utf8_lossy(&line_bytes));
+            }
+            CommandEvent::Terminated(payload) => {
+                code = payload.code;
+                break;
+            }
+            CommandEvent::Error(err) => return Err(err),
+            _ => {}
+        }
+    }
     if code.unwrap_or(1) != 0 {
         return Err(format!("udl probe exited {:?}: {stderr}", code));
     }
-    serde_json::from_str(stdout.trim())
-        .map_err(|e| format!("parse probe JSON: {e}; raw={stdout}; err={stderr}"))
+    probe_payload.ok_or_else(|| format!("probe expand missing payload; err={stderr}"))
 }
 
 #[tauri::command]
@@ -830,6 +1030,8 @@ async fn start_download(
     embed_subtitle: Option<bool>,
     filter_title: Option<String>,
     part_range: Option<String>,
+    expand_all: Option<bool>,
+    node_names: Option<String>,
 ) -> Result<String, String> {
     let settings = load_settings_file(&app);
     let job_id = job_id
@@ -931,6 +1133,16 @@ async fn start_download(
         if !pr.is_empty() {
             args.push("--part-range".into());
             args.push(pr.to_string());
+        }
+    }
+    if expand_all.unwrap_or(false) {
+        args.push("--expand-all".into());
+    }
+    if let Some(nn) = node_names {
+        let nn = nn.trim();
+        if !nn.is_empty() {
+            args.push("--node-names".into());
+            args.push(nn.to_string());
         }
     }
     if cloudflare_bypass.unwrap_or(false) {
@@ -1767,6 +1979,11 @@ pub fn run() {
             bili_login_cookie,
             bili_login_refresh,
             bili_login_logout,
+            bili_login_sms_captcha,
+            bili_login_sms_send,
+            bili_login_sms,
+            open_geetest_window,
+            close_geetest_window,
             ffmpeg_status,
             install_ffmpeg,
             start_download,

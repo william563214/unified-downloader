@@ -1,11 +1,13 @@
 """Danmaku export (xml / ass / json) adapted from Bili23-Downloader patterns.
 
-Uses the classic XML comment API so we do not require protobuf deps.
+Prefers protobuf segmented API (seg.so 6min packs) for full coverage on long
+videos then falls back to classic XML comment API.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -13,7 +15,38 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
 
+from udl.extractors.bilibili.danmaku_proto import parse_dm_seg
+
 danmaku_formats = ("xml", "ass", "json")
+segment_seconds = 360  # bilibili seg.so packs are 6 minutes
+max_segments = 200
+
+
+def merge_entries(chunks: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """dedupe by dmid then sort by stime."""
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for chunk in chunks:
+        for entry in chunk:
+            dmid = str(entry.get("dmid") or "")
+            key = dmid or f"{entry.get('stime')}:{entry.get('text')}:{entry.get('uhash')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(entry)
+    out.sort(key=lambda e: (int(e.get("stime") or 0), str(e.get("dmid") or "")))
+    return out
+
+
+def segment_count(duration_seconds: float | int | None) -> int:
+    """how many seg.so packs to request for a video duration."""
+    if duration_seconds is None or duration_seconds <= 0:
+        return 1
+    return max(1, min(max_segments, math.ceil(float(duration_seconds) / segment_seconds)))
+
+
+def parse_protobuf_danmaku(data: bytes) -> list[dict[str, Any]]:
+    return parse_dm_seg(data)
 
 
 @dataclass

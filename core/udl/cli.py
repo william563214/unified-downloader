@@ -157,6 +157,36 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="bilibili keyword filter for space/favlist server search",
     )
+    p_probe.add_argument(
+        "--expand-all",
+        action="store_true",
+        help=(
+            "bilibili: paginate lists and expand followed bangumi / "
+            "favorite folders / subscribed collections / UP space"
+        ),
+    )
+    p_probe.add_argument(
+        "--filter-title",
+        default=None,
+        help="bilibili filter during expand-all: title keyword",
+    )
+    p_probe.add_argument(
+        "--filter-duration-min",
+        type=float,
+        default=None,
+        help="bilibili filter during expand-all: min duration seconds",
+    )
+    p_probe.add_argument(
+        "--filter-duration-max",
+        type=float,
+        default=None,
+        help="bilibili filter during expand-all: max duration seconds",
+    )
+    p_probe.add_argument(
+        "--part-range",
+        default=None,
+        help="bilibili filter during expand-all: page range e.g. 1-5",
+    )
     _add_network_args(p_probe)
 
 
@@ -284,6 +314,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "--part-range",
         default=None,
         help="bilibili auto-select: page range e.g. 1-5",
+    )
+    p_get.add_argument(
+        "--expand-all",
+        action="store_true",
+        help=(
+            "bilibili: paginate and expand nested lists before download "
+            "(followed bangumi / fav folders / collections / UP space)"
+        ),
+    )
+    p_get.add_argument(
+        "--node-names",
+        default=None,
+        help=(
+            "bilibili interactive: JSON map of page/edge/cid -> title "
+            'e.g. \'{"1":"開頭","edge:12":"壞結局"}\''
+        ),
     )
     p_get.add_argument(
         "--sessdata",
@@ -689,7 +735,31 @@ def cmd_probe(args: argparse.Namespace) -> int:
             if getattr(args, "keyword", None):
                 sep = "&" if "?" in probe_url else "?"
                 probe_url = f"{probe_url}{sep}keyword={args.keyword}"
-            ext = bilibili_extractor(page_num=int(getattr(args, "page", 1) or 1))
+            from udl.extractors.bilibili import select_filter
+            from udl.extractors.bilibili.filter import parse_part_range
+
+            page_from, page_to = parse_part_range(getattr(args, "part_range", None))
+            select = select_filter(
+                title_keyword=getattr(args, "filter_title", None)
+                or getattr(args, "keyword", None),
+                duration_min=getattr(args, "filter_duration_min", None),
+                duration_max=getattr(args, "filter_duration_max", None),
+                page_from=page_from,
+                page_to=page_to,
+            )
+            progress_em = emitter(enabled=bool(args.json))
+
+            def _on_expand(phase: str, current: int, total: int, message: str) -> None:
+                progress_em.expand(
+                    phase=phase, current=current, total=total, message=message
+                )
+
+            ext = bilibili_extractor(
+                page_num=int(getattr(args, "page", 1) or 1),
+                expand_all=bool(getattr(args, "expand_all", False)),
+                select=select,
+                on_progress=_on_expand if getattr(args, "expand_all", False) else None,
+            )
             probe = ext.probe(probe_url)
             payload = probe.to_dict()
         else:
@@ -763,14 +833,34 @@ def _parse_codec(raw: str | None) -> int | None:
 
 
 def _cmd_probe_batch(urls: list[str], args: argparse.Namespace) -> int:
-    from udl.extractors.bilibili import bilibili_extractor
+    from udl.extractors.bilibili import bilibili_extractor, select_filter
+    from udl.extractors.bilibili.filter import parse_part_range
     from udl.extractors.bilibili.ids import split_batch_urls
 
     # flatten if user pasted multi-line as one arg
     expanded: list[str] = []
     for u in urls:
         expanded.extend(split_batch_urls(u))
-    ext = bilibili_extractor(page_num=int(getattr(args, "page", 1) or 1))
+    page_from, page_to = parse_part_range(getattr(args, "part_range", None))
+    select = select_filter(
+        title_keyword=getattr(args, "filter_title", None)
+        or getattr(args, "keyword", None),
+        duration_min=getattr(args, "filter_duration_min", None),
+        duration_max=getattr(args, "filter_duration_max", None),
+        page_from=page_from,
+        page_to=page_to,
+    )
+    progress_em = emitter(enabled=bool(args.json))
+
+    def _on_expand(phase: str, current: int, total: int, message: str) -> None:
+        progress_em.expand(phase=phase, current=current, total=total, message=message)
+
+    ext = bilibili_extractor(
+        page_num=int(getattr(args, "page", 1) or 1),
+        expand_all=bool(getattr(args, "expand_all", False)),
+        select=select,
+        on_progress=_on_expand if getattr(args, "expand_all", False) else None,
+    )
     try:
         results = ext.probe_batch("\n".join(expanded))
         payload = {
@@ -821,6 +911,15 @@ def _bilibili_from_args(args: argparse.Namespace):
     sessdata = getattr(args, "sessdata", None)
     if sessdata:
         cookies = {"SESSDATA": str(sessdata)}
+    node_names: dict = {}
+    raw_names = getattr(args, "node_names", None)
+    if raw_names:
+        try:
+            parsed = json.loads(raw_names)
+            if isinstance(parsed, dict):
+                node_names = {str(k): str(v) for k, v in parsed.items()}
+        except (ValueError, TypeError):
+            pass
     opts = bili_options(
         quality=quality,
         codecid=codecid,
@@ -834,6 +933,8 @@ def _bilibili_from_args(args: argparse.Namespace):
         embed_subtitle=embed_subtitle,
         write_chapters=not bool(getattr(args, "no_chapters", False)),
         select=select,
+        expand_all=bool(getattr(args, "expand_all", False)),
+        node_names=node_names,
         cookies=cookies,
     )
     return bilibili_extractor(options=opts, ffmpeg=args.ffmpeg)

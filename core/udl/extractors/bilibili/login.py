@@ -66,10 +66,10 @@ login_note = (
 login_stub_note = login_note
 
 sms_geetest_note = (
-    "SMS login requires GeeTest (geetest) captcha that normally needs a browser. "
-    "Use `udl bili login sms-captcha` to obtain gt/challenge/token, complete the "
-    "challenge externally, then pass validate/seccode to sms-send. "
-    "Prefer QR or Cookie paste when GeeTest cannot be completed headlessly."
+    "SMS login requires GeeTest captcha completed by the user (no auto-solve). "
+    "GUI opens a Tauri webview with gt/challenge; CLI: `udl bili login sms-captcha` "
+    "then pass validate/seccode to sms-send. Prefer QR or Cookie when a display "
+    "or geetest CDN is unavailable."
 )
 
 

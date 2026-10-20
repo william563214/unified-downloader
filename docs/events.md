@@ -21,6 +21,14 @@
 {"ev":"resolve","site":"bilibili","kind":"video|bangumi","url":"https://…","supported":true,"message":null}
 ```
 
+### `expand`（`udl probe URL --json --expand-all`）
+
+Bilibili 清單翻頁／巢狀展開進度（在最終 `probe` 之前可能多筆）。
+
+```json
+{"ev":"expand","phase":"space","current":2,"total":5,"message":"UP space page 2/5"}
+```
+
 ### `probe`（`udl probe URL --json`）
 
 不下載，只取中繼資料（供 GUI 分 P／畫質選擇）。
