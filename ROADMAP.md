@@ -90,7 +90,7 @@
 - [x] AES-CTR 解密、key／IV／meta-MAC、屬性解密
 - [x] 公開 file／folder（含舊 `#!`／`#F!` 與新 `/file/`／`/folder/`、子路徑）
 - [x] 多連線分段下載、chunk 對齊解密、重啟續傳、結束 CBC-MAC
-- [x] 接全域限速／代理／UA；`udl.download.segment` 供日後與 v0.9-A 統一
+- [x] 接全域限速／代理／UA；`udl.download.segment` 規劃器；HTTP 引擎見 v0.9-A `udl.download.segmented`
 - [x] GUI 資料夾樹勾選（含大小）＋設定後端切換
 - [x] 帳號登入（含 v2）＋ `udl.secrets`／`mega.session`；雲端硬碟
 - [x] localhost 串流預覽（隨機 token、即時解密）
@@ -201,12 +201,38 @@
 - v0.8-A：測試文件＋ postprocess／history／repair 修補
 - v0.8-B：Bilibili extractor／解析頁
 
+## v0.9 — 直連／分段／排程／批次
+
+### v0.9-A（本版）— 通用直連＋多連線分段
+
+- [x] 通用直接連結 extractor：未被站點匹配的 HTTP／HTTPS URL（router 最低優先）
+- [x] HEAD／GET 探測：大小、檔名（Content-Disposition／URL）、content-type、Accept-Ranges、ETag／Last-Modified
+- [x] 接入統一 metadata／歷史／去重／命名規則／佇列續傳（續傳時驗證 ETag／Last-Modified；變更則重下）
+- [x] 共用 HTTP 層 IDM 風格動態分段（`udl.download.segmented`；與 MEGA 的 `udl.download.segment` 規劃器並存）：最多 N 連線（預設 8、可設定、per-host 上限）；連線完成後切分最大剩餘區塊；分段狀態可持久化以重啟續傳；無 Range 則單連線
+- [x] 尊重 `udl.network` 全域限速與代理；aria2 仍為可選後端
+- [x] 可選讓產出純 HTTP 檔案的站點 extractor 也走分段（Gofile／Bunkr／Iwara／MEGA 排除）
+- [x] `progress` 事件帶 per-segment；GUI：連線數設定、任務詳情分段進度條
+- [x] `docs/networking.md` 更新
+
+### v0.9-C — 排程器
+
+- [ ] 下載排程（時段／佇列策略；細節由對應 PR 定義）
+
+### v0.9-D — 頁面 Download All＋校驗
+
+- [ ] 頁面「全部下載」
+- [ ] checksum／AV 相關（細節由對應 PR 定義）
+
+### 規劃中（非 v0.9）
+
+- [ ] **瀏覽器擴充功能**（Chrome／Edge MV3）：重用 [william563214/download_classify](https://github.com/william563214/download_classify) — 右鍵選單、下載接管、native messaging／localhost＋token
+  - **不做**：DRM／加密串流繞過、系統級下載攔截（system-wide download hooking）
 
 ## 不做／延後
 
 - gallery-dl 當 library（授權衝突）；若備援只允許獨立子行程
 - Pixeldrain（明確排除）
-- 通用「任意網站」fallback
 - 程式碼簽章／公證（v0.1 明確跳過）
 - 付費牆／VIP／區域限制／MEGA 配額繞過（含 SmartProxy／換 IP）
 - MegaBasterd GUI／SmartProxy 不移植（協定能力已內建於 `udl.extractors.mega`）
+- DRM／加密串流繞過；系統級下載攔截

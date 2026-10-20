@@ -1,3 +1,5 @@
+import type { SegmentInfo } from "./jobTypes";
+
 export function formatBytes(n?: number): string {
   if (n == null || Number.isNaN(n)) return "—";
   if (n < 1024) return `${n} B`;
@@ -36,9 +38,27 @@ export function siteTone(site: string | null | undefined): string {
       return "tone-bili";
     case "mega":
       return "tone-mega";
+    case "direct":
+      return "tone-direct";
     default:
       return "tone-unknown";
   }
+}
+
+export function parseSegments(raw: unknown): SegmentInfo[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  return raw.map((s, i) => {
+    const row = (s ?? {}) as Record<string, unknown>;
+    return {
+      id: Number(row.id ?? i),
+      start: Number(row.start ?? 0),
+      end: Number(row.end ?? 0),
+      current: Number(row.current ?? row.start ?? 0),
+      downloaded: Number(row.downloaded ?? 0),
+      total: Number(row.total ?? 0),
+      done: Boolean(row.done),
+    };
+  });
 }
 
 export function jobProgress(files: Array<{ bytes: number; total?: number; bps?: number; status: string; alreadyDownloaded?: boolean }>): {

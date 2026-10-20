@@ -299,6 +299,36 @@ export function QueueDashboard({
                             }}
                           />
                         </div>
+                        {file.segments &&
+                          file.segments.length > 0 &&
+                          file.status === "active" &&
+                          file.total != null &&
+                          file.total > 0 && (
+                            <div
+                              className="segment-bar"
+                              title={
+                                file.connections
+                                  ? `${file.connections} 連線 · ${file.segments.length} 分段`
+                                  : `${file.segments.length} 分段`
+                              }
+                              aria-label="分段進度"
+                            >
+                              {file.segments.map((seg) => {
+                                const span = Math.max(1, seg.end - seg.start + 1);
+                                const filled = Math.min(100, (seg.downloaded / span) * 100);
+                                return (
+                                  <span
+                                    key={seg.id}
+                                    className={`segment-cell${seg.done ? " done" : ""}`}
+                                    style={{ flexGrow: span, flexBasis: 0 }}
+                                    title={`#${seg.id} ${formatBytes(seg.downloaded)} / ${formatBytes(span)}`}
+                                  >
+                                    <i style={{ width: `${filled}%` }} />
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
                         {file.message && file.status === "error" && (
                           <p className="error">{file.message}</p>
                         )}

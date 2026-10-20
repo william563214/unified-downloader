@@ -87,6 +87,31 @@ def _add_network_args(parser: argparse.ArgumentParser, *, download: bool = False
             default=None,
             help="aria2 RPC secret token (or store via udl secrets aria2.rpc_secret)",
         )
+        parser.add_argument(
+            "--connections",
+            type=int,
+            default=None,
+            help="max connections per file for segmented downloads (default 8)",
+        )
+        parser.add_argument(
+            "--per-host-connections",
+            type=int,
+            default=None,
+            help="per-host connection cap for segmented downloads (default = --connections)",
+        )
+        parser.add_argument(
+            "--no-segmented",
+            action="store_true",
+            help="disable multi-connection segmented downloads (single connection)",
+        )
+        parser.add_argument(
+            "--segmented-for-sites",
+            action="store_true",
+            help=(
+                "also use segmented downloads for site extractors that yield plain "
+                "HTTP file URLs (gofile bunkr iwara mega excluded)"
+            ),
+        )
     parser.add_argument(
         "--cdn-hosts",
         default=None,

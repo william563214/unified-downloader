@@ -18,6 +18,15 @@ from udl.download.rate import (
     rate_limiter,
     throttle,
 )
+from udl.download.segmented import (
+    SegmentedUnsupported,
+    clear_state,
+    default_connections,
+    download_file_segmented,
+    probe_validators,
+    segment_state,
+    validators_match,
+)
 from udl.events import emitter
 from udl.network import active_network, apply_to_session, default_user_agent
 
@@ -26,6 +35,10 @@ default_chunk_size = 1024 * 1024
 default_timeout = 30.0
 default_retries = 5
 default_workers = 3
+
+# sites that must not use multi-connection segmented downloads
+# (auth cookies signed URLs or non-HTTP backends)
+segmented_excluded_sites = frozenset({"gofile", "bunkr", "iwara", "mega"})
 
 
 @dataclass
@@ -46,6 +59,10 @@ class download_options:
     aria2_enabled: bool | None = None
     aria2_rpc_url: str | None = None
     aria2_rpc_secret: str | None = None
+    # multi-connection segmented (IDM-style); None = follow network_settings
+    segmented: bool | None = None
+    connections: int | None = None
+    per_host_connections: int | None = None
     # filled by engine
     _job_limiter: rate_limiter | None = field(default=None, repr=False, compare=False)
 
@@ -60,6 +77,9 @@ class download_item:
     name: str
     expected_size: int | None = None
     headers: dict[str, str] | None = None
+    etag: str | None = None
+    last_modified: str | None = None
+    accept_ranges: bool | None = None
 
 
 ProgressCb = Callable[[str, int, int | None, float], None]
@@ -73,6 +93,8 @@ def options_from_network(
     cancel: Event | None = None,
     headers: dict[str, str] | None = None,
     speed_limit_bps: int | None = None,
+    segmented: bool | None = None,
+    connections: int | None = None,
 ) -> download_options:
     """build download_options seeded from active network_settings."""
     net = active_network()
@@ -80,6 +102,7 @@ def options_from_network(
     if job_limit is None:
         job_limit = net.job_speed_limit_bps
     configure_global_limiter(net.speed_limit_bps)
+    conns = connections if connections is not None else net.connections
     return download_options(
         output_dir=output_dir,
         workers=workers,
@@ -91,8 +114,48 @@ def options_from_network(
         aria2_enabled=net.aria2_enabled,
         aria2_rpc_url=net.aria2_rpc_url,
         aria2_rpc_secret=net.aria2_rpc_secret,
+        # None = decide later via should_use_segmented (site-aware)
+        segmented=segmented,
+        connections=conns,
+        per_host_connections=net.per_host_connections,
         _job_limiter=make_job_limiter(job_limit),
     )
+
+
+def effective_connections(opts: download_options) -> int:
+    net = active_network()
+    conns = opts.connections if opts.connections is not None else net.connections
+    host_cap = (
+        opts.per_host_connections
+        if opts.per_host_connections is not None
+        else net.per_host_connections
+    )
+    conns = int(conns or default_connections)
+    host_cap = int(host_cap or default_connections)
+    return max(1, min(conns, host_cap, 32))
+
+
+def should_use_segmented(opts: download_options, *, site: str | None = None) -> bool:
+    """decide whether multi-connection segmented download is allowed.
+
+    - denylist sites (gofile bunkr iwara mega) never use segmented
+    - opts.segmented True/False forces on/off (still respects denylist)
+    - otherwise follow network.segmented_enabled
+    - non-direct sites also need network.segmented_for_sites
+    """
+    if site and site in segmented_excluded_sites:
+        return False
+    net = active_network()
+    if opts.segmented is False:
+        return False
+    if opts.segmented is True:
+        return True
+    if not net.segmented_enabled:
+        return False
+    if site and site != "direct" and not net.segmented_for_sites:
+        return False
+    # direct (or unknown) with segmented_enabled
+    return True
 
 
 def _make_session(opts: download_options) -> Session:
@@ -176,8 +239,50 @@ def download_file(
             session.close()
         return dest
 
+    # multi-connection segmented path (falls back on SegmentedUnsupported)
+    # callers (base/direct) set opts.segmented via should_use_segmented(site=...)
+    if opts.segmented is True and effective_connections(opts) > 1:
+        try:
+            path = download_file_segmented(
+                url=item.url,
+                dest=dest,
+                file_id=item.file_id,
+                job_id=job_id,
+                session=session,
+                connections=effective_connections(opts),
+                retries=opts.retries,
+                timeout=opts.timeout,
+                chunk_size=opts.chunk_size,
+                progress_interval=opts.progress_interval,
+                cancel=cancel,
+                emit=emit,
+                headers=item.headers,
+                expected_size=item.expected_size,
+                etag=item.etag,
+                last_modified=item.last_modified,
+                accept_ranges=item.accept_ranges,
+                job_limiter=job_limiter,
+            )
+            if own_session:
+                session.close()
+            return path
+        except SegmentedUnsupported:
+            pass
+        except Exception:
+            if own_session:
+                session.close()
+            raise
+
     last_error: Exception | None = None
     try:
+        # validate ETag / Last-Modified before single-connection resume
+        part_size = tmp.stat().st_size if tmp.is_file() else 0
+        if part_size > 0 and (item.etag or item.last_modified):
+            if not _resume_validators_ok(session, item, opts):
+                tmp.unlink(missing_ok=True)
+                clear_state(tmp)
+                part_size = 0
+
         for attempt in range(opts.retries):
             if _is_cancelled(cancel):
                 raise InterruptedError("cancelled")
@@ -265,6 +370,34 @@ def download_file(
     if _is_cancelled(cancel):
         raise InterruptedError("cancelled")
     raise RuntimeError(f"failed to download {item.name}: {last_error}")
+
+
+def _resume_validators_ok(
+    session: Session,
+    item: download_item,
+    opts: download_options,
+) -> bool:
+    """HEAD/Range probe; False means remote changed and resume must restart."""
+    try:
+        probe = probe_validators(
+            session,
+            item.url,
+            headers=item.headers,
+            timeout=opts.timeout,
+        )
+        state = segment_state(
+            etag=item.etag,
+            last_modified=item.last_modified,
+            total=int(item.expected_size or 0),
+        )
+        return validators_match(
+            state,
+            etag=probe.get("etag"),
+            last_modified=probe.get("last_modified"),
+            total=probe.get("total"),
+        )
+    except Exception:  # noqa: BLE001 — probe failure: allow resume attempt
+        return True
 
 
 def _write_stream(

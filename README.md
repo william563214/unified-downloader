@@ -27,7 +27,7 @@ unified-downloader/
 GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-lines（見 `docs/events.md`）。  
 全域歷史 DB 在應用資料目錄（與 FFmpeg 佈建同根），由核心擁有。
 
-**不做：** gallery-dl 程式碼／import（GPL-2.0-only 衝突）、Pixeldrain、通用任意站 fallback、付費牆／配額／VIP／區域繞過、簽章。
+**不做：** gallery-dl 程式碼／import（GPL-2.0-only 衝突）、Pixeldrain、付費牆／配額／VIP／區域繞過、簽章、DRM／加密串流繞過、系統級下載攔截。
 
 ## 目前支援
 

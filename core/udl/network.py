@@ -49,6 +49,15 @@ class network_settings:
     aria2_enabled: bool = False
     aria2_rpc_url: str = "http://127.0.0.1:6800/jsonrpc"
     aria2_rpc_secret: str | None = None
+    # multi-connection segmented downloads (v0.9-A); aria2 still optional backend
+    segmented_enabled: bool = True
+    # max connections per file (IDM-style dynamic segmentation)
+    connections: int = 8
+    # hard cap per host across segments of one file
+    per_host_connections: int = 8
+    # when True also use segmented for site extractors that yield plain HTTP
+    # (gofile bunkr iwara mega always excluded)
+    segmented_for_sites: bool = False
     # bilibili CDN / Host (shared networking settings; used by bili stream download)
     # preferred CDN hostnames e.g. upos-sz-mirrorcos.bilivideo.com
     cdn_hosts: list[str] = field(default_factory=list)
@@ -268,6 +277,20 @@ def settings_from_cli_args(args: Any) -> network_settings:
     aria2_enabled = bool(getattr(args, "aria2", False))
     aria2_url = getattr(args, "aria2_rpc", None) or "http://127.0.0.1:6800/jsonrpc"
     aria2_secret = getattr(args, "aria2_secret", None)
+    connections = getattr(args, "connections", None)
+    if connections is None:
+        connections = 8
+    else:
+        connections = max(1, min(int(connections), 32))
+    per_host = getattr(args, "per_host_connections", None)
+    if per_host is None:
+        per_host = connections
+    else:
+        per_host = max(1, min(int(per_host), 32))
+    segmented_enabled = not bool(getattr(args, "no_segmented", False))
+    if getattr(args, "segmented", None) is False:
+        segmented_enabled = False
+    segmented_for_sites = bool(getattr(args, "segmented_for_sites", False))
     cdn_raw = getattr(args, "cdn_hosts", None) or getattr(args, "bili_cdn", None)
     cdn_hosts: list[str] = []
     if cdn_raw:
@@ -287,6 +310,10 @@ def settings_from_cli_args(args: Any) -> network_settings:
         aria2_enabled=aria2_enabled,
         aria2_rpc_url=str(aria2_url),
         aria2_rpc_secret=str(aria2_secret) if aria2_secret else None,
+        segmented_enabled=segmented_enabled,
+        connections=connections,
+        per_host_connections=per_host,
+        segmented_for_sites=segmented_for_sites,
         cdn_hosts=cdn_hosts,
         prefer_cdn_replace=prefer_cdn or bool(cdn_hosts),
         custom_host=str(custom_host).strip() if custom_host else None,

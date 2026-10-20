@@ -1,3 +1,13 @@
+export type SegmentInfo = {
+  id: number;
+  start: number;
+  end: number;
+  current: number;
+  downloaded: number;
+  total: number;
+  done: boolean;
+};
+
 export type FileRow = {
   id: string;
   name: string;
@@ -5,6 +15,8 @@ export type FileRow = {
   total?: number;
   bytes: number;
   bps: number;
+  segments?: SegmentInfo[];
+  connections?: number;
   status:
     | "queued"
     | "active"

@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from udl.extractors import bilibili as bilibili_mod
 from udl.extractors import bunkr as bunkr_mod
+from udl.extractors import direct as direct_mod
 from udl.extractors import gofile as gofile_mod
 from udl.extractors import iwara as iwara_mod
 from udl.extractors import mega as mega_mod
@@ -72,6 +73,15 @@ registry: list[site_entry] = [
         factory=mega_mod.mega_extractor,
         status="implemented",
         kind_hint="file|folder",
+    ),
+    # lowest priority: any HTTP/HTTPS URL not claimed above
+    site_entry(
+        site="direct",
+        label="Direct",
+        match=direct_mod.matches,
+        factory=direct_mod.direct_extractor,
+        status="implemented",
+        kind_hint="file",
     ),
 ]
 
@@ -136,7 +146,7 @@ def resolve(url: str) -> resolve_info:
             url=url,
             supported=False,
             status=None,
-            message="unsupported site — no generic fallback in v0.1",
+            message="unsupported URL",
         )
 
     supported = entry.status in {"implemented", "external"}

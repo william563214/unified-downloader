@@ -113,6 +113,13 @@ struct AppSettings {
     aria2_rpc_url: String,
     #[serde(default)]
     aria2_rpc_secret: String,
+    // multi-connection segmented (v0.9-A)
+    #[serde(default = "default_connections")]
+    connections: u32,
+    #[serde(default = "default_true")]
+    segmented_enabled: bool,
+    #[serde(default)]
+    segmented_for_sites: bool,
     // bilibili CDN / Host (v0.7-B networking)
     #[serde(default)]
     cdn_hosts: String,
@@ -168,16 +175,20 @@ fn default_mega_backend() -> String {
     "builtin".into()
 }
 
+fn default_connections() -> u32 {
+    8
+}
+
 fn default_site_flags() -> HashMap<String, bool> {
     let mut map = HashMap::new();
-    for site in ["gofile", "bunkr", "iwara", "bilibili", "mega"] {
+    for site in ["gofile", "bunkr", "iwara", "bilibili", "mega", "direct"] {
         map.insert(site.into(), true);
     }
     map
 }
 
 fn sites_cli_list(flags: &HashMap<String, bool>) -> String {
-    let sites = ["gofile", "bunkr", "iwara", "bilibili", "mega"];
+    let sites = ["gofile", "bunkr", "iwara", "bilibili", "mega", "direct"];
     let enabled: Vec<&str> = sites
         .iter()
         .copied()
@@ -236,6 +247,9 @@ impl Default for AppSettings {
             aria2_enabled: false,
             aria2_rpc_url: default_aria2_rpc_url(),
             aria2_rpc_secret: String::new(),
+            connections: default_connections(),
+            segmented_enabled: true,
+            segmented_for_sites: false,
             cdn_hosts: String::new(),
             prefer_cdn: false,
             custom_host: String::new(),
@@ -360,6 +374,15 @@ fn append_network_args(args: &mut Vec<String>, settings: &AppSettings) {
             args.push(secret.to_string());
         }
     }
+    let conns = settings.connections.max(1).min(32);
+    args.push("--connections".into());
+    args.push(conns.to_string());
+    if !settings.segmented_enabled {
+        args.push("--no-segmented".into());
+    }
+    if settings.segmented_for_sites {
+        args.push("--segmented-for-sites".into());
+    }
     let cdn = settings.cdn_hosts.trim();
     if !cdn.is_empty() {
         args.push("--cdn-hosts".into());
@@ -471,6 +494,12 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, S
     }
     if settings.workers > 16 {
         settings.workers = 16;
+    }
+    if settings.connections == 0 {
+        settings.connections = 1;
+    }
+    if settings.connections > 32 {
+        settings.connections = 32;
     }
     let conflict = settings.name_conflict.trim();
     settings.name_conflict = match conflict {
