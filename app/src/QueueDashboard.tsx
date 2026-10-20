@@ -270,7 +270,9 @@ export function QueueDashboard({
                           ? 100
                           : file.status === "merging"
                             ? 95
-                            : 0;
+                            : file.status === "extracting"
+                              ? 97
+                              : 0;
                     const remain =
                       file.total && file.total > file.bytes && file.bps > 0
                         ? (file.total - file.bytes) / file.bps
@@ -287,9 +289,16 @@ export function QueueDashboard({
                             {" · ETA "}
                             {formatEta(remain)}
                             {" · "}
-                            {file.alreadyDownloaded ? "已下載" : statusLabel(file.status)}
+                            {file.alreadyDownloaded
+                              ? "已下載"
+                              : file.needsPassword
+                                ? "需要 ZIP 密碼"
+                                : statusLabel(file.status)}
                           </span>
                         </div>
+                        {file.message && file.status !== "active" && (
+                          <p className="hint">{file.message}</p>
+                        )}
                         <div className="bar" aria-hidden>
                           <i
                             style={{

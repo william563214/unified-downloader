@@ -112,7 +112,15 @@ export type AppSettings = {
   avHookPreset: "" | "defender" | "clamav";
   avHookCommand: string;
   avHookTimeout: number;
+  // auto-extract ZIP after download (default off)
+  autoExtractZip: boolean;
+  extractTo: "subfolder" | "same_folder";
+  extractDeleteZip: boolean;
+  extractMaxUncompressed: number;
+  extractMaxRatio: number;
 };
+
+export type AutoExtractOverride = "inherit" | "on" | "off";
 
 export const default_site_flags = (): Record<SiteId, boolean> => ({
   gofile: true,
@@ -176,6 +184,11 @@ export const default_settings: AppSettings = {
   avHookPreset: "",
   avHookCommand: "",
   avHookTimeout: 120,
+  autoExtractZip: false,
+  extractTo: "subfolder",
+  extractDeleteZip: false,
+  extractMaxUncompressed: 4 * 1024 * 1024 * 1024,
+  extractMaxRatio: 100,
 };
 
 /** fields never written to exported settings JSON */
@@ -224,6 +237,13 @@ export function importSettingsJson(
   if (merged.notificationsEnabled == null) merged.notificationsEnabled = true;
   if (merged.minimizeToTray == null) merged.minimizeToTray = false;
   if (!merged.themeMode) merged.themeMode = "system";
+  if (merged.autoExtractZip == null) merged.autoExtractZip = false;
+  if (merged.extractTo !== "same_folder") merged.extractTo = "subfolder";
+  if (merged.extractDeleteZip == null) merged.extractDeleteZip = false;
+  if (!merged.extractMaxUncompressed) {
+    merged.extractMaxUncompressed = 4 * 1024 * 1024 * 1024;
+  }
+  if (!merged.extractMaxRatio) merged.extractMaxRatio = 100;
   return merged;
 }
 
@@ -363,5 +383,10 @@ export function settingsToConfigPayload(settings: AppSettings): Record<string, u
     post_cmd: settings.avHookCommand,
     post_cmd_preset: settings.avHookPreset,
     post_cmd_timeout: settings.avHookTimeout,
+    auto_extract_zip: settings.autoExtractZip,
+    extract_to: settings.extractTo,
+    extract_delete_zip: settings.extractDeleteZip,
+    extract_max_uncompressed: settings.extractMaxUncompressed,
+    extract_max_ratio: settings.extractMaxRatio,
   };
 }

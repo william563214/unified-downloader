@@ -22,8 +22,17 @@ from udl.postprocess.ffmpeg_provision import (
 )
 from udl.postprocess.nfo import build_nfo_xml, choose_nfo_kind, write_nfo
 from udl.postprocess.options import parse_site_toggle_list, postprocess_options
+from udl.postprocess.zip_extract import (
+    after_extract_classify_hook,
+    extract_options,
+    extract_result,
+    extract_zip,
+    is_zip_candidate,
+    retry_extract_path,
+)
 
 __all__ = [
+    "after_extract_classify_hook",
     "artifact_result",
     "build_nfo_xml",
     "choose_nfo_kind",
@@ -32,16 +41,21 @@ __all__ = [
     "cover_image_url",
     "download_cover",
     "embed_cover",
+    "extract_options",
+    "extract_result",
+    "extract_zip",
     "ffmpeg_missing_error",
     "ffmpeg_provision_error",
     "find_ffmpeg",
     "install_ffmpeg",
+    "is_zip_candidate",
     "merge_dash",
     "merge_error",
     "parse_site_toggle_list",
     "postprocess_options",
     "probe_ffmpeg",
     "provision_supported",
+    "retry_extract_path",
     "run_postprocess",
     "write_nfo",
 ]

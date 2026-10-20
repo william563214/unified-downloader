@@ -17,6 +17,9 @@ ev_merging = "merging"
 ev_postprocess = "postprocess"
 ev_checksum = "checksum"
 ev_hook = "hook"
+ev_extracting = "extracting"
+ev_extracted = "extracted"
+ev_failed = "failed"
 ev_page = "page"
 ev_done = "done"
 ev_error = "error"
@@ -208,6 +211,81 @@ class emitter:
             payload["message"] = message
         self.emit(ev_checksum, **payload)
 
+    def extracting(
+        self,
+        *,
+        job: str,
+        file: str | None = None,
+        path: str | None = None,
+        dest: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {"job": job}
+        if file is not None:
+            payload["file"] = file
+        if path is not None:
+            payload["path"] = path
+        if dest is not None:
+            payload["dest"] = dest
+        if message is not None:
+            payload["message"] = message
+        self.emit(ev_extracting, **payload)
+
+    def extracted(
+        self,
+        *,
+        job: str,
+        file: str | None = None,
+        path: str | None = None,
+        dest: str | None = None,
+        members: int | None = None,
+        deleted_archive: bool | None = None,
+        message: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {"job": job}
+        if file is not None:
+            payload["file"] = file
+        if path is not None:
+            payload["path"] = path
+        if dest is not None:
+            payload["dest"] = dest
+        if members is not None:
+            payload["members"] = members
+        if deleted_archive is not None:
+            payload["deleted_archive"] = deleted_archive
+        if message is not None:
+            payload["message"] = message
+        self.emit(ev_extracted, **payload)
+
+    def failed(
+        self,
+        *,
+        job: str | None = None,
+        file: str | None = None,
+        path: str | None = None,
+        dest: str | None = None,
+        code: str | None = None,
+        message: str | None = None,
+        phase: str | None = None,
+    ) -> None:
+        """feature-specific failure (e.g. phase=extract). also emit error for GUI."""
+        payload: dict[str, Any] = {}
+        if job is not None:
+            payload["job"] = job
+        if file is not None:
+            payload["file"] = file
+        if path is not None:
+            payload["path"] = path
+        if dest is not None:
+            payload["dest"] = dest
+        if code is not None:
+            payload["code"] = code
+        if message is not None:
+            payload["message"] = message
+        if phase is not None:
+            payload["phase"] = phase
+        self.emit(ev_failed, **payload)
+
     def page(self, **fields: Any) -> None:
         """page scan result for Download All."""
         self.emit(ev_page, **fields)
@@ -389,10 +467,10 @@ def dump_schema() -> dict[str, Any]:
             },
             ev_postprocess: {
                 "job": "str",
-                "step": "str (nfo|cover|embed_cover|hook|skip)",
+                "step": "str (nfo|cover|embed_cover|hook|extracting|extracted|failed|skip)",
                 "file": "str?",
                 "path": "str?",
-                "role": "str? (nfo|cover|hook)",
+                "role": "str? (nfo|cover|hook|extract)",
                 "message": "str?",
                 "ok": "bool?",
                 "code": "str?",
@@ -420,6 +498,31 @@ def dump_schema() -> dict[str, Any]:
                 "message": "str?",
                 "stdout": "str?",
                 "stderr": "str?",
+            },
+            ev_extracting: {
+                "job": "str",
+                "file": "str?",
+                "path": "str?",
+                "dest": "str?",
+                "message": "str?",
+            },
+            ev_extracted: {
+                "job": "str",
+                "file": "str?",
+                "path": "str?",
+                "dest": "str?",
+                "members": "int?",
+                "deleted_archive": "bool?",
+                "message": "str?",
+            },
+            ev_failed: {
+                "job": "str?",
+                "file": "str?",
+                "path": "str?",
+                "dest": "str?",
+                "code": "str?",
+                "message": "str?",
+                "phase": "str? (extract)",
             },
             ev_page: {
                 "url": "str",

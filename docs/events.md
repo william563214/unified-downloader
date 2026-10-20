@@ -134,7 +134,7 @@ NFO／封面下載／嵌入等下載後步驟。成功或失敗都會發出；�
 {"ev":"postprocess","job":"<job-id>","file":"<job-id>:0","step":"embed_cover","path":"/out/a.mp4","role":"cover","message":"cover embedded","ok":true}
 ```
 
-`step`：`nfo`／`cover`／`embed_cover`／`hook`／`skip`。
+`step`：`nfo`／`cover`／`embed_cover`／`hook`／`extracting`／`extracted`／`failed`／`skip`。
 
 ### `checksum`（v0.9-D）
 
@@ -153,6 +153,18 @@ NFO／封面下載／嵌入等下載後步驟。成功或失敗都會發出；�
 ```json
 {"ev":"hook","job":"<job-id>","file":"<file-id>","path":"/out/a.mp4","ok":true,"command":"clamscan …","exit_code":0,"duration_ms":120,"timed_out":false}
 ```
+
+### `extracting`／`extracted`／`failed`（自動解壓 ZIP）
+
+下載完成且校驗／hook 通過後的 ZIP 解壓階段。詳見 `docs/auto-extract.md`。
+
+```json
+{"ev":"extracting","job":"<job-id>","file":"<file-id>","path":"/out/a.zip","dest":"/out/a"}
+{"ev":"extracted","job":"<job-id>","file":"<file-id>","path":"/out/a.zip","dest":"/out/a","members":3,"deleted_archive":false}
+{"ev":"failed","job":"<job-id>","file":"<file-id>","path":"/out/a.zip","phase":"extract","code":"needs_password","message":"zip is password-protected"}
+```
+
+`failed` 的 `phase` 為 `extract` 時表示解壓失敗；同時會發 `error`（`code` 如 `needs_password`／`zip_slip`／`zip_bomb`／`extract_failed`）。`postprocess` 的 `step` 亦可能為 `extracting`／`extracted`／`failed`（`role=extract`）。
 
 ### `page`（v0.9-D）
 
@@ -184,7 +196,7 @@ Job 結束：
 {"ev":"error","job":"<job-id>","file":"<file-id>","message":"…","code":"download_failed"}
 ```
 
-常見 `code`：`unsupported`、`resolve_failed`、`download_failed`、`ffmpeg_missing`、`merge_failed`、`mega_tool_missing`、`nfo_failed`、`cover_failed`、`postprocess_failed`、`checksum_mismatch`、`hook_failed`、`hook_timeout`。
+常見 `code`：`unsupported`、`resolve_failed`、`download_failed`、`ffmpeg_missing`、`merge_failed`、`mega_tool_missing`、`nfo_failed`、`cover_failed`、`postprocess_failed`、`checksum_mismatch`、`hook_failed`、`hook_timeout`、`extract_failed`、`needs_password`、`zip_slip`、`zip_symlink`、`zip_bomb`。
 
 ### `cancel`
 

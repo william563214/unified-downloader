@@ -21,12 +21,14 @@ export type FileRow = {
     | "queued"
     | "active"
     | "merging"
+    | "extracting"
     | "done"
     | "error"
     | "cancelled"
     | "skipped";
   message?: string;
   alreadyDownloaded?: boolean;
+  needsPassword?: boolean;
 };
 
 export type JobStatus =
@@ -61,6 +63,8 @@ export type JobRow = {
   nodeNames?: string | null;
   megaSelect?: string | null;
   queueName?: string;
+  autoExtractOverride?: "inherit" | "on" | "off";
+  extractPassword?: string | null;
   files: FileRow[];
   ok?: number;
   failed?: number;

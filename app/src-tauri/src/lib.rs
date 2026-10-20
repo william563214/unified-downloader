@@ -163,6 +163,17 @@ struct AppSettings {
     av_hook_command: String,
     #[serde(default = "default_av_hook_timeout")]
     av_hook_timeout: u32,
+    // auto-extract ZIP after download (default off)
+    #[serde(default)]
+    auto_extract_zip: bool,
+    #[serde(default = "default_extract_to")]
+    extract_to: String,
+    #[serde(default)]
+    extract_delete_zip: bool,
+    #[serde(default = "default_extract_max_uncompressed")]
+    extract_max_uncompressed: u64,
+    #[serde(default = "default_extract_max_ratio")]
+    extract_max_ratio: f64,
 }
 
 fn default_true() -> bool {
@@ -179,6 +190,18 @@ fn default_checksum_auto() -> bool {
 
 fn default_av_hook_timeout() -> u32 {
     120
+}
+
+fn default_extract_to() -> String {
+    "subfolder".into()
+}
+
+fn default_extract_max_uncompressed() -> u64 {
+    4 * 1024 * 1024 * 1024
+}
+
+fn default_extract_max_ratio() -> f64 {
+    100.0
 }
 
 fn default_on_duplicate() -> String {
@@ -315,6 +338,11 @@ impl Default for AppSettings {
             av_hook_preset: String::new(),
             av_hook_command: String::new(),
             av_hook_timeout: default_av_hook_timeout(),
+            auto_extract_zip: false,
+            extract_to: default_extract_to(),
+            extract_delete_zip: false,
+            extract_max_uncompressed: default_extract_max_uncompressed(),
+            extract_max_ratio: default_extract_max_ratio(),
         }
     }
 }
@@ -633,6 +661,11 @@ fn settings_to_udl_config(settings: &AppSettings) -> serde_json::Value {
         "post_cmd": settings.av_hook_command,
         "post_cmd_preset": settings.av_hook_preset,
         "post_cmd_timeout": settings.av_hook_timeout,
+        "auto_extract_zip": settings.auto_extract_zip,
+        "extract_to": settings.extract_to,
+        "extract_delete_zip": settings.extract_delete_zip,
+        "extract_max_uncompressed": settings.extract_max_uncompressed,
+        "extract_max_ratio": settings.extract_max_ratio,
     })
 }
 
@@ -709,6 +742,31 @@ async fn set_proxy_password(app: AppHandle, password: String) -> Result<(), Stri
 #[tauri::command]
 async fn clear_proxy_password(app: AppHandle) -> Result<(), String> {
     let args = vec!["secrets".into(), "delete".into(), "proxy.custom".into()];
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (_stdout, _stderr, _code) = collect_stdout_json(&mut rx).await?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_zip_password(app: AppHandle, password: String) -> Result<(), String> {
+    // optional keychain storage for encrypted ZIP; never logged
+    let args = vec![
+        "secrets".into(),
+        "set".into(),
+        "zip.password".into(),
+        password,
+    ];
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (_stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    if code.unwrap_or(1) != 0 {
+        return Err(format!("store zip password failed: {stderr}"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_zip_password(app: AppHandle) -> Result<(), String> {
+    let args = vec!["secrets".into(), "delete".into(), "zip.password".into()];
     let (mut rx, _child) = spawn_udl(&app, args)?;
     let (_stdout, _stderr, _code) = collect_stdout_json(&mut rx).await?;
     Ok(())
@@ -1358,6 +1416,8 @@ async fn start_download(
     node_names: Option<String>,
     mega_select: Option<String>,
     speed_limit: Option<String>,
+    auto_extract_override: Option<String>,
+    extract_password: Option<String>,
 ) -> Result<String, String> {
     let settings = load_settings_file(&app);
     let job_id = job_id
@@ -1551,6 +1611,43 @@ async fn start_download(
         if settings.av_hook_timeout > 0 {
             args.push("--post-cmd-timeout".into());
             args.push(settings.av_hook_timeout.to_string());
+        }
+    }
+    let extract_override = auto_extract_override
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("inherit");
+    let extract_on = match extract_override {
+        "on" => true,
+        "off" => false,
+        _ => settings.auto_extract_zip,
+    };
+    if extract_on {
+        args.push("--auto-extract".into());
+    } else {
+        args.push("--no-auto-extract".into());
+    }
+    let extract_to = settings.extract_to.trim();
+    if extract_to == "same_folder" || extract_to == "subfolder" {
+        args.push("--extract-to".into());
+        args.push(extract_to.to_string());
+    }
+    if settings.extract_delete_zip {
+        args.push("--extract-delete-zip".into());
+    }
+    if settings.extract_max_uncompressed > 0 {
+        args.push("--extract-max-uncompressed".into());
+        args.push(settings.extract_max_uncompressed.to_string());
+    }
+    if settings.extract_max_ratio > 0.0 {
+        args.push("--extract-max-ratio".into());
+        args.push(settings.extract_max_ratio.to_string());
+    }
+    if let Some(pw) = extract_password {
+        let pw = pw.trim();
+        if !pw.is_empty() {
+            args.push("--extract-password".into());
+            args.push(pw.to_string());
         }
     }
     if let Ok(cfg_path) = naming_config_path(&app) {
@@ -2227,6 +2324,7 @@ async fn repair_fix(
     relink_path: Option<String>,
     output: Option<String>,
     issues: Option<serde_json::Value>,
+    extract_password: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let mut args = vec![
         "repair".into(),
@@ -2257,6 +2355,10 @@ async fn repair_fix(
     if let Some(iss) = issues {
         args.push("--issues".into());
         args.push(iss.to_string());
+    }
+    if let Some(pw) = extract_password.filter(|s| !s.trim().is_empty()) {
+        args.push("--extract-password".into());
+        args.push(pw);
     }
     let (mut rx, _child) = spawn_udl(&app, args)?;
     let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
@@ -2871,6 +2973,8 @@ pub fn run() {
             save_settings,
             set_proxy_password,
             clear_proxy_password,
+            set_zip_password,
+            clear_zip_password,
             get_app_paths,
             resolve_url,
             page_scan,

@@ -19,6 +19,8 @@ issue_kind = Literal[
     "size_mismatch",
     "hash_mismatch",
     "checksum_mismatch",
+    "extract_failed",
+    "needs_password",
     "orphan_file",
     "stale_record",
 ]
@@ -279,7 +281,7 @@ def scan_repair(
                     )
                 )
 
-        # checksum verification failures recorded in metadata.extra.checksum
+        # checksum / extract failures recorded in metadata.extra
         try:
             meta = json.loads(row["metadata_json"] or "{}")
         except json.JSONDecodeError:
@@ -309,6 +311,28 @@ def scan_repair(
                     title=job_titles.get(job_id),
                     message=str(checksum.get("message") or f"{algo} checksum mismatch"),
                     suggested_actions=["requeue", "remove_stale"],
+                )
+            )
+        extract = extra.get("extract") if isinstance(extra, dict) else None
+        if isinstance(extract, dict) and extract.get("ok") is False:
+            code = str(extract.get("code") or "extract_failed")
+            kind = "needs_password" if code == "needs_password" else "extract_failed"
+            archive_path = str(extract.get("path") or path_str or "")
+            result.issues.append(
+                repair_issue(
+                    id=_issue_id("extract", job_id, row["id"], archive_path),
+                    kind=kind,
+                    job_id=job_id,
+                    file_row_id=int(row["id"]),
+                    file_id=row["file_id"],
+                    path=archive_path or path_str,
+                    expected_size=expected_size,
+                    actual_size=actual_size,
+                    site=row["site"] or job_sites.get(job_id),
+                    source_url=job_urls.get(job_id),
+                    title=job_titles.get(job_id),
+                    message=str(extract.get("message") or code),
+                    suggested_actions=["retry_extract", "requeue", "remove_stale"],
                 )
             )
 
@@ -496,11 +520,115 @@ def apply_repair_actions(
     file_row_ids: list[int] | None = None,
     relink_path: str | None = None,
     output_dir: str | None = None,
+    extract_password: str | None = None,
 ) -> dict[str, Any]:
     """apply one repair action to selected issues / ids."""
     action = action.replace("-", "_")
     issues = issues or []
     results: dict[str, Any] = {"action": action, "ok": [], "errors": []}
+
+    if action == "retry_extract":
+        from udl.postprocess.zip_extract import extract_options, retry_extract_path
+
+        targets: list[dict[str, Any]] = []
+        for issue in issues:
+            if issue.get("path"):
+                targets.append(issue)
+        if not targets and file_row_ids:
+            for rid in file_row_ids:
+                row = conn.execute(
+                    "select path, metadata_json, job_id, file_id from history_files where id = ?",
+                    (rid,),
+                ).fetchone()
+                if row:
+                    targets.append(
+                        {
+                            "path": row["path"],
+                            "file_row_id": rid,
+                            "job_id": row["job_id"],
+                            "file_id": row["file_id"],
+                            "metadata_json": row["metadata_json"],
+                        }
+                    )
+        for issue in targets:
+            archive = issue.get("path")
+            if not archive:
+                results["errors"].append({"error": "missing archive path"})
+                continue
+            try:
+                meta = json.loads(issue.get("metadata_json") or "{}")
+            except json.JSONDecodeError:
+                meta = {}
+            if not meta and issue.get("file_row_id") is not None:
+                row = conn.execute(
+                    "select metadata_json from history_files where id = ?",
+                    (int(issue["file_row_id"]),),
+                ).fetchone()
+                if row:
+                    try:
+                        meta = json.loads(row["metadata_json"] or "{}")
+                    except json.JSONDecodeError:
+                        meta = {}
+            extra = meta.get("extra") if isinstance(meta, dict) else {}
+            prev = extra.get("extract") if isinstance(extra, dict) else {}
+            dest = "subfolder"
+            if isinstance(prev, dict) and prev.get("dest"):
+                # infer destination mode from previous dest vs archive parent/stem
+                archive_path = Path(str(archive))
+                prev_dest = Path(str(prev["dest"]))
+                if prev_dest == archive_path.parent:
+                    dest = "same_folder"
+            opts = extract_options(
+                enabled=True,
+                override="on",
+                destination=dest,  # type: ignore[arg-type]
+                password=extract_password,
+                use_secret_password=extract_password is None,
+            )
+            extracted = retry_extract_path(
+                archive,
+                opts,
+                password=extract_password,
+                job=str(issue["job_id"]) if issue.get("job_id") else None,
+                file=str(issue["file_id"]) if issue.get("file_id") else None,
+            )
+            if issue.get("file_row_id") is not None:
+                if not isinstance(meta, dict):
+                    meta = {}
+                extra = dict(meta.get("extra") or {})
+                extra["extract"] = extracted.to_dict()
+                meta["extra"] = extra
+                conn.execute(
+                    """
+                    update history_files
+                    set metadata_json = ?,
+                        status = ?,
+                        updated_at = datetime('now')
+                    where id = ?
+                    """,
+                    (
+                        json.dumps(meta, ensure_ascii=False),
+                        "done" if extracted.ok else "error",
+                        int(issue["file_row_id"]),
+                    ),
+                )
+                conn.commit()
+            if extracted.ok:
+                results["ok"].append(
+                    {
+                        "path": archive,
+                        "extract": extracted.to_dict(),
+                    }
+                )
+            else:
+                results["errors"].append(
+                    {
+                        "path": archive,
+                        "error": extracted.message or extracted.code or "extract failed",
+                        "code": extracted.code,
+                    }
+                )
+        return results
 
     if action == "requeue":
         ids = list(job_ids or [])
