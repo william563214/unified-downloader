@@ -47,6 +47,7 @@ export type JobRow = {
   partRange?: string | null;
   expandAll?: boolean;
   nodeNames?: string | null;
+  megaSelect?: string | null;
   files: FileRow[];
   ok?: number;
   failed?: number;

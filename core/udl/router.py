@@ -14,8 +14,8 @@ from udl.extractors import bilibili as bilibili_mod
 from udl.extractors import bunkr as bunkr_mod
 from udl.extractors import gofile as gofile_mod
 from udl.extractors import iwara as iwara_mod
+from udl.extractors import mega as mega_mod
 from udl.extractors.base import extractor
-from udl.extractors.external import mega as mega_mod
 
 Matcher = Callable[[str], bool]
 Factory = Callable[[], extractor]
@@ -70,7 +70,7 @@ registry: list[site_entry] = [
         label="MEGA",
         match=mega_mod.matches,
         factory=mega_mod.mega_extractor,
-        status="external",
+        status="implemented",
         kind_hint="file|folder",
     ),
 ]

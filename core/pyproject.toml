@@ -13,6 +13,7 @@ dependencies = [
   "PySocks>=1.7.1",
   "qrcode>=8.2",
   "pillow>=13.0.0",
+  "pycryptodome>=3.20.0",
 ]
 
 [project.optional-dependencies]

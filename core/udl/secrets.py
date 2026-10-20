@@ -19,6 +19,7 @@ service_name: Final[str] = "unified-downloader"
 proxy_password_key: Final[str] = "proxy.custom"
 aria2_secret_key: Final[str] = "aria2.rpc_secret"
 bilibili_session_key: Final[str] = "bilibili.session"
+mega_session_key: Final[str] = "mega.session"
 
 _file_backend_warned = False
 

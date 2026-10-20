@@ -120,9 +120,12 @@ struct AppSettings {
     prefer_cdn: bool,
     #[serde(default)]
     custom_host: String,
-    // shell / UX (v0.8)
+    // MEGA built-in (default) or external megatools/MEGAcmd fallback
+    #[serde(default = "default_mega_backend")]
+    mega_backend: String,
     #[serde(default)]
     mega_tool_path: String,
+    // shell / UX (v0.8)
     #[serde(default)]
     clipboard_watcher: bool,
     #[serde(default = "default_true")]
@@ -159,6 +162,10 @@ fn default_proxy_mode() -> String {
 
 fn default_aria2_rpc_url() -> String {
     "http://127.0.0.1:6800/jsonrpc".into()
+}
+
+fn default_mega_backend() -> String {
+    "builtin".into()
 }
 
 fn default_site_flags() -> HashMap<String, bool> {
@@ -232,6 +239,7 @@ impl Default for AppSettings {
             cdn_hosts: String::new(),
             prefer_cdn: false,
             custom_host: String::new(),
+            mega_backend: default_mega_backend(),
             mega_tool_path: String::new(),
             clipboard_watcher: false,
             notifications_enabled: true,
@@ -1065,6 +1073,7 @@ async fn start_download(
     part_range: Option<String>,
     expand_all: Option<bool>,
     node_names: Option<String>,
+    mega_select: Option<String>,
 ) -> Result<String, String> {
     let settings = load_settings_file(&app);
     let job_id = job_id
@@ -1180,6 +1189,23 @@ async fn start_download(
     }
     if cloudflare_bypass.unwrap_or(false) {
         args.push("--cloudflare-bypass".into());
+    }
+    let mega_backend = settings.mega_backend.trim();
+    if mega_backend == "external" || mega_backend == "builtin" {
+        args.push("--mega-backend".into());
+        args.push(mega_backend.to_string());
+    }
+    let mega_tool = settings.mega_tool_path.trim();
+    if !mega_tool.is_empty() {
+        args.push("--mega-tool".into());
+        args.push(mega_tool.to_string());
+    }
+    if let Some(sel) = mega_select {
+        let sel = sel.trim();
+        if !sel.is_empty() {
+            args.push("--mega-select".into());
+            args.push(sel.to_string());
+        }
     }
     let ffmpeg_path = ffmpeg
         .as_deref()
@@ -1918,6 +1944,108 @@ async fn iwara_section_fetch(
 }
 
 #[tauri::command]
+async fn mega_browse(app: AppHandle, url: Option<String>) -> Result<serde_json::Value, String> {
+    let settings = load_settings_file(&app);
+    let mut args = vec!["mega".into(), "browse".into(), "--json".into()];
+    if let Some(u) = url {
+        let u = u.trim();
+        if !u.is_empty() {
+            args.push(u.to_string());
+        }
+    }
+    append_network_args(&mut args, &settings);
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn mega_login(
+    app: AppHandle,
+    email: String,
+    password: String,
+) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec![
+            "mega".into(),
+            "login".into(),
+            "--json".into(),
+            "--email".into(),
+            email,
+            "--password".into(),
+            password,
+        ],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn mega_logout(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec!["mega".into(), "logout".into(), "--json".into()],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn mega_whoami(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec!["mega".into(), "whoami".into(), "--json".into()],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn mega_stream(
+    app: AppHandle,
+    state: State<'_, JobState>,
+    url: String,
+) -> Result<serde_json::Value, String> {
+    // keep sidecar alive after returning URL so localhost decrypt stream stays up
+    let mut args = vec![
+        "mega".into(),
+        "stream".into(),
+        url,
+        "--json".into(),
+        "--wait".into(),
+    ];
+    append_network_args(&mut args, &load_settings_file(&app));
+    let (mut rx, child) = spawn_udl(&app, args)?;
+    let stream_job = format!("mega-stream-{}", Uuid::new_v4());
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(line_bytes) => {
+                let text = String::from_utf8_lossy(&line_bytes);
+                for raw in text.split('\n') {
+                    let raw = raw.trim();
+                    if raw.is_empty() {
+                        continue;
+                    }
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
+                        state
+                            .children
+                            .lock()
+                            .map_err(|e| e.to_string())?
+                            .insert(stream_job.clone(), child);
+                        let mut out = value;
+                        if let Some(obj) = out.as_object_mut() {
+                            obj.insert("job_id".into(), serde_json::json!(stream_job));
+                        }
+                        return Ok(out);
+                    }
+                }
+            }
+            CommandEvent::Terminated(_) => {
+                return Err("MEGA stream process exited early".into());
+            }
+            _ => {}
+        }
+    }
+    Err("MEGA stream produced no output".into())
+}
+
+#[tauri::command]
 async fn iwara_login(
     app: AppHandle,
     email: String,
@@ -2172,6 +2300,11 @@ pub fn run() {
             iwara_logout,
             iwara_whoami,
             iwara_import_following,
+            mega_browse,
+            mega_login,
+            mega_logout,
+            mega_whoami,
+            mega_stream,
             updater_status,
             show_main_window,
             set_tray_tooltip

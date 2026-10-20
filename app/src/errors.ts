@@ -11,7 +11,12 @@ const code_messages: Record<string, string> = {
   paywall: "此內容受付費／大會員限制，無法下載",
   region_locked: "此內容有地區限制，無法下載",
   cloudflare: "遇到 Cloudflare 挑戰；可在設定中選用繞過（預設關閉）",
-  mega_tool_missing: "找不到 MEGA 工具，請安裝 megatools 或 MEGAcmd",
+  mega_tool_missing: "找不到 MEGA 工具，請安裝 megatools 或 MEGAcmd（或改用內建後端）",
+  mega_quota: "MEGA 傳輸配額已用盡，請等待重置（不支援繞過）",
+  mega_integrity: "MEGA 檔案完整性檢查失敗（CBC-MAC）",
+  mega_auth: "MEGA 登入或工作階段失效",
+  mega_link: "MEGA 連結無效或缺少金鑰",
+  mega_api_error: "MEGA API 錯誤",
   cancelled: "已取消",
 };
 

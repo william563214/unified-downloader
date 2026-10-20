@@ -13,6 +13,7 @@ from typing import Any
 
 from udl import __version__
 from udl.cli_iwara import add_iwara_parser, cmd_iwara
+from udl.cli_mega import add_mega_parser, cmd_mega
 from udl.config import load_config, save_config, udl_config
 from udl.events import dump_schema, emitter
 from udl.metadata import item_metadata
@@ -357,7 +358,23 @@ def _build_parser() -> argparse.ArgumentParser:
     p_get.add_argument(
         "--mega-tool",
         default=None,
-        help="path to megatools or mega-get (default: PATH / UDL_MEGA_TOOL)",
+        help="path to megatools or mega-get when --mega-backend=external",
+    )
+    p_get.add_argument(
+        "--mega-backend",
+        choices=("builtin", "external"),
+        default=None,
+        help="MEGA download backend (default: builtin; or UDL_MEGA_BACKEND)",
+    )
+    p_get.add_argument(
+        "--mega-select",
+        default=None,
+        help="comma-separated MEGA node handles to download from a folder",
+    )
+    p_get.add_argument(
+        "--mega-no-verify",
+        action="store_true",
+        help="skip MEGA CBC-MAC integrity check after download",
     )
     p_get.add_argument(
         "--on-duplicate",
@@ -613,6 +630,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sec_del.add_argument("--json", action="store_true")
 
     add_iwara_parser(sub)
+    add_mega_parser(sub)
 
     p_bili = sub.add_parser("bili", help="Bilibili account login / session")
     bili_sub = p_bili.add_subparsers(dest="bili_command", required=True)
@@ -1212,6 +1230,12 @@ def _apply_site_options(ext: object, args: argparse.Namespace) -> None:
         kwargs["cloudflare_bypass"] = True
     if getattr(args, "mega_tool", None):
         kwargs["mega_tool"] = args.mega_tool
+    if getattr(args, "mega_backend", None):
+        kwargs["mega_backend"] = args.mega_backend
+    if getattr(args, "mega_select", None):
+        kwargs["selected_handles"] = args.mega_select
+    if getattr(args, "mega_no_verify", False):
+        kwargs["verify_mac"] = False
     if kwargs:
         configure(**kwargs)
 
@@ -1264,6 +1288,7 @@ def cmd_secrets(args: argparse.Namespace) -> int:
                 "iwara.password",
                 "iwara.user_token",
                 "iwara.access_token",
+                "mega.session",
             }:
                 print("(redacted — use --json to check presence)", file=sys.stderr)
                 return 0
@@ -1726,6 +1751,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "iwara":
         _apply_network(args)
         return cmd_iwara(args)
+    if args.command == "mega":
+        _apply_network(args)
+        return cmd_mega(args)
     if args.command == "bili":
         return cmd_bili(args)
     parser.error(f"unknown command {args.command}")

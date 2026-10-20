@@ -36,6 +36,8 @@ import {
 import { applyTheme, type ThemeMode } from "./theme";
 import BilibiliAccount from "./BilibiliAccount";
 import BilibiliParse from "./BilibiliParse";
+import MegaAccount from "./MegaAccount";
+import MegaParse from "./MegaParse";
 import { AccountSection } from "./iwara/AccountSection";
 import { BrowsePage } from "./iwara/BrowsePage";
 import { HomePage } from "./iwara/HomePage";
@@ -90,6 +92,7 @@ type UpdaterInfo = {
 type Page =
   | "download"
   | "bilibili"
+  | "mega"
   | "account"
   | "history"
   | "repair"
@@ -613,6 +616,7 @@ export default function App() {
           partRange: job.partRange ?? null,
           expandAll: job.expandAll ?? false,
           nodeNames: job.nodeNames ?? null,
+          megaSelect: job.megaSelect ?? null,
         });
         setJobs((prev) =>
           prev.map((j) =>
@@ -891,6 +895,7 @@ export default function App() {
       partRange: overrides?.partRange ?? null,
       expandAll: overrides?.expandAll ?? false,
       nodeNames: overrides?.nodeNames ?? null,
+      megaSelect: overrides?.megaSelect ?? null,
       files: [],
       status: "queued",
     };
@@ -951,6 +956,23 @@ export default function App() {
     } catch (e) {
       setError(humanizeError(String(e)));
     }
+  }
+
+  function enqueueFromMegaParse(opts: {
+    url: string;
+    selectedHandles: string[];
+  }) {
+    enqueueDownload({
+      url: opts.url,
+      site: "mega",
+      title: "MEGA",
+      output,
+      megaSelect:
+        opts.selectedHandles.length > 0
+          ? opts.selectedHandles.join(",")
+          : null,
+    });
+    setPage("download");
   }
 
   function enqueueFromBilibiliParse(opts: {
@@ -1293,6 +1315,13 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={page === "mega" ? "nav active" : "nav"}
+            onClick={() => setPage("mega")}
+          >
+            MEGA
+          </button>
+          <button
+            type="button"
             className={page === "account" ? "nav active" : "nav"}
             onClick={() => setPage("account")}
           >
@@ -1380,9 +1409,18 @@ export default function App() {
             onEnqueue={enqueueFromBilibiliParse}
           />
         </div>
+      ) : page === "mega" ? (
+        <div className="page-shell">
+          <MegaParse
+            settings={settings}
+            output={output || settings.downloadDir}
+            onEnqueue={enqueueFromMegaParse}
+          />
+        </div>
       ) : page === "account" ? (
         <div className="page-shell">
           <BilibiliAccount />
+          <MegaAccount />
         </div>
       ) : page === "iwara" ? (
         <div className="page-shell">
@@ -2560,6 +2598,42 @@ export default function App() {
                 spellCheck={false}
               />
             </label>
+            <h4>MEGA</h4>
+            <p className="hint">
+              預設內建客戶端。外部後端需本機 megatools 或 MEGAcmd。不支援 SmartProxy／換
+              IP／配額繞過。
+            </p>
+            <label className="field compact">
+              <span>後端</span>
+              <select
+                value={settingsDraft.megaBackend}
+                onChange={(e) => {
+                  const value = e.target.value === "external" ? "external" : "builtin";
+                  setSettingsDraft((s) => ({ ...s, megaBackend: value }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="builtin">內建（預設）</option>
+                <option value="external">外部工具（megatools／MEGAcmd）</option>
+              </select>
+            </label>
+            {settingsDraft.megaBackend === "external" && (
+              <label className="field compact">
+                <span>外部工具路徑（選用）</span>
+                <input
+                  value={settingsDraft.megaToolPath}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      megaToolPath: e.target.value,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="空白則搜尋 PATH／UDL_MEGA_TOOL"
+                  spellCheck={false}
+                />
+              </label>
+            )}
           </div>
 
 
@@ -2824,8 +2898,8 @@ export default function App() {
             {resolveInfo?.site === "mega" && resolveInfo.supported && (
               <div className="site-options" aria-label="MEGA 選項">
                 <p className="hint">
-                  需本機已安裝 megatools（優先）或 MEGAcmd 的 mega-get。可用環境變數
-                  UDL_MEGA_TOOL 指定路徑。不支援配額繞過。
+                  預設使用內建 Python 客戶端（多連線分段＋CBC-MAC）。可在設定改為
+                  megatools／MEGAcmd 外部後端。資料夾建議用「MEGA」頁勾選下載。不支援配額繞過。
                 </p>
               </div>
             )}
