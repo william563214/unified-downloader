@@ -216,10 +216,14 @@
 - [x] `progress` 事件帶 per-segment；GUI：連線數設定、任務詳情分段進度條
 - [x] `docs/networking.md` 更新
 
-### v0.9-C — 排程器
+### v0.9-C — 排程器／配額／時段限速
 
-- [ ] 下載排程（時段／佇列策略；細節由對應 PR 定義）
-- [ ] 開始／停止排程、完成後動作、流量額度
+- [x] 具名佇列＋每日／平日／指定日時段、每佇列並發、repeat／once（SQLite 持久化，重啟保留）
+- [x] 完成後動作：none／notify／quit／sleep／shutdown（macOS＋Windows；倒數確認可取消）
+- [x] 流量配額（每小時／每日 MB）：超量暫停、下一個視窗恢復；經 `udl.download.rate` 計量
+- [x] 時段限速 profile（白天較慢等）；與全域限速取較嚴者
+- [x] GUI「排程」頁＋每佇列設定；與 v0.8 佇列儀表板共用狀態；CLI `udl queue schedule …`
+- [x] 文件：`docs/scheduler.md`；本 ROADMAP 更新
 
 ### v0.9-D（本版／頁面擷取＋校驗＋掃毒）
 

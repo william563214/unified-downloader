@@ -44,6 +44,13 @@ import { AccountSection } from "./iwara/AccountSection";
 import { BrowsePage } from "./iwara/BrowsePage";
 import { HomePage } from "./iwara/HomePage";
 import { SubscriptionsPage } from "./iwara/SubscriptionsPage";
+import { SchedulerPage } from "./SchedulerPage";
+import {
+  type AfterCompletion,
+  type PendingPowerAction,
+  type SchedulerStatus,
+  after_completion_labels,
+} from "./scheduler";
 import "./App.css";
 
 type ResolveResult = {
@@ -100,6 +107,7 @@ type Page =
   | "history"
   | "repair"
   | "settings"
+  | "schedule"
   | "iwara"
   | "iwara-subs"
   | "iwara-home";
@@ -177,11 +185,20 @@ export default function App() {
   const [selectedRepair, setSelectedRepair] = useState<Set<string>>(new Set());
   const [repairVerifyHash, setRepairVerifyHash] = useState(false);
   const [relinkPath, setRelinkPath] = useState("");
+  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(
+    null,
+  );
+  const [scheduleNotice, setScheduleNotice] = useState<string | null>(null);
+  const [pendingPower, setPendingPower] = useState<PendingPowerAction | null>(
+    null,
+  );
   const startingRef = useRef(false);
   const resumedRef = useRef(false);
   const jobsRef = useRef<JobRow[]>([]);
   const settingsRef = useRef(settings);
   const notifiedRef = useRef<Set<string>>(new Set());
+  const afterFiredRef = useRef<Set<string>>(new Set());
+  const powerTimerRef = useRef<number | null>(null);
 
   const isBilibili = resolveInfo?.site === "bilibili" && resolveInfo.supported;
   const detectedUrls = useMemo(() => extractUrls(urlDraft || url), [urlDraft, url]);
@@ -600,8 +617,82 @@ export default function App() {
     };
   }, []);
 
+  const refreshScheduler = useCallback(async () => {
+    try {
+      const status = await invoke<SchedulerStatus>("schedule_status", {
+        speedLimit: settings.speedLimit || null,
+      });
+      setSchedulerStatus(status);
+    } catch {
+      /* schedule optional when sidecar missing */
+    }
+  }, [settings.speedLimit]);
+
+  useEffect(() => {
+    void refreshScheduler();
+    const timer = window.setInterval(() => {
+      void refreshScheduler();
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [refreshScheduler]);
+
+  const cancelPendingPower = useCallback(() => {
+    if (powerTimerRef.current != null) {
+      window.clearInterval(powerTimerRef.current);
+      powerTimerRef.current = null;
+    }
+    setPendingPower(null);
+  }, []);
+
+  const beginAfterAction = useCallback(
+    (action: AfterCompletion, queueName: string) => {
+      if (action === "none") return;
+      if (action === "notify") {
+        setScheduleNotice(`佇列「${queueName}」已完成全部任務`);
+        return;
+      }
+      cancelPendingPower();
+      setPendingPower({ action, queueName, seconds: 30 });
+      powerTimerRef.current = window.setInterval(() => {
+        setPendingPower((prev) => {
+          if (!prev) return null;
+          if (prev.seconds <= 1) {
+            if (powerTimerRef.current != null) {
+              window.clearInterval(powerTimerRef.current);
+              powerTimerRef.current = null;
+            }
+            void (async () => {
+              try {
+                if (prev.action === "quit") {
+                  const { getCurrentWindow } = await import(
+                    "@tauri-apps/api/window"
+                  );
+                  await getCurrentWindow().close();
+                  return;
+                }
+                await invoke("system_power_action", { action: prev.action });
+              } catch (e) {
+                setError(humanizeError(String(e)));
+              }
+            })();
+            return null;
+          }
+          return { ...prev, seconds: prev.seconds - 1 };
+        });
+      }, 1000);
+    },
+    [cancelPendingPower],
+  );
+
   const launchJob = useCallback(
     async (job: JobRow) => {
+      const queueName = job.queueName || "default";
+      const runtime = schedulerStatus?.queues.find((q) => q.name === queueName);
+      const speedLimit =
+        runtime?.speed_limit ||
+        schedulerStatus?.global_speed_limit ||
+        settings.speedLimit ||
+        null;
       // mark running before await so the scheduler cannot double-start
       setJobs((prev) =>
         prev.map((j) =>
@@ -634,6 +725,7 @@ export default function App() {
           expandAll: job.expandAll ?? false,
           nodeNames: job.nodeNames ?? null,
           megaSelect: job.megaSelect ?? null,
+          speedLimit,
         });
         setJobs((prev) =>
           prev.map((j) =>
@@ -654,7 +746,13 @@ export default function App() {
         );
       }
     },
-    [settings.ffmpegPath, settings.workers, settings.onDuplicate],
+    [
+      settings.ffmpegPath,
+      settings.workers,
+      settings.onDuplicate,
+      settings.speedLimit,
+      schedulerStatus,
+    ],
   );
 
   useEffect(() => {
@@ -680,8 +778,9 @@ export default function App() {
               quality: r.quality || null,
               part: r.part || null,
               cloudflareBypass: r.cloudflare_bypass ?? null,
+              queueName: r.queue_name || "default",
               files: [],
-              status: "queued",
+              status: "queued" as const,
               message: "應用重啟後自動恢復",
             }));
           return restored.length ? [...restored, ...prev] : prev;
@@ -741,19 +840,70 @@ export default function App() {
   }, [historyRows]);
 
   useEffect(() => {
-    const running = jobs.filter((j) => j.status === "running").length;
-    const slots = Math.max(1, settings.maxConcurrent) - running;
-    if (slots <= 0 || startingRef.current) return;
-    const next = jobs.filter((j) => j.status === "queued").slice(0, slots);
-    if (next.length === 0) return;
+    if (schedulerStatus?.quota?.exceeded) return;
+    const queued = jobs.filter((j) => j.status === "queued");
+    if (queued.length === 0 || startingRef.current) return;
+
+    const byQueue = new Map<string, JobRow[]>();
+    for (const job of queued) {
+      const name = job.queueName || "default";
+      const list = byQueue.get(name) || [];
+      list.push(job);
+      byQueue.set(name, list);
+    }
+
+    const toStart: JobRow[] = [];
+    for (const [name, list] of byQueue) {
+      const runtime = schedulerStatus?.queues.find((q) => q.name === name);
+      // without scheduler data fall back to settings; inactive queues wait
+      if (schedulerStatus && runtime && !runtime.active) continue;
+      const maxConc = runtime?.max_concurrent ?? settings.maxConcurrent;
+      const running = jobs.filter(
+        (j) => j.status === "running" && (j.queueName || "default") === name,
+      ).length;
+      const slots = Math.max(1, maxConc) - running;
+      if (slots <= 0) continue;
+      toStart.push(...list.slice(0, slots));
+    }
+    if (toStart.length === 0) return;
     startingRef.current = true;
     void (async () => {
-      for (const job of next) {
+      for (const job of toStart) {
         await launchJob(job);
       }
       startingRef.current = false;
     })();
-  }, [jobs, settings.maxConcurrent, launchJob]);
+  }, [jobs, settings.maxConcurrent, launchJob, schedulerStatus]);
+
+  useEffect(() => {
+    if (!schedulerStatus) return;
+    for (const runtime of schedulerStatus.queues) {
+      if (runtime.after_completion === "none") continue;
+      const name = runtime.name;
+      const related = jobs.filter((j) => (j.queueName || "default") === name);
+      if (related.length === 0) continue;
+      const unfinished = related.some(
+        (j) => j.status === "queued" || j.status === "running" || j.status === "paused",
+      );
+      if (unfinished) {
+        afterFiredRef.current.delete(name);
+        continue;
+      }
+      const allTerminal = related.every((j) =>
+        ["done", "error", "cancelled"].includes(j.status),
+      );
+      if (!allTerminal || afterFiredRef.current.has(name)) continue;
+      afterFiredRef.current.add(name);
+      beginAfterAction(runtime.after_completion, name);
+      if (runtime.queue.repeat_mode === "once") {
+        void invoke("schedule_complete_once", { name })
+          .then(() => refreshScheduler())
+          .catch(() => {
+            /* ignore */
+          });
+      }
+    }
+  }, [jobs, schedulerStatus, beginAfterAction, refreshScheduler]);
 
   useEffect(() => {
     for (const job of jobs) {
@@ -913,6 +1063,7 @@ export default function App() {
       expandAll: overrides?.expandAll ?? false,
       nodeNames: overrides?.nodeNames ?? null,
       megaSelect: overrides?.megaSelect ?? null,
+      queueName: overrides?.queueName ?? "default",
       files: [],
       status: "queued",
     };
@@ -1381,6 +1532,13 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={page === "schedule" ? "nav active" : "nav"}
+            onClick={() => setPage("schedule")}
+          >
+            排程
+          </button>
+          <button
+            type="button"
             className={page === "repair" ? "nav active" : "nav"}
             onClick={() => setPage("repair")}
           >
@@ -1395,6 +1553,35 @@ export default function App() {
           </button>
         </nav>
       </header>
+
+      {scheduleNotice && (
+        <section className="banner" role="status">
+          <div>
+            <strong>排程通知</strong>
+            <p>{scheduleNotice}</p>
+          </div>
+          <button type="button" className="ghost" onClick={() => setScheduleNotice(null)}>
+            關閉
+          </button>
+        </section>
+      )}
+
+      {pendingPower && (
+        <div className="power-modal" role="alertdialog" aria-modal="true">
+          <div className="power-dialog">
+            <h2>確認{after_completion_labels[pendingPower.action]}</h2>
+            <p>
+              佇列「{pendingPower.queueName}」已完成。將在 {pendingPower.seconds}{" "}
+              秒後執行「{after_completion_labels[pendingPower.action]}」。
+            </p>
+            <div className="row gap">
+              <button type="button" className="danger" onClick={cancelPendingPower}>
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {ffmpegPrompt && ffmpegInfo && !ffmpegInfo.found && (
         <section className="banner" role="status">
@@ -1441,6 +1628,10 @@ export default function App() {
               setPage("download");
             }}
           />
+        </div>
+      ) : page === "schedule" ? (
+        <div className="page-shell">
+          <SchedulerPage onStatus={setSchedulerStatus} />
         </div>
       ) : page === "bilibili" ? (
         <div className="page-shell">
@@ -3323,6 +3514,27 @@ export default function App() {
             </div>
           </section>
 
+          {schedulerStatus && (
+            <p className="hint scheduler-inline-status" role="status">
+              排程：
+              {schedulerStatus.quota?.exceeded
+                ? "流量配額已滿，佇列暫停"
+                : !schedulerStatus.active
+                  ? "視窗外／待機"
+                  : "可執行"}
+              {schedulerStatus.global_speed_limit
+                ? ` · 限速 ${schedulerStatus.global_speed_limit}`
+                : ""}
+              {" · "}
+              <button
+                type="button"
+                className="linkish"
+                onClick={() => setPage("schedule")}
+              >
+                開啟排程設定
+              </button>
+            </p>
+          )}
           <QueueDashboard
             jobs={jobs}
             filter={queueFilter}

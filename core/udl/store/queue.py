@@ -10,6 +10,7 @@ from typing import Any
 
 from udl.metadata import item_metadata
 from udl.store.db import connect
+from udl.store.schedule import default_queue_name
 
 # unfinished statuses auto-resumed on GUI restart
 unfinished_statuses = frozenset({"queued", "running", "paused"})
@@ -29,6 +30,7 @@ class queue_job:
     workers: int | None = None
     ffmpeg: str | None = None
     on_duplicate: str = "skip"
+    queue_name: str = default_queue_name
     metadata: dict[str, Any] = field(default_factory=dict)
     options: dict[str, Any] = field(default_factory=dict)
     error_message: str | None = None
@@ -51,6 +53,7 @@ class queue_job:
             "workers": self.workers,
             "ffmpeg": self.ffmpeg,
             "on_duplicate": self.on_duplicate,
+            "queue_name": self.queue_name or default_queue_name,
             "metadata": self.metadata,
             "options": self.options,
             "error_message": self.error_message,
@@ -64,6 +67,12 @@ class queue_job:
 def _row_to_job(row: sqlite3.Row) -> queue_job:
     meta = json.loads(row["metadata_json"] or "{}")
     opts = json.loads(row["options_json"] or "{}")
+    keys = set(row.keys())
+    queue_name = (
+        row["queue_name"]
+        if "queue_name" in keys and row["queue_name"]
+        else default_queue_name
+    )
     return queue_job(
         id=row["id"],
         url=row["url"],
@@ -77,6 +86,7 @@ def _row_to_job(row: sqlite3.Row) -> queue_job:
         workers=row["workers"],
         ffmpeg=row["ffmpeg"],
         on_duplicate=row["on_duplicate"] or "skip",
+        queue_name=queue_name,
         metadata=meta if isinstance(meta, dict) else {},
         options=opts if isinstance(opts, dict) else {},
         error_message=row["error_message"],
@@ -103,10 +113,10 @@ def save_queue_job(
         """
         insert into queue_jobs (
           id, url, site, title, output_dir, status, quality, part,
-          cloudflare_bypass, workers, ffmpeg, on_duplicate,
+          cloudflare_bypass, workers, ffmpeg, on_duplicate, queue_name,
           metadata_json, options_json, error_message, updated_at, started_at
         ) values (
-          ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'),
+          ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'),
           case when ? = 'running' then datetime('now') else null end
         )
         on conflict(id) do update set
@@ -121,6 +131,7 @@ def save_queue_job(
           workers=excluded.workers,
           ffmpeg=excluded.ffmpeg,
           on_duplicate=excluded.on_duplicate,
+          queue_name=excluded.queue_name,
           metadata_json=excluded.metadata_json,
           options_json=excluded.options_json,
           error_message=excluded.error_message,
@@ -149,6 +160,7 @@ def save_queue_job(
             job.workers,
             job.ffmpeg,
             job.on_duplicate,
+            job.queue_name or default_queue_name,
             json.dumps(meta_dict, ensure_ascii=False),
             json.dumps(job.options, ensure_ascii=False),
             job.error_message,
@@ -209,6 +221,7 @@ def list_queue(
     *,
     status: str | None = None,
     unfinished_only: bool = False,
+    queue_name: str | None = None,
     limit: int = 200,
     db_path: str | Path | None = None,
 ) -> list[queue_job]:
@@ -224,6 +237,9 @@ def list_queue(
         elif status:
             clauses.append("status = ?")
             params.append(status)
+        if queue_name:
+            clauses.append("queue_name = ?")
+            params.append(queue_name)
         where = f"where {' and '.join(clauses)}" if clauses else ""
         rows = conn.execute(
             f"""

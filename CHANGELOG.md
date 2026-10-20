@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- v0.9-C 排程：具名佇列、時段、完成後動作、流量配額、時段限速檔
+- CLI `udl queue schedule …`；GUI「排程」頁；`docs/scheduler.md`
 - gallery-dl 備援：GPL-2.0-only 僅子行程整合（禁止 import）；router 在 Direct 之前
 - GUI 設定／佇列來源／支援模組清單；cookies／secrets／proxy／限速／可選 archive
 - Release mere aggregation 打包獨立 gallery-dl（附 LICENSE／SOURCE）

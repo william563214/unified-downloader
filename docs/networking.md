@@ -146,9 +146,14 @@ uv run udl get URL -o ./out --connections 12
 | `udl.download.aria2` | JSON-RPC 後端 |
 | `udl.extractors.direct` | 通用直連 fallback |
 
+## 時段限速與流量配額（v0.9-C）
+
+排程模組可依時段覆寫有效 `--speed-limit`，並以 `throttle()` 累計位元組做每小時／每日配額。  
+詳見 [`docs/scheduler.md`](scheduler.md)。
+
 ## 已知限制
 
-- 單一 GUI 任務通常是一個 `udl` sidecar 行程；「全域限速」作用於該行程內。多任務並發時，GUI 需把相同的 `--speed-limit` 傳給每個 sidecar（目前如此），整體吞吐約為「單行程上限 × 並發數」的近似；若需要跨行程硬上限，需日後由 GUI 侧協調。
+- 單一 GUI 任務通常是一個 `udl` sidecar 行程；「全域限速」作用於該行程內。多任務並發時，GUI 需把相同的 `--speed-limit` 傳給每個 sidecar（目前如此），整體吞吐約為「單行程上限 × 並發數」的近似。v0.9-C 由 GUI 依排程狀態傳入較嚴的有效限速；硬性跨行程總上限仍屬近似。
 - MEGAcmd `mega-get` 無對等 `--limit-speed`；僅能傳代理環境變數。
 - SOCKS 需 `PySocks`（已列入核心依賴）。
 - keyring 在無圖形／無密鑰環的 CI 或無頭環境會改寫入使用者資料目錄下的 `secrets.json`（權限 0600）並在 stderr 提示；正式桌面環境優先用 OS keychain。CLI 仍可用 `--proxy-password` 一次性傳入。

@@ -432,9 +432,16 @@ fn append_gallerydl_args(args: &mut Vec<String>, settings: &AppSettings) {
     }
 }
 
-fn append_network_args(args: &mut Vec<String>, settings: &AppSettings) {
+fn append_network_args(
+    args: &mut Vec<String>,
+    settings: &AppSettings,
+    speed_limit_override: Option<&str>,
+) {
     append_proxy_ua_args(args, settings);
-    let speed = settings.speed_limit.trim();
+    let override_speed = speed_limit_override
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let speed = override_speed.unwrap_or_else(|| settings.speed_limit.trim());
     if !speed.is_empty() {
         args.push("--speed-limit".into());
         args.push(speed.to_string());
@@ -1350,6 +1357,7 @@ async fn start_download(
     expand_all: Option<bool>,
     node_names: Option<String>,
     mega_select: Option<String>,
+    speed_limit: Option<String>,
 ) -> Result<String, String> {
     let settings = load_settings_file(&app);
     let job_id = job_id
@@ -1551,7 +1559,7 @@ async fn start_download(
             args.push(cfg_path.to_string_lossy().into_owned());
         }
     }
-    append_network_args(&mut args, &settings);
+    append_network_args(&mut args, &settings, speed_limit.as_deref());
     let mega = settings.mega_tool_path.trim();
     if !mega.is_empty() {
         args.push("--mega-tool".into());
@@ -1782,6 +1790,7 @@ async fn queue_list(
     app: AppHandle,
     unfinished: Option<bool>,
     status: Option<String>,
+    queue_name: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let mut args = vec!["queue".into(), "list".into(), "--json".into()];
     if unfinished.unwrap_or(false) {
@@ -1791,6 +1800,10 @@ async fn queue_list(
         args.push("--status".into());
         args.push(v);
     }
+    if let Some(v) = queue_name.filter(|s| !s.trim().is_empty()) {
+        args.push("--queue".into());
+        args.push(v);
+    }
     let (mut rx, _child) = spawn_udl(&app, args)?;
     let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
     if code.unwrap_or(1) != 0 {
@@ -1798,6 +1811,312 @@ async fn queue_list(
     }
     serde_json::from_str(stdout.trim())
         .map_err(|e| format!("parse queue JSON: {e}; raw={stdout}; err={stderr}"))
+}
+
+#[tauri::command]
+async fn schedule_status(
+    app: AppHandle,
+    speed_limit: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "queue".into(),
+        "schedule".into(),
+        "status".into(),
+        "--json".into(),
+    ];
+    if let Some(v) = speed_limit.filter(|s| !s.trim().is_empty()) {
+        args.push("--speed-limit".into());
+        args.push(v);
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn schedule_list(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec![
+            "queue".into(),
+            "schedule".into(),
+            "list".into(),
+            "--json".into(),
+        ],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn schedule_set(
+    app: AppHandle,
+    name: String,
+    enabled: Option<bool>,
+    max_concurrent: Option<u32>,
+    days: Option<String>,
+    start: Option<String>,
+    end: Option<String>,
+    always: Option<bool>,
+    repeat_mode: Option<String>,
+    after: Option<String>,
+    speed_profile: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "queue".into(),
+        "schedule".into(),
+        "set".into(),
+        name,
+        "--json".into(),
+    ];
+    if let Some(v) = enabled {
+        args.push(if v {
+            "--enabled".into()
+        } else {
+            "--no-enabled".into()
+        });
+    }
+    if let Some(v) = max_concurrent {
+        args.push("--max-concurrent".into());
+        args.push(v.max(1).to_string());
+    }
+    if let Some(v) = days.filter(|s| !s.trim().is_empty()) {
+        args.push("--days".into());
+        args.push(v);
+    }
+    if always.unwrap_or(false) {
+        args.push("--always".into());
+    } else {
+        if let Some(v) = start {
+            args.push("--start".into());
+            args.push(v);
+        }
+        if let Some(v) = end {
+            args.push("--end".into());
+            args.push(v);
+        }
+    }
+    match repeat_mode.as_deref().map(str::trim) {
+        Some("once") => args.push("--once".into()),
+        Some("repeat") => args.push("--repeat".into()),
+        _ => {}
+    }
+    if let Some(v) = after.filter(|s| !s.trim().is_empty()) {
+        args.push("--after".into());
+        args.push(v);
+    }
+    if let Some(v) = speed_profile {
+        args.push("--speed-profile".into());
+        args.push(v);
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn schedule_delete(app: AppHandle, name: String) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec![
+            "queue".into(),
+            "schedule".into(),
+            "delete".into(),
+            name,
+            "--json".into(),
+        ],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn schedule_reset_once(app: AppHandle, name: String) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec![
+            "queue".into(),
+            "schedule".into(),
+            "reset-once".into(),
+            name,
+            "--json".into(),
+        ],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn schedule_complete_once(app: AppHandle, name: String) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec![
+            "queue".into(),
+            "schedule".into(),
+            "complete-once".into(),
+            name,
+            "--json".into(),
+        ],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn schedule_profile_list(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec![
+            "queue".into(),
+            "schedule".into(),
+            "profile".into(),
+            "list".into(),
+            "--json".into(),
+        ],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn schedule_profile_set(
+    app: AppHandle,
+    name: String,
+    default_limit: Option<String>,
+    windows: Option<Vec<String>>,
+    clear_windows: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "queue".into(),
+        "schedule".into(),
+        "profile".into(),
+        "set".into(),
+        name,
+        "--json".into(),
+    ];
+    if let Some(v) = default_limit {
+        args.push("--default-limit".into());
+        args.push(v);
+    }
+    if clear_windows.unwrap_or(false) {
+        args.push("--clear-windows".into());
+    }
+    for window in windows.unwrap_or_default() {
+        let w = window.trim();
+        if w.is_empty() {
+            continue;
+        }
+        args.push("--window".into());
+        args.push(w.to_string());
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn schedule_profile_delete(
+    app: AppHandle,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    run_udl_json(
+        &app,
+        vec![
+            "queue".into(),
+            "schedule".into(),
+            "profile".into(),
+            "delete".into(),
+            name,
+            "--json".into(),
+        ],
+    )
+    .await
+}
+
+#[tauri::command]
+async fn schedule_quota(
+    app: AppHandle,
+    enable: Option<bool>,
+    hour_mb: Option<f64>,
+    day_mb: Option<f64>,
+    clear_pause: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "queue".into(),
+        "schedule".into(),
+        "quota".into(),
+        "--json".into(),
+    ];
+    if let Some(v) = enable {
+        args.push(if v {
+            "--enable".into()
+        } else {
+            "--no-enable".into()
+        });
+    }
+    if let Some(v) = hour_mb {
+        args.push("--hour-mb".into());
+        args.push(v.to_string());
+    }
+    if let Some(v) = day_mb {
+        args.push("--day-mb".into());
+        args.push(v.to_string());
+    }
+    if clear_pause.unwrap_or(false) {
+        args.push("--clear-pause".into());
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+fn system_power_action(action: String) -> Result<serde_json::Value, String> {
+    // macOS + Windows primary; Linux best-effort for local/dev
+    let action = action.trim().to_lowercase();
+    let os = std::env::consts::OS;
+    match action.as_str() {
+        "notify" => Ok(serde_json::json!({
+            "ok": true,
+            "action": "notify",
+            "message": "排程佇列已完成"
+        })),
+        "quit" => Ok(serde_json::json!({
+            "ok": true,
+            "action": "quit",
+            "needs_frontend": true
+        })),
+        "sleep" => {
+            let status = match os {
+                "macos" => std::process::Command::new("pmset")
+                    .arg("sleepnow")
+                    .status(),
+                "windows" => std::process::Command::new("powershell")
+                    .args([
+                        "-NoProfile",
+                        "-Command",
+                        "Add-Type -AssemblyName System.Windows.Forms; \
+                         [System.Windows.Forms.Application]::SetSuspendState(\
+                         'Suspend',$false,$false)",
+                    ])
+                    .status(),
+                _ => std::process::Command::new("systemctl")
+                    .args(["suspend"])
+                    .status(),
+            }
+            .map_err(|e| format!("sleep failed: {e}"))?;
+            if !status.success() {
+                return Err(format!("sleep exited with {status}"));
+            }
+            Ok(serde_json::json!({"ok": true, "action": "sleep"}))
+        }
+        "shutdown" => {
+            let status = match os {
+                "macos" => std::process::Command::new("osascript")
+                    .args(["-e", "tell application \"System Events\" to shut down"])
+                    .status(),
+                "windows" => std::process::Command::new("shutdown")
+                    .args(["/s", "/t", "0"])
+                    .status(),
+                _ => std::process::Command::new("systemctl")
+                    .args(["poweroff"])
+                    .status(),
+            }
+            .map_err(|e| format!("shutdown failed: {e}"))?;
+            if !status.success() {
+                return Err(format!("shutdown exited with {status}"));
+            }
+            Ok(serde_json::json!({"ok": true, "action": "shutdown"}))
+        }
+        other => Err(format!("unsupported action: {other}")),
+    }
 }
 
 #[tauri::command]
@@ -2250,7 +2569,7 @@ async fn mega_browse(app: AppHandle, url: Option<String>) -> Result<serde_json::
             args.push(u.to_string());
         }
     }
-    append_network_args(&mut args, &settings);
+    append_network_args(&mut args, &settings, None);
     run_udl_json(&app, args).await
 }
 
@@ -2307,7 +2626,7 @@ async fn mega_stream(
         "--json".into(),
         "--wait".into(),
     ];
-    append_network_args(&mut args, &load_settings_file(&app));
+    append_network_args(&mut args, &load_settings_file(&app), None);
     let (mut rx, child) = spawn_udl(&app, args)?;
     let stream_job = format!("mega-stream-{}", Uuid::new_v4());
     while let Some(event) = rx.recv().await {
@@ -2579,6 +2898,17 @@ pub fn run() {
             history_list,
             history_delete,
             queue_list,
+            schedule_status,
+            schedule_list,
+            schedule_set,
+            schedule_delete,
+            schedule_reset_once,
+            schedule_complete_once,
+            schedule_profile_list,
+            schedule_profile_set,
+            schedule_profile_delete,
+            schedule_quota,
+            system_power_action,
             naming_preview,
             rules_test,
             repair_scan,
