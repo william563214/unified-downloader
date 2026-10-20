@@ -458,7 +458,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "output path template using metadata fields "
-            "e.g. '{site}/{author}/{date:%Y-%m}/{title} [{id}].{ext}'"
+            "e.g. '{site}/{author}/{date:%%Y-%%m}/{title} [{id}].{ext}'"
         ),
     )
     p_get.add_argument(
