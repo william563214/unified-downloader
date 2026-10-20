@@ -132,6 +132,17 @@ struct AppSettings {
     mega_backend: String,
     #[serde(default)]
     mega_tool_path: String,
+    // gallery-dl external CLI (GPL-2.0-only subprocess; mere aggregation)
+    #[serde(default = "default_true")]
+    gallerydl_enabled: bool,
+    #[serde(default)]
+    gallerydl_tool_path: String,
+    #[serde(default)]
+    gallerydl_cookies_path: String,
+    #[serde(default)]
+    gallerydl_options: String,
+    #[serde(default)]
+    gallerydl_use_archive: bool,
     // shell / UX (v0.8)
     #[serde(default)]
     clipboard_watcher: bool,
@@ -200,14 +211,30 @@ fn default_connections() -> u32 {
 
 fn default_site_flags() -> HashMap<String, bool> {
     let mut map = HashMap::new();
-    for site in ["gofile", "bunkr", "iwara", "bilibili", "mega", "direct"] {
+    for site in [
+        "gofile",
+        "bunkr",
+        "iwara",
+        "bilibili",
+        "mega",
+        "gallerydl",
+        "direct",
+    ] {
         map.insert(site.into(), true);
     }
     map
 }
 
 fn sites_cli_list(flags: &HashMap<String, bool>) -> String {
-    let sites = ["gofile", "bunkr", "iwara", "bilibili", "mega", "direct"];
+    let sites = [
+        "gofile",
+        "bunkr",
+        "iwara",
+        "bilibili",
+        "mega",
+        "gallerydl",
+        "direct",
+    ];
     let enabled: Vec<&str> = sites
         .iter()
         .copied()
@@ -274,6 +301,11 @@ impl Default for AppSettings {
             custom_host: String::new(),
             mega_backend: default_mega_backend(),
             mega_tool_path: String::new(),
+            gallerydl_enabled: true,
+            gallerydl_tool_path: String::new(),
+            gallerydl_cookies_path: String::new(),
+            gallerydl_options: String::new(),
+            gallerydl_use_archive: false,
             clipboard_watcher: false,
             notifications_enabled: true,
             minimize_to_tray: false,
@@ -373,6 +405,33 @@ fn append_proxy_ua_args(args: &mut Vec<String>, settings: &AppSettings) {
     }
 }
 
+fn append_gallerydl_args(args: &mut Vec<String>, settings: &AppSettings) {
+    if !settings.gallerydl_enabled {
+        args.push("--no-gallerydl".into());
+    }
+    let tool = settings.gallerydl_tool_path.trim();
+    if !tool.is_empty() {
+        args.push("--gallerydl-tool".into());
+        args.push(tool.to_string());
+    }
+    let cookies = settings.gallerydl_cookies_path.trim();
+    if !cookies.is_empty() {
+        args.push("--gallerydl-cookies".into());
+        args.push(cookies.to_string());
+    }
+    for line in settings.gallerydl_options.split('\n') {
+        let opt = line.trim();
+        if opt.is_empty() {
+            continue;
+        }
+        args.push("--gallerydl-option".into());
+        args.push(opt.to_string());
+    }
+    if settings.gallerydl_use_archive {
+        args.push("--gallerydl-archive".into());
+    }
+}
+
 fn append_network_args(args: &mut Vec<String>, settings: &AppSettings) {
     append_proxy_ua_args(args, settings);
     let speed = settings.speed_limit.trim();
@@ -422,6 +481,49 @@ fn append_network_args(args: &mut Vec<String>, settings: &AppSettings) {
     }
 }
 
+fn bundled_gallerydl_path(app: &AppHandle) -> Option<PathBuf> {
+    // Tauri externalBin sibling of udl sidecar (mere aggregation)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for name in ["gallery-dl", "gallery-dl.exe"] {
+                let candidate = dir.join(name);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+            if let Ok(entries) = fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let fname = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or_default();
+                    if fname.starts_with("gallery-dl-") && path.is_file() {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+    if let Ok(res) = app.path().resource_dir() {
+        for name in ["gallery-dl", "gallery-dl.exe"] {
+            let candidate = res.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        let nested = res.join("gallery-dl").join(if cfg!(target_os = "windows") {
+            "gallery-dl.exe"
+        } else {
+            "gallery-dl"
+        });
+        if nested.is_file() {
+            return Some(nested);
+        }
+    }
+    None
+}
+
 fn spawn_udl(
     app: &AppHandle,
     args: Vec<String>,
@@ -429,12 +531,29 @@ fn spawn_udl(
     // FFmpeg path is passed via --ffmpeg from start_download / ffmpeg_status
     // Managed install dir matches tauri app_data_dir/ffmpeg (Python app_data_name)
     let shell = app.shell();
+    let settings = load_settings_file(app);
+    let mut env_pairs: Vec<(String, String)> = Vec::new();
+    let tool_setting = settings.gallerydl_tool_path.trim();
+    if !tool_setting.is_empty() {
+        env_pairs.push(("UDL_GALLERY_DL".into(), tool_setting.to_string()));
+    } else if let Some(bundled) = bundled_gallerydl_path(app) {
+        env_pairs.push((
+            "UDL_GALLERY_DL".into(),
+            bundled.to_string_lossy().into_owned(),
+        ));
+    }
+    if !settings.gallerydl_enabled {
+        env_pairs.push(("UDL_GALLERY_DL_ENABLED".into(), "0".into()));
+    }
 
     if use_sidecar_binary() {
         match shell.sidecar("udl") {
             Ok(cmd) => {
+                let mut cmd = cmd.args(args);
+                for (k, v) in &env_pairs {
+                    cmd = cmd.env(k, v);
+                }
                 return cmd
-                    .args(args)
                     .spawn()
                     .map_err(|e| format!("spawn sidecar udl: {e}"));
             }
@@ -453,10 +572,11 @@ fn spawn_udl(
         "udl".into(),
     ];
     full_args.extend(args);
-    shell
-        .command("uv")
-        .args(full_args)
-        .spawn()
+    let mut cmd = shell.command("uv").args(full_args);
+    for (k, v) in &env_pairs {
+        cmd = cmd.env(k, v);
+    }
+    cmd.spawn()
         .map_err(|e| format!("spawn uv udl: {e}"))
 }
 
@@ -855,6 +975,7 @@ async fn resolve_url(app: AppHandle, url: String) -> Result<ResolveResult, Strin
     let settings = load_settings_file(&app);
     let mut args = vec!["resolve".into(), url.clone()];
     append_proxy_ua_args(&mut args, &settings);
+    append_gallerydl_args(&mut args, &settings);
     let (mut rx, _child) = spawn_udl(&app, args)?;
     let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
     if code.unwrap_or(1) > 2 {
@@ -903,6 +1024,7 @@ async fn probe_url(app: AppHandle, url: String) -> Result<ProbeResult, String> {
     let settings = load_settings_file(&app);
     let mut args = vec!["probe".into(), url.clone()];
     append_proxy_ua_args(&mut args, &settings);
+    append_gallerydl_args(&mut args, &settings);
     let (mut rx, _child) = spawn_udl(&app, args)?;
     let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
     if code.unwrap_or(1) != 0 {
@@ -1094,6 +1216,36 @@ async fn probe_bilibili(
         return Err(format!("udl probe exited {:?}: {stderr}", code));
     }
     probe_payload.ok_or_else(|| format!("probe expand missing payload; err={stderr}"))
+}
+
+#[tauri::command]
+async fn gallerydl_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    let settings = load_settings_file(&app);
+    let mut args = vec!["gallerydl".into(), "status".into(), "--json".into()];
+    let tool = settings.gallerydl_tool_path.trim();
+    if !tool.is_empty() {
+        args.push("--gallerydl-tool".into());
+        args.push(tool.to_string());
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn gallerydl_sites(
+    app: AppHandle,
+    extractors: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let settings = load_settings_file(&app);
+    let mut args = vec!["gallerydl".into(), "sites".into(), "--json".into()];
+    if extractors.unwrap_or(false) {
+        args.push("--extractors".into());
+    }
+    let tool = settings.gallerydl_tool_path.trim();
+    if !tool.is_empty() {
+        args.push("--gallerydl-tool".into());
+        args.push(tool.to_string());
+    }
+    run_udl_json(&app, args).await
 }
 
 #[tauri::command]
@@ -1331,6 +1483,7 @@ async fn start_download(
             args.push(sel.to_string());
         }
     }
+    append_gallerydl_args(&mut args, &settings);
     let ffmpeg_path = ffmpeg
         .as_deref()
         .map(str::trim)
@@ -2417,6 +2570,8 @@ pub fn run() {
             close_geetest_window,
             ffmpeg_status,
             install_ffmpeg,
+            gallerydl_status,
+            gallerydl_sites,
             start_download,
             cancel_download,
             open_path,

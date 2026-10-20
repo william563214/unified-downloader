@@ -17,6 +17,9 @@ const code_messages: Record<string, string> = {
   mega_auth: "MEGA 登入或工作階段失效",
   mega_link: "MEGA 連結無效或缺少金鑰",
   mega_api_error: "MEGA API 錯誤",
+  gallerydl_tool_missing:
+    "找不到 gallery-dl，請安裝（pip/brew）或在設定指定路徑；發行版可能已附獨立程式",
+  gallerydl_disabled: "gallery-dl 備援已停用",
   cancelled: "已取消",
 };
 

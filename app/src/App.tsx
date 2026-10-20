@@ -38,6 +38,7 @@ import BilibiliAccount from "./BilibiliAccount";
 import BilibiliParse from "./BilibiliParse";
 import MegaAccount from "./MegaAccount";
 import MegaParse from "./MegaParse";
+import { GallerydlSitesPanel } from "./GallerydlSitesPanel";
 import PageDownload from "./PageDownload";
 import { AccountSection } from "./iwara/AccountSection";
 import { BrowsePage } from "./iwara/BrowsePage";
@@ -284,6 +285,12 @@ export default function App() {
           megaBackend:
             loaded.megaBackend === "external" ? "external" : "builtin",
           megaToolPath: loaded.megaToolPath ?? "",
+          gallerydlEnabled:
+            loaded.gallerydlEnabled == null ? true : Boolean(loaded.gallerydlEnabled),
+          gallerydlToolPath: loaded.gallerydlToolPath ?? "",
+          gallerydlCookiesPath: loaded.gallerydlCookiesPath ?? "",
+          gallerydlOptions: loaded.gallerydlOptions ?? "",
+          gallerydlUseArchive: Boolean(loaded.gallerydlUseArchive),
           clipboardWatcher: Boolean(loaded.clipboardWatcher),
           notificationsEnabled:
             loaded.notificationsEnabled == null
@@ -1507,6 +1514,7 @@ export default function App() {
                 <option value="iwara">Iwara</option>
                 <option value="bilibili">Bilibili</option>
                 <option value="mega">MEGA</option>
+                <option value="gallerydl">gallery-dl</option>
                 <option value="direct">Direct</option>
               </select>
             </label>
@@ -2135,6 +2143,140 @@ export default function App() {
                 </div>
               </label>
             )}
+          </div>
+
+          <div className="settings-block">
+            <h3>工具 · gallery-dl</h3>
+            <p className="hint">
+              GPL-2.0-only，僅以獨立子行程呼叫（不 import）。原生站點（Gofile／Bunkr／Iwara／Bilibili／MEGA）優先；其餘由 gallery-dl 辨識的網址走此備援，再其次才是 Direct。帳密請用
+              <code> udl secrets set gallerydl.username </code>
+              等 keychain 鍵，勿寫入設定檔。不做付費牆／DRM／Cloudflare 繞過。
+            </p>
+            <label className="field compact">
+              <span>啟用</span>
+              <select
+                value={settingsDraft.gallerydlEnabled ? "on" : "off"}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    gallerydlEnabled: e.target.value === "on",
+                  }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="on">啟用</option>
+                <option value="off">停用</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>gallery-dl 路徑</span>
+              <div className="folder-row">
+                <input
+                  value={settingsDraft.gallerydlToolPath}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      gallerydlToolPath: e.target.value,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="空白＝自動偵測（bundled／PATH／python -m）"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    void (async () => {
+                      const selected = await open({
+                        multiple: false,
+                        title: "選擇 gallery-dl",
+                      });
+                      if (typeof selected === "string") {
+                        setSettingsDraft((s) => ({
+                          ...s,
+                          gallerydlToolPath: selected,
+                        }));
+                        setSettingsDirty(true);
+                      }
+                    })();
+                  }}
+                >
+                  瀏覽
+                </button>
+              </div>
+            </label>
+            <label className="field">
+              <span>Cookies 檔（Netscape）</span>
+              <div className="folder-row">
+                <input
+                  value={settingsDraft.gallerydlCookiesPath}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      gallerydlCookiesPath: e.target.value,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="選用 cookies.txt"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    void (async () => {
+                      const selected = await open({
+                        multiple: false,
+                        title: "選擇 cookies.txt",
+                      });
+                      if (typeof selected === "string") {
+                        setSettingsDraft((s) => ({
+                          ...s,
+                          gallerydlCookiesPath: selected,
+                        }));
+                        setSettingsDirty(true);
+                      }
+                    })();
+                  }}
+                >
+                  瀏覽
+                </button>
+              </div>
+            </label>
+            <label className="field">
+              <span>per-site 選項（每行 KEY=VALUE → gallery-dl -o）</span>
+              <textarea
+                value={settingsDraft.gallerydlOptions}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    gallerydlOptions: e.target.value,
+                  }));
+                  setSettingsDirty(true);
+                }}
+                rows={4}
+                placeholder={"extractor.twitter.retweets=false\nextractor.reddit.comments=0"}
+                spellCheck={false}
+              />
+            </label>
+            <label className="field compact">
+              <span>使用 gallery-dl archive（選用／對應去重）</span>
+              <select
+                value={settingsDraft.gallerydlUseArchive ? "on" : "off"}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    gallerydlUseArchive: e.target.value === "on",
+                  }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="off">關閉</option>
+                <option value="on">開啟</option>
+              </select>
+            </label>
+            <GallerydlSitesPanel />
           </div>
 
           <div className="settings-block" id="settings-naming">

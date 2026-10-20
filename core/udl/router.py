@@ -17,6 +17,7 @@ from udl.extractors import gofile as gofile_mod
 from udl.extractors import iwara as iwara_mod
 from udl.extractors import mega as mega_mod
 from udl.extractors.base import extractor
+from udl.extractors.external import gallerydl as gallerydl_mod
 
 Matcher = Callable[[str], bool]
 Factory = Callable[[], extractor]
@@ -73,6 +74,15 @@ registry: list[site_entry] = [
         factory=mega_mod.mega_extractor,
         status="implemented",
         kind_hint="file|folder",
+    ),
+    # above direct: URLs recognized by external gallery-dl (GPL-2.0-only subprocess)
+    site_entry(
+        site="gallerydl",
+        label="gallery-dl",
+        match=gallerydl_mod.matches,
+        factory=gallerydl_mod.gallerydl_extractor,
+        status="external",
+        kind_hint="gallery|file",
     ),
     # lowest priority: any HTTP/HTTPS URL not claimed above
     site_entry(
@@ -154,10 +164,16 @@ def resolve(url: str) -> resolve_info:
     if entry.status == "stub":
         message = f"{entry.label} is reserved but not implemented yet"
     elif entry.status == "external":
-        message = (
-            f"{entry.label} downloads via an external CLI "
-            "(megatools preferred; MEGAcmd mega-get fallback)"
-        )
+        if entry.site == "gallerydl":
+            message = (
+                f"{entry.label} downloads via an external gallery-dl CLI "
+                "(subprocess only; GPL-2.0-only — not imported)"
+            )
+        else:
+            message = (
+                f"{entry.label} downloads via an external CLI "
+                "(megatools preferred; MEGAcmd mega-get fallback)"
+            )
     return resolve_info(
         site=entry.site,
         label=entry.label,

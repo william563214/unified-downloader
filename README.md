@@ -9,7 +9,7 @@
 unified-downloader/
 ├─ core/udl/              # Python 核心套件
 │  ├─ router.py           # URL → extractor 註冊表
-│  ├─ extractors/         # gofile、bunkr、iwara、bilibili/、external/mega
+│  ├─ extractors/         # gofile、bunkr、iwara、bilibili/、external/{mega,gallerydl}
 │  ├─ download/http.py    # 共用 HTTP：續傳、重試、並行、取消、限速、aria2
 │  ├─ network.py          # 代理／UA／限速設定
 │  ├─ secrets.py          # OS keychain（keyring）
@@ -27,7 +27,7 @@ unified-downloader/
 GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-lines（見 `docs/events.md`）。  
 全域歷史 DB 在應用資料目錄（與 FFmpeg 佈建同根），由核心擁有。
 
-**不做：** gallery-dl 程式碼／import（GPL-2.0-only 衝突）、Pixeldrain、付費牆／配額／VIP／區域繞過、簽章、DRM／加密串流繞過、系統級下載攔截。
+**不做：** gallery-dl **import／vendor**（GPL-2.0-only；僅允許獨立子行程）、Pixeldrain、付費牆／配額／VIP／區域繞過、簽章、DRM／加密串流繞過、系統級下載攔截。
 
 ## 目前支援
 
@@ -37,7 +37,9 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 | Bunkr | ✅ | Lysagxra/BunkrDownloader（相簿／單檔） |
 | Iwara | ✅ v0.6-B | Moeary/IwaraTool（瀏覽／訂閱／登入／私有片；見 `docs/iwara-browse.md`） |
 | Bilibili | ✅ v0.7-B | ScottSloan/Bili23-Downloader（解析／登入／帳號清單／CDN；見 `docs/bilibili.md`） |
-| MEGA | ✅ 外部工具 | **megatools**（優先）／MEGAcmd `mega-get`（備援）；子行程，不移植 MegaBasterd |
+| MEGA | ✅ 內建＋外部備援 | 內建協定客戶端；可選 megatools／MEGAcmd 子行程 |
+| gallery-dl | ✅ 外部子行程 | mikf/gallery-dl（GPL-2.0-only；見 `docs/gallery-dl.md`） |
+| Direct | ✅ | 通用直連（router 最後） |
 
 上游 commit 與授權細節見 `NOTICE`。介面約定見 `docs/extractor-interface.md`。路線圖見 `ROADMAP.md`。
 

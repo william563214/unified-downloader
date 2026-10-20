@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- gallery-dl 備援：GPL-2.0-only 僅子行程整合（禁止 import）；router 在 Direct 之前
+- GUI 設定／佇列來源／支援模組清單；cookies／secrets／proxy／限速／可選 archive
+- Release mere aggregation 打包獨立 gallery-dl（附 LICENSE／SOURCE）
+- 文件：`docs/gallery-dl.md`、TESTING／NOTICE／ROADMAP 更新
+
 ## Unreleased (v0.9-D)
 
 - Download All：`udl page URL` 掃描網頁候選連結；GUI「頁面」勾選入佇列

@@ -41,6 +41,53 @@ from udl.store.history import delete_history, get_history, list_history
 from udl.store.queue import delete_queue_job, list_queue, load_queue_job, update_queue_status
 
 
+def _add_gallerydl_args(parser: argparse.ArgumentParser, *, download: bool = False) -> None:
+    """shared gallery-dl subprocess flags (resolve needs them before match)."""
+    parser.add_argument(
+        "--gallerydl-tool",
+        default=None,
+        help="path to gallery-dl executable (or UDL_GALLERY_DL)",
+    )
+    parser.add_argument(
+        "--no-gallerydl",
+        action="store_true",
+        help="disable gallery-dl fallback extractor for this run",
+    )
+    if download:
+        parser.add_argument(
+            "--gallerydl-cookies",
+            default=None,
+            help="Netscape cookies.txt passed to gallery-dl --cookies",
+        )
+        parser.add_argument(
+            "--gallerydl-option",
+            action="append",
+            default=None,
+            metavar="KEY=VALUE",
+            help="pass -o KEY=VALUE to gallery-dl (repeatable)",
+        )
+        parser.add_argument(
+            "--gallerydl-username",
+            default=None,
+            help="gallery-dl login username (prefer udl.secrets gallerydl.username)",
+        )
+        parser.add_argument(
+            "--gallerydl-password",
+            default=None,
+            help="gallery-dl login password (prefer udl.secrets; never logged)",
+        )
+        parser.add_argument(
+            "--gallerydl-archive",
+            nargs="?",
+            const="default",
+            default=None,
+            help=(
+                "use gallery-dl --download-archive (optional path; "
+                "default: app data gallery-dl-archive.sqlite3)"
+            ),
+        )
+
+
 def _add_network_args(parser: argparse.ArgumentParser, *, download: bool = False) -> None:
     """shared proxy / UA / speed / aria2 flags for resolve probe get."""
     parser.add_argument(
@@ -161,6 +208,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="emit a JSON-lines resolve event (default: pretty JSON object)",
     )
     _add_network_args(p_resolve)
+    _add_gallerydl_args(p_resolve)
 
     p_probe = sub.add_parser(
         "probe",
@@ -218,7 +266,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="bilibili filter during expand-all: page range e.g. 1-5",
     )
     _add_network_args(p_probe)
-
+    _add_gallerydl_args(p_probe)
 
     p_get = sub.add_parser("get", help="download a URL")
     p_get.add_argument("url", help="content URL")
@@ -405,6 +453,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip MEGA CBC-MAC integrity check after download",
     )
+    _add_gallerydl_args(p_get, download=True)
     p_get.add_argument(
         "--on-duplicate",
         choices=("skip", "overwrite", "rename"),
@@ -554,6 +603,34 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_sites = sub.add_parser("sites", help="list registered sites")
     p_sites.add_argument("--json", action="store_true")
+
+    p_gdl = sub.add_parser(
+        "gallerydl",
+        help="gallery-dl external tool status / supported sites (subprocess)",
+    )
+    gdl_sub = p_gdl.add_subparsers(dest="gallerydl_command", required=True)
+    p_gdl_status = gdl_sub.add_parser("status", help="detect gallery-dl executable")
+    p_gdl_status.add_argument(
+        "--gallerydl-tool",
+        default=None,
+        help="explicit gallery-dl path to check",
+    )
+    p_gdl_status.add_argument("--json", action="store_true")
+    p_gdl_sites = gdl_sub.add_parser(
+        "sites",
+        help="list gallery-dl modules or extractors (--extractors for full list)",
+    )
+    p_gdl_sites.add_argument(
+        "--gallerydl-tool",
+        default=None,
+        help="explicit gallery-dl path",
+    )
+    p_gdl_sites.add_argument(
+        "--extractors",
+        action="store_true",
+        help="list extractor classes (slower) instead of module names",
+    )
+    p_gdl_sites.add_argument("--json", action="store_true")
 
     p_ffmpeg = sub.add_parser("ffmpeg", help="locate or install a static FFmpeg build")
     ff_sub = p_ffmpeg.add_subparsers(dest="ffmpeg_command", required=True)
@@ -808,8 +885,29 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _apply_gallerydl(args: argparse.Namespace) -> None:
+    """apply gallery-dl process settings before router.match."""
+    from udl.extractors.external.gallerydl import configure_gallerydl
+
+    enabled = not bool(getattr(args, "no_gallerydl", False))
+    archive_raw = getattr(args, "gallerydl_archive", None)
+    use_archive = archive_raw is not None
+    archive_path = None if archive_raw in (None, "default") else archive_raw
+    configure_gallerydl(
+        enabled=enabled,
+        tool=getattr(args, "gallerydl_tool", None),
+        cookies=getattr(args, "gallerydl_cookies", None),
+        options=getattr(args, "gallerydl_option", None) or [],
+        username=getattr(args, "gallerydl_username", None),
+        password=getattr(args, "gallerydl_password", None),
+        use_archive=use_archive,
+        archive=archive_path,
+    )
+
+
 def cmd_resolve(args: argparse.Namespace) -> int:
     _apply_network(args)
+    _apply_gallerydl(args)
     info = resolve(args.url)
     payload = {
         "site": info.site,
@@ -835,6 +933,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 def cmd_probe(args: argparse.Namespace) -> int:
     _apply_network(args)
+    _apply_gallerydl(args)
     urls = args.url if isinstance(args.url, list) else [args.url]
     if len(urls) > 1:
         return _cmd_probe_batch(urls, args)
@@ -1069,6 +1168,7 @@ def cmd_get(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"invalid network option: {exc}", file=sys.stderr)
         return 2
+    _apply_gallerydl(args)
 
     out: Path = args.output
     out.mkdir(parents=True, exist_ok=True)
@@ -1448,6 +1548,20 @@ def _apply_site_options(ext: object, args: argparse.Namespace) -> None:
         kwargs["selected_handles"] = args.mega_select
     if getattr(args, "mega_no_verify", False):
         kwargs["verify_mac"] = False
+    if getattr(args, "gallerydl_tool", None):
+        kwargs["gallerydl_tool"] = args.gallerydl_tool
+    if getattr(args, "gallerydl_cookies", None):
+        kwargs["gallerydl_cookies"] = args.gallerydl_cookies
+    if getattr(args, "gallerydl_option", None):
+        kwargs["gallerydl_options"] = args.gallerydl_option
+    if getattr(args, "gallerydl_username", None):
+        kwargs["gallerydl_username"] = args.gallerydl_username
+    if getattr(args, "gallerydl_password", None):
+        kwargs["gallerydl_password"] = args.gallerydl_password
+    if getattr(args, "gallerydl_archive", None) is not None:
+        kwargs["gallerydl_use_archive"] = True
+        if args.gallerydl_archive != "default":
+            kwargs["gallerydl_archive"] = args.gallerydl_archive
     if kwargs:
         configure(**kwargs)
 
@@ -1475,6 +1589,59 @@ def cmd_sites(args: argparse.Namespace) -> int:
         for r in rows:
             print(f"{r['site']:12} {r['status']:12} {r['label']} ({r['kind']})")
     return 0
+
+
+def cmd_gallerydl(args: argparse.Namespace) -> int:
+    from udl.extractors.external import gallerydl as gdl
+
+    if args.gallerydl_command == "status":
+        payload = gdl.tool_status(getattr(args, "gallerydl_tool", None))
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            if payload["found"]:
+                print(
+                    f"gallery-dl: {payload['path']} "
+                    f"({payload.get('kind')}) version={payload.get('version')}"
+                )
+            else:
+                print(payload["message"], file=sys.stderr)
+                return 1
+        return 0
+    if args.gallerydl_command == "sites":
+        try:
+            if getattr(args, "extractors", False):
+                rows = gdl.list_extractors(getattr(args, "gallerydl_tool", None))
+            else:
+                rows = [
+                    {"module": name}
+                    for name in gdl.list_modules(getattr(args, "gallerydl_tool", None))
+                ]
+        except gdl.gallerydl_tool_missing_error as exc:
+            if args.json:
+                print(json.dumps({"error": str(exc), "code": exc.code}))
+            else:
+                print(str(exc), file=sys.stderr)
+            return 1
+        except gdl.gallerydl_download_error as exc:
+            if args.json:
+                print(json.dumps({"error": str(exc), "code": exc.code}))
+            else:
+                print(str(exc), file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(rows, ensure_ascii=False, indent=2))
+        else:
+            for row in rows:
+                if "module" in row:
+                    print(row["module"])
+                else:
+                    print(
+                        f"{row.get('category', ''):16} {row.get('subcategory', ''):16} "
+                        f"{row.get('example', '')}"
+                    )
+        return 0
+    return 2
 
 
 def cmd_secrets(args: argparse.Namespace) -> int:
@@ -1946,6 +2113,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_schema(args)
     if args.command == "sites":
         return cmd_sites(args)
+    if args.command == "gallerydl":
+        return cmd_gallerydl(args)
     if args.command == "ffmpeg":
         return cmd_ffmpeg(args)
     if args.command == "history":

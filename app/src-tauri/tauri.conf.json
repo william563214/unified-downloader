@@ -45,7 +45,12 @@
       "timestampUrl": ""
     },
     "externalBin": [
-      "binaries/udl"
+      "binaries/udl",
+      "binaries/gallery-dl"
+    ],
+    "resources": [
+      "../../packaging/gallery-dl/LICENSE.gallery-dl",
+      "../../packaging/gallery-dl/SOURCE.txt"
     ]
   },
   "plugins": {

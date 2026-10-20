@@ -49,6 +49,24 @@ jobs:
           ./scripts/build-sidecar.sh "${{ matrix.target }}"
           test -f "app/src-tauri/binaries/${{ matrix.sidecar }}"
 
+      - name: Bundle gallery-dl (mere aggregation)
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/bundle-gallery-dl.sh
+          if ./scripts/bundle-gallery-dl.sh "${{ matrix.target }}"; then
+            if [[ "${{ matrix.target }}" == *windows* ]]; then
+              test -f "app/src-tauri/binaries/gallery-dl-${{ matrix.target }}.exe"
+            else
+              test -f "app/src-tauri/binaries/gallery-dl-${{ matrix.target }}"
+            fi
+            echo "gallery-dl bundled OK"
+          else
+            echo "ERROR: gallery-dl bundle failed; refusing release without it or docs fallback" >&2
+            echo "If this keeps failing, remove binaries/gallery-dl from tauri externalBin and document install-only." >&2
+            exit 1
+          fi
+
       - name: Install frontend deps
         working-directory: app
         shell: bash
