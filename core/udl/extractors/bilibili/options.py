@@ -26,7 +26,12 @@ class bili_options:
     select: select_filter = field(default_factory=select_filter)
     checked_pages: list[int] | None = None
     page_num: int = 1  # for paginated lists
+    expand_all: bool = False  # paginate + expand nested lists
+    # optional interactive node title overrides: edge_id or page -> name
+    node_names: dict[str, str] = field(default_factory=dict)
     cookies: dict[str, str] | None = None
+    # progress callback for expand_all: (phase, current, total, message)
+    on_progress: Any | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,4 +50,6 @@ class bili_options:
             "select": self.select.to_dict(),
             "checked_pages": list(self.checked_pages or []),
             "page_num": self.page_num,
+            "expand_all": self.expand_all,
+            "node_names": dict(self.node_names),
         }

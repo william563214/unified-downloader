@@ -14,6 +14,12 @@ import requests
 from requests import Response, Session
 
 from udl.download.http import default_timeout
+from udl.extractors.bilibili.danmaku import (
+    merge_entries,
+    parse_protobuf_danmaku,
+    parse_xml_danmaku,
+    segment_count,
+)
 from udl.extractors.bilibili.login import requires_login, session_cookies_from_store
 from udl.extractors.bilibili.wbi import enc_wbi, store_wbi_keys
 from udl.network import active_network, apply_to_session, default_user_agent
@@ -38,6 +44,7 @@ series_archives_api = f"{api_base}/x/series/archives"
 series_meta_api = f"{api_base}/x/series/series"
 stein_edge_api = f"{api_base}/x/stein/edgeinfo_v2"
 danmaku_xml_api = "https://comment.bilibili.com/{cid}.xml"
+danmaku_seg_api = f"{api_base}/x/v2/dm/web/seg.so"
 audio_info_api = "https://www.bilibili.com/audio/music-service-c/web/song/info"
 audio_menu_info_api = "https://www.bilibili.com/audio/music-service-c/web/menu/info"
 audio_menu_list_api = "https://www.bilibili.com/audio/music-service-c/web/song/of-menu"
@@ -533,6 +540,80 @@ class bilibili_client:
                 f"danmaku HTTP {resp.status_code}", code=resp.status_code
             )
         return resp.text
+
+    def danmaku_seg(
+        self,
+        cid: int,
+        *,
+        segment_index: int,
+        aid: int | None = None,
+    ) -> bytes:
+        """fetch one protobuf danmaku segment (6 min pack segment_index>=1)."""
+        self.bootstrap()
+        params: dict[str, object] = {
+            "type": 1,
+            "oid": cid,
+            "segment_index": max(1, int(segment_index)),
+        }
+        if aid is not None:
+            params["pid"] = int(aid)
+        try:
+            resp = self.session.get(
+                f"{danmaku_seg_api}?{urlencode(params)}",
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise bilibili_api_error(f"danmaku seg fetch failed: {exc}") from exc
+        if resp.status_code != 200:
+            raise bilibili_api_error(
+                f"danmaku seg HTTP {resp.status_code}", code=resp.status_code
+            )
+        return resp.content
+
+    def fetch_danmaku_entries(
+        self,
+        cid: int,
+        *,
+        aid: int | None = None,
+        duration: float | int | None = None,
+    ) -> list[dict[str, Any]]:
+        """prefer segmented protobuf danmaku then fall back to classic XML."""
+        chunks: list[list[dict[str, Any]]] = []
+        total_segs = segment_count(duration)
+        empty_streak = 0
+        for idx in range(1, total_segs + 1):
+            try:
+                raw = self.danmaku_seg(cid, segment_index=idx, aid=aid)
+            except bilibili_api_error:
+                break
+            if not raw:
+                empty_streak += 1
+                if empty_streak >= 2:
+                    break
+                continue
+            try:
+                entries = parse_protobuf_danmaku(raw)
+            except Exception:  # noqa: BLE001
+                break
+            if not entries:
+                empty_streak += 1
+                if empty_streak >= 2:
+                    break
+                continue
+            empty_streak = 0
+            chunks.append(entries)
+            # if duration unknown stop after first empty-ish trailing pack
+            if duration is None and idx >= 3 and len(entries) < 10:
+                break
+        merged = merge_entries(chunks)
+        if merged:
+            return merged
+        # XML fallback (historical / truncated pool)
+        try:
+            xml_text = self.danmaku_xml(cid)
+        except bilibili_api_error:
+            return []
+        return parse_xml_danmaku(xml_text)
 
     def audio_info(self, sid: int) -> dict[str, Any]:
         self.bootstrap()

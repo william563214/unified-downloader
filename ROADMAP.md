@@ -128,10 +128,13 @@
 - [x] CDN 節點偏好＋自訂 UA／Host（接 PR #6 `udl.network`）
 - [x] 更新 `docs/bilibili.md`／本 ROADMAP；保留 NOTICE
 
-### 仍屬 v0.7 follow-up
+### v0.7 follow-up（Bili23 對齊補完）
 
-- [ ] protobuf 分段彈幕（目前走經典 XML comment API）
-- [ ] 簡訊登入內嵌 GeeTest（目前需外部瀏覽器完成驗證）
+- [x] protobuf 分段彈幕（`seg.so` 6 分鐘包；合併去重；ASS／XML／JSON；XML 回退）
+- [x] 一鍵展開並入佇列：追番／收藏夾目錄／訂閱合集／UP 空間（翻頁＋既有篩選；GUI 進度）
+- [x] 互動影片全圖遍歷（questions＋skips、cid 去重；可選 per-node 命名）
+- [x] 簡訊登入 GeeTest：Tauri webview 供使用者本人完成挑戰並回傳 validate／seccode（不自動解碼）
+- [x] 更新 `docs/bilibili.md`／本 ROADMAP；保留 NOTICE／GPL-3.0
 
 ### v0.7.0 安裝包
 

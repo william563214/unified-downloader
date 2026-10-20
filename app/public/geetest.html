@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bilibili GeeTest</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3f5f8;
+        --ink: #1a2332;
+        --muted: #5a6a7a;
+        --accent: #00a1d6;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+        background:
+          radial-gradient(1200px 600px at 10% -10%, #d7eef8 0%, transparent 55%),
+          radial-gradient(900px 500px at 100% 0%, #e8f7ef 0%, transparent 50%),
+          var(--bg);
+        color: var(--ink);
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      main {
+        width: min(420px, 100%);
+        text-align: center;
+      }
+      h1 {
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin: 0 0 0.35rem;
+        letter-spacing: 0.02em;
+      }
+      p {
+        margin: 0 0 1.25rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+        line-height: 1.5;
+      }
+      #captcha {
+        min-height: 44px;
+        display: grid;
+        place-items: center;
+      }
+      .status {
+        margin-top: 1rem;
+        font-size: 0.85rem;
+        color: var(--accent);
+      }
+      .error {
+        color: #b42318;
+      }
+    </style>
+    <script src="https://static.geetest.com/static/tools/gt.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Bilibili</h1>
+      <p>請完成 GeeTest 驗證。驗證由你本人操作，本視窗不會自動破解驗證碼。</p>
+      <div id="captcha"></div>
+      <p id="status" class="status">載入驗證中…</p>
+    </main>
+    <script>
+      (function () {
+        const statusEl = document.getElementById("status");
+        const params = new URLSearchParams(window.location.search);
+        const gt = params.get("gt") || "";
+        const challenge = params.get("challenge") || "";
+        const token = params.get("token") || "";
+
+        function setStatus(text, isError) {
+          statusEl.textContent = text;
+          statusEl.className = isError ? "status error" : "status";
+        }
+
+        function emitResult(payload) {
+          const detail = Object.assign({ token: token }, payload);
+          try {
+            if (window.__TAURI__ && window.__TAURI__.event) {
+              window.__TAURI__.event.emit("geetest-result", detail);
+              return;
+            }
+          } catch (err) {
+            console.warn(err);
+          }
+          // fallback for non-tauri preview
+          window.parent.postMessage({ type: "geetest-result", ...detail }, "*");
+        }
+
+        if (!gt || !challenge) {
+          setStatus("缺少 gt／challenge 參數", true);
+          return;
+        }
+        if (typeof initGeetest !== "function") {
+          setStatus("無法載入 GeeTest 腳本（需網路）", true);
+          return;
+        }
+
+        initGeetest(
+          {
+            gt: gt,
+            challenge: challenge,
+            offline: false,
+            new_captcha: true,
+            product: "popup",
+            width: "100%",
+          },
+          function (captchaObj) {
+            captchaObj.appendTo("#captcha");
+            captchaObj.onReady(function () {
+              setStatus("請點擊完成驗證");
+              try {
+                captchaObj.verify();
+              } catch (e) {
+                /* popup product may not need verify() */
+              }
+            });
+            captchaObj.onSuccess(function () {
+              const result = captchaObj.getValidate() || {};
+              setStatus("驗證完成，正在回傳…");
+              emitResult({
+                challenge: result.geetest_challenge || challenge,
+                validate: result.geetest_validate || "",
+                seccode: result.geetest_seccode || "",
+              });
+            });
+            captchaObj.onError(function () {
+              setStatus("驗證載入失敗，請關閉後重試或改用 QR／Cookie", true);
+            });
+            captchaObj.onClose(function () {
+              setStatus("已關閉驗證，可再次點擊驗證框");
+            });
+          }
+        );
+      })();
+    </script>
+  </body>
+</html>

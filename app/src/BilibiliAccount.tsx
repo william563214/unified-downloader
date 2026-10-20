@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type BiliAccountProfile = {
@@ -27,8 +28,23 @@ type QrPollPayload = {
   logged_in?: boolean;
 };
 
+type SmsCaptchaPayload = {
+  token?: string;
+  gt?: string;
+  challenge?: string;
+  note?: string;
+  best_effort?: boolean;
+};
+
+type GeetestResult = {
+  token?: string;
+  challenge?: string;
+  validate?: string;
+  seccode?: string;
+};
+
 const sms_geetest_hint =
-  "簡訊登入需完成 GeeTest 驗證（通常要瀏覽器）。無瀏覽器環境請改用 QR 或貼上 Cookie。";
+  "簡訊登入需完成 GeeTest 驗證。將開啟內嵌視窗供你本人完成挑戰（不會自動破解驗證碼）。無圖形環境請改用 QR 或貼上 Cookie。";
 
 type Props = {
   onStatus?: (profile: BiliAccountProfile | null) => void;
@@ -42,7 +58,15 @@ export default function BilibiliAccount({ onStatus }: Props) {
   const [qr, setQr] = useState<QrPayload | null>(null);
   const [qrStatus, setQrStatus] = useState<string>("");
   const [cookieText, setCookieText] = useState("");
-  const [smsNote] = useState(sms_geetest_hint);
+  const [smsTel, setSmsTel] = useState("");
+  const [smsCid, setSmsCid] = useState("86");
+  const [smsCode, setSmsCode] = useState("");
+  const [smsToken, setSmsToken] = useState("");
+  const [smsChallenge, setSmsChallenge] = useState("");
+  const [smsValidate, setSmsValidate] = useState("");
+  const [smsSeccode, setSmsSeccode] = useState("");
+  const [smsCaptchaKey, setSmsCaptchaKey] = useState("");
+  const [smsStep, setSmsStep] = useState<string>("");
   const pollRef = useRef<number | null>(null);
 
   const stopPoll = useCallback(() => {
@@ -73,6 +97,26 @@ export default function BilibiliAccount({ onStatus }: Props) {
     return () => stopPoll();
   }, [refreshStatus, stopPoll]);
 
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<GeetestResult>("geetest-result", (event) => {
+      const p = event.payload;
+      if (p.challenge) setSmsChallenge(p.challenge);
+      if (p.validate) setSmsValidate(p.validate);
+      if (p.seccode) setSmsSeccode(p.seccode);
+      if (p.token) setSmsToken(p.token);
+      setSmsStep("GeeTest 完成，可發送簡訊");
+      void invoke("close_geetest_window").catch(() => {
+        /* window may already be closed */
+      });
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
   async function startQr() {
     stopPoll();
     setBusy(true);
@@ -98,8 +142,8 @@ export default function BilibiliAccount({ onStatus }: Props) {
       const result = await invoke<QrPollPayload>("bili_login_qr_poll", {
         key,
       });
-      setQrStatus(result.message || result.status || String(result.code));
-      if (result.code === 0) {
+      setQrStatus(result.message || result.status || "");
+      if (result.code === 0 || result.logged_in) {
         stopPoll();
         if (result.profile) {
           setProfile(result.profile);
@@ -107,14 +151,9 @@ export default function BilibiliAccount({ onStatus }: Props) {
         } else {
           await refreshStatus();
         }
-        setQrStatus("登入成功");
-      } else if (result.code === 86038) {
-        stopPoll();
-        setQrStatus("QR 已過期，請重新產生");
       }
     } catch (e) {
-      // keep polling on transient errors
-      setQrStatus(String(e));
+      setError(String(e));
     }
   }
 
@@ -127,7 +166,6 @@ export default function BilibiliAccount({ onStatus }: Props) {
       });
       setProfile(result);
       onStatus?.(result);
-      setCookieText("");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -138,13 +176,10 @@ export default function BilibiliAccount({ onStatus }: Props) {
   async function doLogout() {
     setBusy(true);
     setError(null);
-    stopPoll();
     try {
       const result = await invoke<BiliAccountProfile>("bili_login_logout");
       setProfile(result);
       onStatus?.(result);
-      setQr(null);
-      setQrStatus("");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -166,20 +201,96 @@ export default function BilibiliAccount({ onStatus }: Props) {
     }
   }
 
-  const vipText =
-    profile?.vip_label ||
-    (profile && profile.vip_type > 0 ? `vipType=${profile.vip_type}` : "非大會員");
+  async function startSmsGeetest() {
+    setBusy(true);
+    setError(null);
+    setSmsStep("取得 GeeTest 挑戰…");
+    try {
+      const captcha = await invoke<SmsCaptchaPayload>("bili_login_sms_captcha");
+      const gt = captcha.gt || "";
+      const challenge = captcha.challenge || "";
+      const token = captcha.token || "";
+      if (!gt || !challenge || !token) {
+        throw new Error(
+          "captcha 回應缺少 gt／challenge／token；請改用 QR 或 Cookie",
+        );
+      }
+      setSmsToken(token);
+      setSmsChallenge(challenge);
+      setSmsValidate("");
+      setSmsSeccode("");
+      setSmsStep("請在彈出視窗完成 GeeTest");
+      await invoke("open_geetest_window", { gt, challenge, token });
+    } catch (e) {
+      setError(String(e));
+      setSmsStep(
+        "無法開啟 GeeTest 視窗時請改用 CLI：`udl bili login sms-captcha` 後以瀏覽器完成驗證",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendSms() {
+    if (!smsTel.trim() || !smsToken || !smsChallenge || !smsValidate || !smsSeccode) {
+      setError("請先完成 GeeTest，並填寫手機號碼");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setSmsStep("發送簡訊中…");
+    try {
+      const result = await invoke<{ captcha_key?: string }>("bili_login_sms_send", {
+        tel: smsTel.trim(),
+        cid: smsCid.trim() || "86",
+        token: smsToken,
+        challenge: smsChallenge,
+        validate: smsValidate,
+        seccode: smsSeccode,
+      });
+      setSmsCaptchaKey(String(result.captcha_key || ""));
+      setSmsStep("簡訊已發送，請輸入驗證碼");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function completeSms() {
+    if (!smsTel.trim() || !smsCode.trim() || !smsCaptchaKey) {
+      setError("請填寫驗證碼（需先發送簡訊）");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await invoke<BiliAccountProfile>("bili_login_sms", {
+        tel: smsTel.trim(),
+        cid: smsCid.trim() || "86",
+        code: smsCode.trim(),
+        captchaKey: smsCaptchaKey,
+      });
+      setProfile(result);
+      onStatus?.(result);
+      setSmsStep("登入成功");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <section className="panel bilibili-account">
-      <header className="panel-header">
+    <section className="panel bilibili-account" aria-label="Bilibili 帳號">
+      <header className="panel-head">
         <h2>Bilibili 帳號</h2>
-        <p className="muted">
-          憑證僅存於 OS keychain（udl.secrets），不會寫入 settings.json 或日誌。
+        <p className="hint">
+          Session 存於 OS keychain（bilibili.session）。不繞過 VIP／付費／區域。
         </p>
       </header>
 
-      <div className="account-status cardless">
+      <div className="account-status">
         {profile?.logged_in ? (
           <>
             <div className="account-row">
@@ -191,12 +302,14 @@ export default function BilibiliAccount({ onStatus }: Props) {
                   referrerPolicy="no-referrer"
                 />
               ) : (
-                <div className="account-avatar placeholder" aria-hidden />
+                <div className="account-avatar placeholder" />
               )}
               <div>
-                <div className="account-name">{profile.uname}</div>
+                <div className="account-name">{profile.uname || "已登入"}</div>
                 <div className="muted">
-                  mid {profile.mid ?? "—"} · Lv{profile.level} · {vipText}
+                  mid {profile.mid ?? "—"}
+                  {profile.vip_label ? ` · ${profile.vip_label}` : ""}
+                  {profile.level ? ` · Lv${profile.level}` : ""}
                 </div>
               </div>
             </div>
@@ -241,7 +354,7 @@ export default function BilibiliAccount({ onStatus }: Props) {
               className={mode === "sms" ? "active" : ""}
               onClick={() => setMode("sms")}
             >
-              簡訊（實驗）
+              簡訊
             </button>
           </div>
 
@@ -285,11 +398,61 @@ export default function BilibiliAccount({ onStatus }: Props) {
 
           {mode === "sms" && (
             <div className="login-block">
-              <p className="warn">{smsNote}</p>
-              <p className="muted">
-                CLI：`udl bili login sms-captcha` → 瀏覽器完成 GeeTest →
-                `sms-send` / `sms`。GUI 僅標示此路徑為 best-effort。
-              </p>
+              <p className="warn">{sms_geetest_hint}</p>
+              <div className="row wrap gap">
+                <label className="field inline">
+                  <span>國碼</span>
+                  <input
+                    value={smsCid}
+                    onChange={(e) => setSmsCid(e.target.value)}
+                    style={{ width: "4rem" }}
+                  />
+                </label>
+                <label className="field inline">
+                  <span>手機</span>
+                  <input
+                    value={smsTel}
+                    onChange={(e) => setSmsTel(e.target.value)}
+                    placeholder="手機號碼"
+                  />
+                </label>
+              </div>
+              <div className="row gap">
+                <button
+                  type="button"
+                  onClick={() => void startSmsGeetest()}
+                  disabled={busy}
+                >
+                  開啟 GeeTest 視窗
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void sendSms()}
+                  disabled={busy || !smsValidate || !smsTel.trim()}
+                >
+                  發送簡訊
+                </button>
+              </div>
+              {smsValidate && (
+                <p className="muted">已取得 validate／seccode</p>
+              )}
+              <label className="field">
+                <span>簡訊驗證碼</span>
+                <input
+                  value={smsCode}
+                  onChange={(e) => setSmsCode(e.target.value)}
+                  placeholder="收到的驗證碼"
+                />
+              </label>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void completeSms()}
+                disabled={busy || !smsCaptchaKey || !smsCode.trim()}
+              >
+                完成簡訊登入
+              </button>
+              {smsStep && <p className="muted">{smsStep}</p>}
             </div>
           )}
         </>

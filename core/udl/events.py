@@ -21,6 +21,7 @@ ev_cancel = "cancel"
 ev_resolve = "resolve"
 ev_probe = "probe"
 ev_duplicate = "duplicate"
+ev_expand = "expand"
 
 
 @dataclass
@@ -170,6 +171,24 @@ class emitter:
     def probe(self, **fields: Any) -> None:
         """rich metadata for GUI selectors (parts / qualities)."""
         self.emit(ev_probe, **fields)
+
+    def expand(
+        self,
+        *,
+        phase: str,
+        current: int,
+        total: int,
+        message: str | None = None,
+    ) -> None:
+        """list pagination / nested expand progress for bilibili one-click."""
+        payload: dict[str, Any] = {
+            "phase": phase,
+            "current": current,
+            "total": total,
+        }
+        if message is not None:
+            payload["message"] = message
+        self.emit(ev_expand, **payload)
 
     def duplicate(
         self,
@@ -353,6 +372,12 @@ def dump_schema() -> dict[str, Any]:
                 "default_quality": "int?",
                 "message": "str?",
                 "metadata": "object?",
+            },
+            ev_expand: {
+                "phase": "str",
+                "current": "int",
+                "total": "int",
+                "message": "str?",
             },
             ev_done: {
                 "job": "str",

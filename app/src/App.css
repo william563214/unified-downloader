@@ -671,6 +671,20 @@ button:disabled {
   white-space: nowrap;
 }
 
+.bili-part-list .part-title-edit {
+  flex: 1;
+  min-width: 8rem;
+  border: 1px solid var(--border, #ccd5de);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  font: inherit;
+  background: transparent;
+}
+
+.bili-parse .expand-progress {
+  color: var(--accent, #00a1d6);
+}
+
 .bili-options-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));

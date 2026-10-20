@@ -111,6 +111,8 @@ type JobRow = {
   embedSubtitle?: boolean;
   filterTitle?: string | null;
   partRange?: string | null;
+  expandAll?: boolean;
+  nodeNames?: string | null;
   files: FileRow[];
   ok?: number;
   failed?: number;
@@ -591,6 +593,8 @@ export default function App() {
           embedSubtitle: job.embedSubtitle ?? false,
           filterTitle: job.filterTitle ?? null,
           partRange: job.partRange ?? null,
+          expandAll: job.expandAll ?? false,
+          nodeNames: job.nodeNames ?? null,
         });
         setJobs((prev) =>
           prev.map((j) =>
@@ -800,6 +804,8 @@ export default function App() {
       embedSubtitle: overrides?.embedSubtitle ?? false,
       filterTitle: overrides?.filterTitle ?? null,
       partRange: overrides?.partRange ?? null,
+      expandAll: overrides?.expandAll ?? false,
+      nodeNames: overrides?.nodeNames ?? null,
       files: [],
       status: "queued",
     };
@@ -821,9 +827,11 @@ export default function App() {
     filterTitle: string | null;
     partRange: string | null;
     checkedPages: number[];
+    expandAll?: boolean;
+    nodeNames?: string | null;
   }) {
     const part =
-      opts.partRange && opts.checkedPages.length > 1
+      opts.expandAll || (opts.partRange && opts.checkedPages.length > 1)
         ? "all"
         : opts.part;
     enqueueDownload({
@@ -843,6 +851,8 @@ export default function App() {
       embedSubtitle: opts.embedSubtitle,
       filterTitle: opts.filterTitle,
       partRange: opts.partRange,
+      expandAll: opts.expandAll ?? false,
+      nodeNames: opts.nodeNames ?? null,
     });
     setPage("download");
   }

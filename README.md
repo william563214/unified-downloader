@@ -53,10 +53,10 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 ### Bilibili 備註（v0.7-B）
 
 - 類型：BV／多 P、bangumi、cheese、互動節點、au／am、UP 空間、公開收藏夾、每周必看、合集／系列；登入後：稍後再看／歷史／追番／訂閱合集／自己的收藏夾。
-- 登入：`udl bili login`（QR／Cookie 完整；SMS 需 GeeTest 瀏覽器，best-effort）；session 進 OS keychain（`bilibili.session`）。
+- 登入：`udl bili login`（QR／Cookie；SMS 經使用者完成 GeeTest，GUI 用 Tauri webview）；session 進 OS keychain（`bilibili.session`）。
 - 畫質／`--codec avc|hevc|av1`／`--audio-quality`；登入後可取得帳號有權之 8K／4K／HDR 等，**不**繞過 VIP／付費／區域。
 - CDN／Host：`--cdn-hosts`／`--prefer-cdn`／`--custom-host`（與全域 UA／代理共用）。
-- `--danmaku`／`--subtitle`／章節／`--container mp4|mkv`；詳見 `docs/bilibili.md`。
+- 彈幕優先 protobuf `seg.so` 分段（XML 回退）；`--expand-all` 一鍵展開清單；`--danmaku`／`--subtitle`／章節／`--container mp4|mkv`；詳見 `docs/bilibili.md`。
 - GUI「Bilibili」解析頁＋「帳號」頁（QR／狀態／登出）。
 - 需要 FFmpeg（PATH、`UDL_FFMPEG`、`--ffmpeg`，或 GUI 首次下載）。
 

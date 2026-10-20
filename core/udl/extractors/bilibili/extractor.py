@@ -30,7 +30,7 @@ from udl.extractors.bilibili.chapters import (
     write_ffmetadata,
 )
 from udl.extractors.bilibili.client import bilibili_api_error, bilibili_client
-from udl.extractors.bilibili.danmaku import parse_xml_danmaku, write_danmaku
+from udl.extractors.bilibili.danmaku import write_danmaku
 from udl.extractors.bilibili.filter import apply_filter, select_filter
 from udl.extractors.bilibili.ids import (
     classify_url,
@@ -86,6 +86,20 @@ list_kinds = frozenset(
         "followed_bangumi",
         "subscribed_collections",
         "favorite_folders",
+    }
+)
+
+expand_all_kinds = frozenset(
+    {
+        "space",
+        "favlist",
+        "collection",
+        "series",
+        "followed_bangumi",
+        "subscribed_collections",
+        "favorite_folders",
+        "watchlater",
+        "history",
     }
 )
 
@@ -174,6 +188,9 @@ class bilibili_extractor(extractor):
         write_chapters: bool = True,
         select: select_filter | None = None,
         page_num: int = 1,
+        expand_all: bool = False,
+        node_names: dict[str, str] | None = None,
+        on_progress: Any | None = None,
         cookies: dict[str, str] | None = None,
     ) -> None:
         opts = options or bili_options()
@@ -199,6 +216,11 @@ class bilibili_extractor(extractor):
         if select is not None:
             opts.select = select
         opts.page_num = page_num
+        opts.expand_all = expand_all or opts.expand_all
+        if node_names is not None:
+            opts.node_names = dict(node_names)
+        if on_progress is not None:
+            opts.on_progress = on_progress
         if cookies:
             opts.cookies = cookies
         self.options = opts
@@ -223,6 +245,17 @@ class bilibili_extractor(extractor):
         if self._own_client and self._client is not None:
             self._client.close()
             self._client = None
+
+    def _progress(
+        self,
+        phase: str,
+        current: int,
+        total: int,
+        message: str = "",
+    ) -> None:
+        cb = self.options.on_progress
+        if callable(cb):
+            cb(phase, current, total, message)
 
     def resolve(
         self,
@@ -299,6 +332,7 @@ class bilibili_extractor(extractor):
                         "needs_expand": part.needs_expand,
                         "audio_id": part.audio_id,
                         "container": self.options.container,
+                        "duration": part.duration,
                     },
                     metadata=part_meta,
                 )
@@ -352,6 +386,8 @@ class bilibili_extractor(extractor):
         if handler is None:
             raise RuntimeError(f"unsupported bilibili URL kind: {target.kind}")
         probe = handler(cli, target, final_url)
+        if self.options.expand_all and probe.kind in expand_all_kinds:
+            probe = self._expand_probe(cli, probe, target)
         probe.naming_template = default_template_for(
             probe.kind, multi=len(probe.parts) > 1
         )
@@ -712,17 +748,40 @@ class bilibili_extractor(extractor):
         *,
         bvid: str,
         graph_version: int,
-        max_nodes: int = 64,
+        max_nodes: int = 2048,
     ) -> list[dict[str, Any]]:
+        """BFS over all stein edges (questions + skips); dedupe by cid."""
         queue: list[int | None] = [None]
         seen_edges: set[int] = set()
+        visited_root = False
         nodes: list[dict[str, Any]] = []
         seen_cids: set[int] = set()
+
+        def _enqueue(nid: Any) -> None:
+            if nid is None:
+                return
+            try:
+                value = int(nid)
+            except (TypeError, ValueError):
+                return
+            if value not in seen_edges:
+                queue.append(value)
+
+        def _add_node(cid: int, title: str, edge_id: int | None) -> None:
+            if not cid or cid in seen_cids or len(nodes) >= max_nodes:
+                return
+            seen_cids.add(cid)
+            nodes.append({"cid": cid, "title": title, "edge_id": edge_id})
+
         while queue and len(nodes) < max_nodes:
             edge_id = queue.pop(0)
-            if edge_id is not None and edge_id in seen_edges:
+            if edge_id is None:
+                if visited_root:
+                    continue
+                visited_root = True
+            elif edge_id in seen_edges:
                 continue
-            if edge_id is not None:
+            else:
                 seen_edges.add(edge_id)
             try:
                 data = cli.stein_edge(
@@ -732,43 +791,48 @@ class bilibili_extractor(extractor):
                     portal=1 if edge_id is None else 0,
                 )
             except bilibili_api_error:
-                break
-            story = data.get("story_list") or []
-            for item in story:
+                if edge_id is None:
+                    break
+                continue
+            title = str(data.get("title") or "") if data.get("title") else ""
+            page = data.get("page") if isinstance(data.get("page"), dict) else {}
+            cur_cid = int(page["cid"]) if page.get("cid") else 0
+            if cur_cid:
+                _add_node(cur_cid, title or f"edge-{edge_id or 0}", edge_id)
+            for item in data.get("story_list") or []:
                 if not isinstance(item, dict):
                     continue
                 cid = int(item.get("cid") or 0)
-                if not cid or cid in seen_cids:
+                item_edge = item.get("edge_id")
+                item_edge_i = int(item_edge) if item_edge is not None else None
+                _add_node(
+                    cid,
+                    str(item.get("title") or item_edge or f"node-{cid}"),
+                    item_edge_i,
+                )
+                _enqueue(item_edge_i)
+            edges_obj = data.get("edges") if isinstance(data.get("edges"), dict) else {}
+            for q in edges_obj.get("questions") or []:
+                if not isinstance(q, dict):
                     continue
-                seen_cids.add(cid)
-                nodes.append(
-                    {
-                        "cid": cid,
-                        "title": item.get("title") or item.get("edge_id"),
-                        "edge_id": item.get("edge_id"),
-                    }
-                )
-            # also current edge title
-            title = ((data.get("title") or "") if isinstance(data.get("title"), str) else "")
-            cur_cid = None
-            page = data.get("page") or {}
-            if isinstance(page, dict) and page.get("cid"):
-                cur_cid = int(page["cid"])
-            if cur_cid and cur_cid not in seen_cids:
-                seen_cids.add(cur_cid)
-                nodes.append(
-                    {
-                        "cid": cur_cid,
-                        "title": title or f"edge-{edge_id}",
-                        "edge_id": edge_id,
-                    }
-                )
-            edges = ((data.get("edges") or {}).get("questions") or [])
-            for q in edges:
                 for choice in q.get("choices") or []:
-                    nid = choice.get("id") or choice.get("edge_id")
-                    if nid is not None and int(nid) not in seen_edges:
-                        queue.append(int(nid))
+                    if isinstance(choice, dict):
+                        _enqueue(choice.get("id") or choice.get("edge_id"))
+            for skip in edges_obj.get("skips") or []:
+                if isinstance(skip, dict):
+                    _enqueue(skip.get("id") or skip.get("edge_id"))
+
+        names = self.options.node_names or {}
+        if names:
+            for index, n in enumerate(nodes, start=1):
+                eid = n.get("edge_id")
+                override = names.get(f"page:{index}") or names.get(str(index))
+                if not override and eid is not None:
+                    override = names.get(str(eid)) or names.get(f"edge:{eid}")
+                if not override:
+                    override = names.get(f"cid:{n.get('cid')}")
+                if override:
+                    n["title"] = override
         return nodes
 
     def _probe_bangumi(
@@ -1955,8 +2019,11 @@ class bilibili_extractor(extractor):
 
         if self.options.danmaku_format and cid:
             try:
-                xml_text = cli.danmaku_xml(cid)
-                entries = parse_xml_danmaku(xml_text)
+                aid = int(meta["aid"]) if meta.get("aid") is not None else None
+                duration = meta.get("duration")
+                entries = cli.fetch_danmaku_entries(
+                    cid, aid=aid, duration=duration
+                )
                 path = write_danmaku(
                     entries,
                     Path(f"{stem}.danmaku"),
@@ -2077,6 +2144,412 @@ class bilibili_extractor(extractor):
         if target.kind == "unsupported":
             raise RuntimeError(f"unsupported bilibili URL: {url}")
         raise RuntimeError(f"could not classify bilibili URL after redirect: {current}")
+
+    def _expand_probe(
+        self,
+        cli: bilibili_client,
+        probe: probe_info,
+        target: url_target,
+    ) -> probe_info:
+        """paginate lists and expand nested folders/seasons/collections."""
+        kind = probe.kind
+        self._progress("expand", 0, 1, f"expanding {kind}")
+        if kind == "space":
+            parts = self._expand_space_pages(cli, target)
+        elif kind == "favlist":
+            parts = self._expand_favlist_pages(cli, int(target.fid or 0), target.keyword or "")
+        elif kind == "collection":
+            mid = int(probe.meta.get("mid") or target.mid or 0)
+            season_id = int(probe.meta.get("season_id") or target.collection_id or 0)
+            parts = self._expand_collection_pages(cli, mid=mid, season_id=season_id)
+        elif kind == "series":
+            mid = int(probe.meta.get("mid") or target.mid or 0)
+            series_id = int(probe.meta.get("series_id") or target.series_id or 0)
+            parts = self._expand_series_pages(cli, mid=mid, series_id=series_id)
+        elif kind == "watchlater":
+            parts = self._expand_watchlater_pages(cli, target.keyword or "")
+        elif kind == "history":
+            parts = self._expand_history_pages(cli, target.keyword or "")
+        elif kind == "followed_bangumi":
+            parts = self._expand_followed_bangumi(cli)
+        elif kind == "favorite_folders":
+            parts = self._expand_favorite_folders(cli, target.keyword or "")
+        elif kind == "subscribed_collections":
+            parts = self._expand_subscribed_collections(cli)
+        else:
+            return probe
+
+        # renumber pages then apply existing filters
+        for i, p in enumerate(parts, start=1):
+            p.page = i
+        filtered = apply_filter(
+            [_part_dict(p) for p in parts],
+            self.options.select,
+            checked_pages=set(self.options.checked_pages or []) or None,
+        )
+        parts = [_dict_to_part(p) for p in filtered]
+        for i, p in enumerate(parts, start=1):
+            p.page = i
+        self._progress("expand", 1, 1, f"expanded to {len(parts)} items")
+        probe.parts = [_part_dict(p) for p in parts]
+        probe.message = (probe.message or "") + f" — expanded {len(parts)} items"
+        probe.pagination = {
+            "total_pages": 1,
+            "total_items": len(parts),
+            "current_page": 1,
+            "expanded": True,
+        }
+        meta = dict(probe.meta or {})
+        meta["expanded"] = True
+        probe.meta = meta
+        return probe
+
+    def _expand_space_pages(
+        self, cli: bilibili_client, target: url_target
+    ) -> list[part_info]:
+        mid = int(target.mid or 0)
+        keyword = target.keyword or ""
+        parts: list[part_info] = []
+        pn = 1
+        total_pages = 1
+        while pn <= total_pages:
+            data = cli.space_videos(mid, pn=pn, keyword=keyword)
+            page = data.get("page") or {}
+            total = int(page.get("count") or 0)
+            ps = int(page.get("ps") or 40) or 40
+            total_pages = max(1, (total + ps - 1) // ps) if total else pn
+            self._progress("space", pn, total_pages, f"UP space page {pn}/{total_pages}")
+            vlist = ((data.get("list") or {}).get("vlist")) or []
+            for v in vlist:
+                parts.append(_vlist_part(len(parts) + 1, v))
+            if not vlist:
+                break
+            pn += 1
+        return parts
+
+    def _expand_favlist_pages(
+        self, cli: bilibili_client, fid: int, keyword: str
+    ) -> list[part_info]:
+        if not fid:
+            return []
+        parts: list[part_info] = []
+        pn = 1
+        total_pages = 1
+        while pn <= total_pages:
+            data = cli.favlist(fid, pn=pn, keyword=keyword)
+            info = data.get("info") or {}
+            total = int(info.get("media_count") or 0)
+            total_pages = max(1, (total + 39) // 40) if total else pn
+            self._progress(
+                "favlist", pn, total_pages, f"favlist ml{fid} page {pn}/{total_pages}"
+            )
+            for m in data.get("medias") or []:
+                if not isinstance(m, dict):
+                    continue
+                bvid = str(m.get("bvid") or "")
+                if not bvid:
+                    continue
+                parts.append(
+                    part_info(
+                        page=len(parts) + 1,
+                        cid=int(m.get("cid") or 0),
+                        title=str(m.get("title") or bvid),
+                        bvid=bvid,
+                        aid=int(m["id"]) if m.get("id") is not None else None,
+                        duration=_int_or_none(m.get("duration")),
+                        upload_date=_pubdate_iso(m.get("fav_time") or m.get("ctime")),
+                        needs_expand=not m.get("cid"),
+                        kind="video",
+                    )
+                )
+            if not (data.get("medias") or []):
+                break
+            pn += 1
+        return parts
+
+    def _expand_collection_pages(
+        self, cli: bilibili_client, *, mid: int, season_id: int
+    ) -> list[part_info]:
+        if not mid or not season_id:
+            return []
+        parts: list[part_info] = []
+        pn = 1
+        total_pages = 1
+        while pn <= total_pages:
+            data = cli.collection_archives(mid=mid, season_id=season_id, pn=pn)
+            page = data.get("page") or {}
+            total = int(page.get("total") or 0)
+            total_pages = max(1, (total + 29) // 30) if total else pn
+            self._progress(
+                "collection",
+                pn,
+                total_pages,
+                f"collection {season_id} page {pn}/{total_pages}",
+            )
+            for a in data.get("archives") or []:
+                if not isinstance(a, dict) or not a.get("bvid"):
+                    continue
+                parts.append(
+                    part_info(
+                        page=len(parts) + 1,
+                        cid=0,
+                        title=str(a.get("title") or a.get("bvid")),
+                        bvid=str(a.get("bvid") or ""),
+                        aid=int(a["aid"]) if a.get("aid") is not None else None,
+                        duration=_int_or_none(a.get("duration")),
+                        needs_expand=True,
+                        kind="video",
+                    )
+                )
+            if not (data.get("archives") or []):
+                break
+            pn += 1
+        return parts
+
+    def _expand_series_pages(
+        self, cli: bilibili_client, *, mid: int, series_id: int
+    ) -> list[part_info]:
+        if not mid or not series_id:
+            return []
+        parts: list[part_info] = []
+        pn = 1
+        total_pages = 1
+        while pn <= total_pages:
+            data = cli.series_archives(mid=mid, series_id=series_id, pn=pn)
+            page = data.get("page") or {}
+            total = int(page.get("total") or 0)
+            total_pages = max(1, (total + 29) // 30) if total else pn
+            self._progress(
+                "series", pn, total_pages, f"series {series_id} page {pn}/{total_pages}"
+            )
+            for a in data.get("archives") or []:
+                if not isinstance(a, dict) or not a.get("bvid"):
+                    continue
+                parts.append(
+                    part_info(
+                        page=len(parts) + 1,
+                        cid=0,
+                        title=str(a.get("title") or a.get("bvid")),
+                        bvid=str(a.get("bvid") or ""),
+                        aid=int(a["aid"]) if a.get("aid") is not None else None,
+                        duration=_int_or_none(a.get("duration")),
+                        needs_expand=True,
+                        kind="video",
+                    )
+                )
+            if not (data.get("archives") or []):
+                break
+            pn += 1
+        return parts
+
+    def _expand_watchlater_pages(
+        self, cli: bilibili_client, keyword: str
+    ) -> list[part_info]:
+        parts: list[part_info] = []
+        pn = 1
+        total_pages = 1
+        while pn <= total_pages:
+            data = cli.watchlater(pn=pn, keyword=keyword)
+            total = int(data.get("count") or 0)
+            total_pages = max(1, (total + 19) // 20) if total else pn
+            self._progress("watchlater", pn, total_pages, f"watchlater {pn}/{total_pages}")
+            for v in data.get("list") or []:
+                if not isinstance(v, dict):
+                    continue
+                bvid = str(v.get("bvid") or "")
+                if not bvid:
+                    continue
+                parts.append(
+                    part_info(
+                        page=len(parts) + 1,
+                        cid=int(v.get("cid") or 0),
+                        title=str(v.get("title") or bvid),
+                        bvid=bvid,
+                        aid=int(v["aid"]) if v.get("aid") is not None else None,
+                        duration=_int_or_none(v.get("duration")),
+                        needs_expand=not v.get("cid"),
+                        kind="video",
+                    )
+                )
+            if not (data.get("list") or []):
+                break
+            pn += 1
+        return parts
+
+    def _expand_history_pages(
+        self, cli: bilibili_client, keyword: str
+    ) -> list[part_info]:
+        parts: list[part_info] = []
+        pn = 1
+        total_pages = 1
+        while pn <= total_pages:
+            data = cli.history(pn=pn, keyword=keyword)
+            page = data.get("page") or {}
+            total = int(page.get("total") or 0)
+            ps = int(page.get("ps") or 20) or 20
+            total_pages = max(1, (total + ps - 1) // ps) if total else pn
+            self._progress("history", pn, total_pages, f"history {pn}/{total_pages}")
+            for v in data.get("list") or []:
+                if not isinstance(v, dict):
+                    continue
+                history = v.get("history") or {}
+                bvid = str(history.get("bvid") or v.get("bvid") or "")
+                if not bvid:
+                    continue
+                parts.append(
+                    part_info(
+                        page=len(parts) + 1,
+                        cid=int(history.get("cid") or 0),
+                        title=str(v.get("title") or bvid),
+                        bvid=bvid,
+                        aid=int(history["oid"]) if history.get("oid") is not None else None,
+                        duration=_int_or_none(v.get("duration")),
+                        needs_expand=not history.get("cid"),
+                        kind="video",
+                    )
+                )
+            if not (data.get("list") or []):
+                break
+            pn += 1
+        return parts
+
+    def _expand_followed_bangumi(self, cli: bilibili_client) -> list[part_info]:
+        seasons: list[dict[str, Any]] = []
+        pn = 1
+        total_pages = 1
+        while pn <= total_pages:
+            data = cli.followed_bangumi(pn=pn)
+            total = int(data.get("total") or 0)
+            total_pages = max(1, (total + 23) // 24) if total else pn
+            self._progress(
+                "followed_bangumi",
+                pn,
+                total_pages,
+                f"followed bangumi page {pn}/{total_pages}",
+            )
+            for entry in data.get("list") or []:
+                if isinstance(entry, dict) and entry.get("season_id") is not None:
+                    seasons.append(entry)
+            if not (data.get("list") or []):
+                break
+            pn += 1
+
+        parts: list[part_info] = []
+        for i, entry in enumerate(seasons, start=1):
+            season_id = int(entry["season_id"])
+            self._progress(
+                "followed_bangumi_expand",
+                i,
+                len(seasons),
+                f"expand season ss{season_id}",
+            )
+            try:
+                result = cli.bangumi_season(season_id=season_id)
+            except bilibili_api_error:
+                continue
+            season_title = str(entry.get("title") or result.get("title") or f"ss{season_id}")
+            episodes = list(result.get("episodes") or [])
+            for section in result.get("section") or []:
+                for ep in section.get("episodes") or []:
+                    if ep.get("bvid") and ep.get("cid"):
+                        episodes.append(ep)
+            for ep in episodes:
+                badge = str(ep.get("badge") or "").strip()
+                bvid = ep.get("bvid")
+                cid = ep.get("cid")
+                if not bvid or not cid:
+                    continue
+                if badge in blocked_badges:
+                    continue
+                if badge in {"预告", "預告"}:
+                    continue
+                show = str(
+                    ep.get("share_copy")
+                    or ep.get("long_title")
+                    or ep.get("title")
+                    or bvid
+                )
+                parts.append(
+                    part_info(
+                        page=len(parts) + 1,
+                        cid=int(cid),
+                        title=f"{season_title} - {show}",
+                        bvid=str(bvid),
+                        aid=int(ep["aid"]) if ep.get("aid") is not None else None,
+                        ep_id=int(ep["id"]) if ep.get("id") is not None else None,
+                        badge=badge,
+                        duration=int(ep["duration"] // 1000)
+                        if isinstance(ep.get("duration"), int)
+                        else None,
+                        kind="bangumi",
+                    )
+                )
+        return parts
+
+    def _expand_favorite_folders(
+        self, cli: bilibili_client, keyword: str
+    ) -> list[part_info]:
+        data = cli.favorite_folders()
+        folders = [e for e in (data.get("list") or []) if isinstance(e, dict)]
+        parts: list[part_info] = []
+        for i, entry in enumerate(folders, start=1):
+            fid = entry.get("id")
+            if fid is None:
+                continue
+            title = str(entry.get("title") or f"ml{fid}")
+            self._progress(
+                "favorite_folders",
+                i,
+                len(folders),
+                f"expand folder {title}",
+            )
+            folder_parts = self._expand_favlist_pages(cli, int(fid), keyword)
+            for p in folder_parts:
+                p.title = f"{title} - {p.title}"
+                parts.append(p)
+        return parts
+
+    def _expand_subscribed_collections(self, cli: bilibili_client) -> list[part_info]:
+        collections: list[dict[str, Any]] = []
+        pn = 1
+        total_pages = 1
+        while pn <= total_pages:
+            data = cli.subscribed_collections(pn=pn)
+            total = int(data.get("count") or data.get("total") or 0)
+            total_pages = max(1, (total + 49) // 50) if total else pn
+            self._progress(
+                "subscribed_collections",
+                pn,
+                total_pages,
+                f"subscribed collections {pn}/{total_pages}",
+            )
+            for entry in data.get("list") or []:
+                if isinstance(entry, dict):
+                    collections.append(entry)
+            if not (data.get("list") or []):
+                break
+            pn += 1
+
+        parts: list[part_info] = []
+        for i, entry in enumerate(collections, start=1):
+            collection_id = entry.get("id")
+            mid = entry.get("mid")
+            title = str(entry.get("title") or collection_id or f"item{i}")
+            if collection_id is None or mid is None:
+                continue
+            self._progress(
+                "subscribed_collections_expand",
+                i,
+                len(collections),
+                f"expand collection {title}",
+            )
+            nested = self._expand_collection_pages(
+                cli, mid=int(mid), season_id=int(collection_id)
+            )
+            for p in nested:
+                p.title = f"{title} - {p.title}"
+                parts.append(p)
+        return parts
 
     def _select_parts(self, probe: probe_info) -> list[part_info]:
         all_parts = [_dict_to_part(p) for p in probe.parts]
