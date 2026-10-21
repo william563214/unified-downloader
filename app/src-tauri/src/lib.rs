@@ -192,6 +192,19 @@ struct AppSettings {
     extract_max_ratio: f64,
     #[serde(default = "default_true")]
     extract_promote_password: bool,
+    // v0.10 ordered postprocessor chain
+    #[serde(default = "default_pp_order")]
+    pp_order: Vec<String>,
+    #[serde(default)]
+    move_template: String,
+    #[serde(default)]
+    exec_enabled: bool,
+    #[serde(default)]
+    exec_cmd: String,
+    #[serde(default = "default_av_hook_timeout")]
+    exec_timeout: u32,
+    #[serde(default)]
+    outtmpl_na_placeholder: String,
 }
 
 fn default_true() -> bool {
@@ -220,6 +233,18 @@ fn default_extract_max_uncompressed() -> u64 {
 
 fn default_extract_max_ratio() -> f64 {
     100.0
+}
+
+fn default_pp_order() -> Vec<String> {
+    vec![
+        "checksum".into(),
+        "av".into(),
+        "extract".into(),
+        "nfo".into(),
+        "cover".into(),
+        "move".into(),
+        "exec".into(),
+    ]
 }
 
 fn default_on_duplicate() -> String {
@@ -385,6 +410,12 @@ impl Default for AppSettings {
             extract_max_uncompressed: default_extract_max_uncompressed(),
             extract_max_ratio: default_extract_max_ratio(),
             extract_promote_password: true,
+            pp_order: default_pp_order(),
+            move_template: String::new(),
+            exec_enabled: false,
+            exec_cmd: String::new(),
+            exec_timeout: default_av_hook_timeout(),
+            outtmpl_na_placeholder: String::new(),
         }
     }
 }
@@ -721,6 +752,7 @@ fn settings_to_udl_config(settings: &AppSettings) -> serde_json::Value {
         "site_templates": settings.site_templates,
         "type_templates": settings.type_templates,
         "name_conflict": settings.name_conflict,
+        "outtmpl_na_placeholder": settings.outtmpl_na_placeholder,
         "rules": settings.classification_rules,
         "site_rules": settings.site_rules,
         "extension_rules": settings.extension_rules,
@@ -735,6 +767,11 @@ fn settings_to_udl_config(settings: &AppSettings) -> serde_json::Value {
         "extract_max_uncompressed": settings.extract_max_uncompressed,
         "extract_max_ratio": settings.extract_max_ratio,
         "extract_promote_password": settings.extract_promote_password,
+        "pp_order": settings.pp_order,
+        "move_template": settings.move_template,
+        "exec_enabled": settings.exec_enabled,
+        "exec_cmd": settings.exec_cmd,
+        "exec_timeout": settings.exec_timeout,
     })
 }
 
@@ -1778,6 +1815,31 @@ async fn start_download(
     if !name_tpl.is_empty() {
         args.push("--name-template".into());
         args.push(name_tpl.to_string());
+    }
+    if !settings.pp_order.is_empty() {
+        args.push("--pp-order".into());
+        args.push(settings.pp_order.join(","));
+    }
+    let move_tpl = settings.move_template.trim();
+    if !move_tpl.is_empty() {
+        args.push("--move-template".into());
+        args.push(move_tpl.to_string());
+    }
+    let na = settings.outtmpl_na_placeholder.trim();
+    if !na.is_empty() {
+        args.push("--outtmpl-na".into());
+        args.push(na.to_string());
+    }
+    if settings.exec_enabled {
+        let cmd = settings.exec_cmd.trim();
+        if !cmd.is_empty() {
+            args.push("--exec-cmd".into());
+            args.push(cmd.to_string());
+        }
+        if settings.exec_timeout > 0 {
+            args.push("--exec-timeout".into());
+            args.push(settings.exec_timeout.to_string());
+        }
     }
     if !settings.checksum_auto {
         args.push("--no-checksum-auto".into());

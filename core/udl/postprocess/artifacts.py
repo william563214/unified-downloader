@@ -74,6 +74,7 @@ def run_postprocess(
     conn: sqlite3.Connection | None = None,
     cancel: Event | None = None,
     skip_indexes: set[int] | None = None,
+    exclude_indexes: set[int] | None = None,
     file_dest_overrides: dict[int, Path] | None = None,
     kind_hint: str | None = None,
 ) -> list[artifact_result]:
@@ -83,12 +84,17 @@ def run_postprocess(
 
     site = result.site
     artifacts: list[artifact_result] = []
-    media_list = _media_candidates(
-        result,
-        output_dir,
-        skip_indexes=skip_indexes,
-        file_dest_overrides=file_dest_overrides,
-    )
+    exclude_indexes = exclude_indexes or set()
+    media_list = [
+        row
+        for row in _media_candidates(
+            result,
+            output_dir,
+            skip_indexes=skip_indexes,
+            file_dest_overrides=file_dest_overrides,
+        )
+        if row[0] not in exclude_indexes
+    ]
     if not media_list:
         if emit:
             emit.postprocess(

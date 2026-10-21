@@ -536,6 +536,41 @@ button:disabled {
   flex: 0 0 auto;
 }
 
+.pp-order-list {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 12px;
+}
+
+.pp-order-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.pp-order-index {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+  text-align: center;
+}
+
+.pp-order-name {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.pp-order-key {
+  font-size: 0.8em;
+  opacity: 0.65;
+}
+
 .site-toggle-grid {
   display: grid;
   gap: 8px;

@@ -140,7 +140,9 @@ NFO／封面下載／嵌入等下載後步驟。成功或失敗都會發出；�
 {"ev":"postprocess","job":"<job-id>","file":"<job-id>:0","step":"embed_cover","path":"/out/a.mp4","role":"cover","message":"cover embedded","ok":true}
 ```
 
-`step`：`nfo`／`cover`／`embed_cover`／`hook`／`extracting`／`extracted`／`failed`／`skip`。
+`step`：`chain`／`nfo`／`cover`／`embed_cover`／`hook`／`exec`／`move`／`extracting`／`extracted`／`failed`／`skip`。
+
+後處理順序見 `docs/postprocessor-chain.md`（v0.10）。
 
 ### `checksum`（v0.9-D）
 
@@ -202,7 +204,7 @@ Job 結束：
 {"ev":"error","job":"<job-id>","file":"<file-id>","message":"…","code":"download_failed"}
 ```
 
-常見 `code`：`unsupported`、`resolve_failed`、`download_failed`、`ffmpeg_missing`、`merge_failed`、`mega_tool_missing`、`nfo_failed`、`cover_failed`、`postprocess_failed`、`checksum_mismatch`、`hook_failed`、`hook_timeout`、`extract_failed`、`needs_password`、`zip_slip`、`zip_symlink`、`zip_bomb`。
+常見 `code`：`unsupported`、`resolve_failed`、`download_failed`、`ffmpeg_missing`、`merge_failed`、`mega_tool_missing`、`nfo_failed`、`cover_failed`、`postprocess_failed`、`checksum_mismatch`、`hook_failed`、`hook_timeout`、`exec_failed`、`move_failed`、`extract_failed`、`needs_password`、`zip_slip`、`zip_symlink`、`zip_bomb`。
 
 ### `cancel`
 

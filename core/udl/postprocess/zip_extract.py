@@ -307,24 +307,71 @@ def after_extract_classify_hook(
     metadata: dict[str, Any] | None = None,
     rules: list[Any] | None = None,
     classify_root: Path | None = None,
+    move_template: str | None = None,
+    output_root: Path | None = None,
+    name_conflict: str = "rename",
+    na_placeholder: str = "",
+    emit: emitter | None = None,
+    job: str | None = None,
+    file: str | None = None,
 ) -> list[dict[str, Any]]:
-    """apply folder classification rules to extracted members (issue #27).
+    """apply folder classification and optional move_template after ZIP extract.
 
-    Moves files under ``classify_root`` (default: archive parent) when a rule
-    matches by file type and/or source URL. Best-effort; never raises.
+    Uses #27 ``classify_paths`` for type/URL rules, then optional #26
+    ``move_template`` relocation. Best-effort; never raises.
     """
-    if not rules or not extracted_paths:
+    if not extracted_paths:
         return []
-    from udl.rules import classify_paths
-
-    root = classify_root if classify_root is not None else archive.parent
-    return classify_paths(
-        extracted_paths,
-        rules,
-        source_url=source_url,
-        metadata=metadata,
-        root=root,
+    root = (
+        classify_root
+        if classify_root is not None
+        else (output_root if output_root is not None else archive.parent)
     )
+    moved: list[dict[str, Any]] = []
+    current_paths = list(extracted_paths)
+    if rules:
+        from udl.rules import classify_paths
+
+        moved = classify_paths(
+            current_paths,
+            rules,
+            source_url=source_url,
+            metadata=metadata,
+            root=root,
+        )
+        if moved:
+            current_paths = [
+                Path(str(item.get("to") or item.get("from") or ""))
+                for item in moved
+                if item.get("to") or item.get("from")
+            ]
+            current_paths = [p for p in current_paths if p]
+    if (move_template or "").strip():
+        from udl.postprocess.chain import classify_and_move_paths
+
+        extra = classify_and_move_paths(
+            current_paths,
+            metadata=metadata,
+            rules=None,
+            move_template=move_template,
+            output_root=root,
+            name_conflict=name_conflict,
+            na_placeholder=na_placeholder,
+            source_url=source_url,
+        )
+        for old, new in extra:
+            moved.append({"from": str(old), "to": str(new), "via": "move_template"})
+    if emit is not None and moved:
+        emit.postprocess(
+            job=job or "",
+            step="move",
+            file=file,
+            path=str(archive),
+            role="classify",
+            message=f"classified {len(moved)} extracted files",
+            ok=True,
+        )
+    return moved
 
 
 def extract_zip(
@@ -339,6 +386,9 @@ def extract_zip(
     rules: list[Any] | None = None,
     classify_root: Path | None = None,
     classify_hook: Callable[..., None] | None = None,
+    move_template: str | None = None,
+    name_conflict: str = "rename",
+    na_placeholder: str = "",
 ) -> extract_result | None:
     """extract one archive when enabled and recognized. returns None when skipped."""
     if not options.resolved_enabled():
@@ -389,7 +439,14 @@ def extract_zip(
                 source_url=source_url,
                 metadata=metadata,
                 rules=rules,
-                classify_root=classify_root,
+                classify_root=classify_root if classify_root is not None else dest_root,
+                move_template=move_template,
+                output_root=dest_root,
+                name_conflict=name_conflict,
+                na_placeholder=na_placeholder,
+                emit=emit,
+                job=job,
+                file=file,
             )
             if isinstance(moved, list) and moved:
                 result.extracted_paths = [
@@ -397,6 +454,18 @@ def extract_zip(
                     for item in moved
                     if item.get("to") or item.get("from")
                 ]
+        except TypeError:
+            # custom classify_hook with older signature
+            try:
+                hook(
+                    [Path(p) for p in result.extracted_paths],
+                    archive=archive,
+                    source_url=source_url,
+                    metadata=metadata,
+                    rules=rules,
+                )
+            except Exception:  # noqa: BLE001
+                pass
         except Exception:  # noqa: BLE001
             # classification is best-effort never fail extract
             pass

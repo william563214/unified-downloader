@@ -23,7 +23,7 @@ from udl.metadata import item_metadata
 from udl.naming import preview_template
 from udl.network import configure_network, settings_from_cli_args
 from udl.page import page_filter, parse_extensions, parse_size_bound, parse_types, scan_page
-from udl.postprocess.artifacts import run_postprocess
+from udl.postprocess.chain import exec_options, normalize_pp_order, parse_pp_order
 from udl.postprocess.hook import hook_options
 from udl.postprocess.options import parse_site_toggle_list, postprocess_options
 from udl.postprocess.zip_extract import extract_options
@@ -549,8 +549,38 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "output path template using metadata fields "
-            "e.g. '{site}/{author}/{date:%%Y-%%m}/{title} [{id}].{ext}'"
+            "e.g. '{site}/{author}/{date:%%Y-%%m}/{title} [{id}].{ext}' "
+            "or yt-dlp style '%%(title|NA)s [%%(id)s].%%(ext)s'"
         ),
+    )
+    p_get.add_argument(
+        "--pp-order",
+        default=None,
+        help=(
+            "postprocessor order comma list: "
+            "checksum,av,extract,nfo,cover,move,exec"
+        ),
+    )
+    p_get.add_argument(
+        "--move-template",
+        default=None,
+        help="optional post-download move path template (empty = classification only)",
+    )
+    p_get.add_argument(
+        "--exec-cmd",
+        default=None,
+        help="postprocessor exec command ({path} = local file); separate from --post-cmd AV hook",
+    )
+    p_get.add_argument(
+        "--exec-timeout",
+        type=int,
+        default=None,
+        help="exec postprocessor timeout seconds (default 120)",
+    )
+    p_get.add_argument(
+        "--outtmpl-na",
+        default=None,
+        help="placeholder for empty template fields (yt-dlp outtmpl_na_placeholder)",
     )
     p_get.add_argument(
         "--config",
@@ -1532,6 +1562,13 @@ def cmd_get(args: argparse.Namespace) -> int:
         )
         hook = _hook_from_args(args, cfg)
         extract = _extract_from_args(args, cfg)
+        pp_opts = _postprocess_from_args(args)
+        exec_opts = _exec_from_args(args, cfg)
+        pp_order = _pp_order_from_args(args, cfg)
+        if getattr(args, "move_template", None) is not None:
+            cfg.move_template = str(args.move_template)
+        if getattr(args, "outtmpl_na", None) is not None:
+            cfg.outtmpl_na_placeholder = str(args.outtmpl_na)
         file_failures, _checked = post_download_verify(
             result,
             out,
@@ -1543,6 +1580,14 @@ def cmd_get(args: argparse.Namespace) -> int:
             hook=hook,
             extract=extract,
             emit=emit if args.json else None,
+            config=cfg,
+            artifacts=pp_opts,
+            exec_opts=exec_opts,
+            pp_order=pp_order,
+            conn=conn,
+            cancel=cancel,
+            kind_hint=result.kind,
+            run_full_chain=True,
         )
         if file_failures:
             failed += len(file_failures)
@@ -1552,7 +1597,7 @@ def cmd_get(args: argparse.Namespace) -> int:
     if file_failures:
         err_msg = (
             next(iter(file_failures.values())).get("message")
-            or "checksum/hook/extract failed"
+            or "postprocessor chain failed"
         )
 
     if conn is not None:
@@ -1569,32 +1614,6 @@ def cmd_get(args: argparse.Namespace) -> int:
             file_dest_overrides=overrides,
             file_failures=file_failures or None,
         )
-
-    pp_opts = _postprocess_from_args(args)
-    if (
-        not cancel.is_set()
-        and failed == 0
-        and pp_opts.any_enabled()
-        and (ok > 0 or already_all)
-    ):
-        try:
-            run_postprocess(
-                result,
-                out,
-                pp_opts,
-                job_id=job_id,
-                emit=emit if args.json else None,
-                conn=conn,
-                cancel=cancel,
-                skip_indexes=skip_indexes,
-                file_dest_overrides=overrides,
-                kind_hint=result.kind,
-            )
-        except Exception as exc:  # noqa: BLE001
-            if args.json:
-                emit.error(job=job_id, message=str(exc), code="postprocess_failed")
-            else:
-                print(f"postprocess failed: {exc}", file=sys.stderr)
 
     flush_traffic_accounting()
     set_traffic_recorder(None)
@@ -1635,6 +1654,30 @@ def _hook_from_args(args: argparse.Namespace, cfg: udl_config) -> hook_options:
         preset=str(preset).strip() if preset else None,
         timeout=int(timeout or 120),
     )
+
+
+def _exec_from_args(args: argparse.Namespace, cfg: udl_config) -> exec_options:
+    command = getattr(args, "exec_cmd", None)
+    if command is None:
+        command = cfg.exec_cmd
+    timeout = getattr(args, "exec_timeout", None)
+    if timeout is None:
+        timeout = cfg.exec_timeout
+    enabled = bool(cfg.exec_enabled and (cfg.exec_cmd or "").strip())
+    if getattr(args, "exec_cmd", None) is not None:
+        enabled = bool(str(command or "").strip())
+    return exec_options(
+        enabled=enabled,
+        command=str(command or ""),
+        timeout=int(timeout or 120),
+    )
+
+
+def _pp_order_from_args(args: argparse.Namespace, cfg: udl_config) -> list[str]:
+    raw = getattr(args, "pp_order", None)
+    if raw:
+        return parse_pp_order(raw)
+    return normalize_pp_order(cfg.pp_order)
 
 
 def _extract_from_args(args: argparse.Namespace, cfg: udl_config) -> extract_options:

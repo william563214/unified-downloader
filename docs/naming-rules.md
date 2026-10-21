@@ -1,4 +1,4 @@
-# 命名模板與分類規則（v0.5）
+# 命名模板與分類規則（v0.5／v0.10）
 
 跨站基礎設施：依統一 `item_metadata` 產生輸出路徑／檔名，並以有序規則覆寫資料夾、模板或略過下載。
 
@@ -6,16 +6,16 @@
 
 ### 語法
 
-路徑以 `/` 分隔多層目錄。佔位符：
+路徑以 `/` 分隔多層目錄。佔位符支援 **`{…}`** 與 yt-dlp 風格 **`%(…)s`**（OUTPUT TEMPLATE 欄位／預設值語法子集）。
 
 | 佔位符 | 來源 |
 |--------|------|
 | `{site}` | metadata.site |
-| `{author}` / `{uploader}` | metadata.author |
+| `{author}` / `{uploader}` / `{channel}` | metadata.author |
 | `{title}` | metadata.title |
 | `{id}` / `{item_id}` | metadata.item_id |
-| `{date}` / `{date:%Y-%m}` | metadata.upload_date（strftime） |
-| `{collection}` | 相簿／播放清單 |
+| `{date}` / `{date:%Y-%m}` / `{date>%Y-%m}` | metadata.upload_date（strftime） |
+| `{collection}` / `{playlist}` | 相簿／播放清單 |
 | `{resolution}` / `{quality}` | 畫質標籤 |
 | `{tags}` | 逗號分隔標籤 |
 | `{ext}` | 原始副檔名（不含點） |
@@ -23,12 +23,26 @@
 | `{filename}` | 原始完整檔名 |
 | `{type}` | 粗分媒體類型 video／audio／image／archive／document／program／other |
 
+#### yt-dlp 風格擴充（v0.10）
+
+參考 [yt-dlp OUTPUT TEMPLATE](https://github.com/yt-dlp/yt-dlp/blob/8973412/README.md#output-template)：
+
+| 語法 | 說明 | 範例 |
+|------|------|------|
+| `{field\|default}` | 空白時用預設值 | `{author\|Unknown}` |
+| `{a,b\|default}` | 依序嘗試替代欄位 | `{title,id\|NA}` |
+| `{field&替換\|default}` | 非空時用替換字串 | `{tags&有標籤\|無標籤}` |
+| `{date>%Y-%m-%d}` | `>` 分隔 strftime（亦支援舊的 `:`） | `{upload_date>%Y/%m}` |
+| `%(field)s` | yt-dlp printf 形式 | `%(title)s [%(id)s].%(ext)s` |
+| `outtmpl_na_placeholder` | 無 `\|default` 時的空白佔位 | 設定／`--outtmpl-na NA` |
+
 空白模板＝沿用各站 extractor 原本的 `relative_dir` + `name`。
 
 範例：
 
 ```text
-{site}/{author}/{date:%Y-%m}/{title} [{id}].{ext}
+{site}/{author|anon}/{date>%Y-%m}/{title} [{id}].{ext}
+%(uploader|Unknown)s/%(title)s [%(id)s].%(ext)s
 ```
 
 ### 安全清理（macOS + Windows）
