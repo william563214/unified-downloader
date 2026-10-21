@@ -1,6 +1,16 @@
 """Post-download processing helpers shared across extractors."""
 
 from udl.postprocess.artifacts import artifact_result, run_postprocess
+from udl.postprocess.chain import (
+    chain_options,
+    classify_and_move_paths,
+    default_pp_order,
+    exec_options,
+    known_pp_steps,
+    normalize_pp_order,
+    parse_pp_order,
+    run_postprocessor_chain,
+)
 from udl.postprocess.cover import (
     cover_dest_path,
     cover_error,
@@ -45,13 +55,17 @@ __all__ = [
     "after_extract_classify_hook",
     "artifact_result",
     "build_nfo_xml",
+    "chain_options",
     "choose_nfo_kind",
+    "classify_and_move_paths",
     "clear_passwords",
     "cover_dest_path",
     "cover_error",
     "cover_image_url",
+    "default_pp_order",
     "download_cover",
     "embed_cover",
+    "exec_options",
     "extract_options",
     "extract_result",
     "extract_zip",
@@ -60,9 +74,12 @@ __all__ = [
     "find_ffmpeg",
     "install_ffmpeg",
     "is_zip_candidate",
+    "known_pp_steps",
     "list_password_public",
     "merge_dash",
     "merge_error",
+    "normalize_pp_order",
+    "parse_pp_order",
     "parse_site_toggle_list",
     "postprocess_options",
     "probe_ffmpeg",
@@ -72,6 +89,7 @@ __all__ = [
     "reorder_passwords",
     "retry_extract_path",
     "run_postprocess",
+    "run_postprocessor_chain",
     "update_password",
     "write_nfo",
 ]

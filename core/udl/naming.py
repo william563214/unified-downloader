@@ -28,6 +28,7 @@ _windows_reserved = frozenset(
 # illegal on windows + macOS (colon is illegal on both for path components)
 _illegal_chars_re = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _whitespace_collapse_re = re.compile(r"\s+")
+# legacy simple form kept for reference; render_template uses _brace_field_re
 _placeholder_re = re.compile(
     r"\{([a-zA-Z_][a-zA-Z0-9_]*)(?::([^}]*))?\}"
 )
@@ -35,20 +36,34 @@ _placeholder_re = re.compile(
 max_component_len = 200
 max_path_len = 240
 
-# field aliases accepted in templates
+# field aliases accepted in templates (incl. common yt-dlp OUTPUT TEMPLATE names)
 _field_aliases: dict[str, str] = {
     "id": "item_id",
     "itemid": "item_id",
     "url": "canonical_url",
+    "webpage_url": "canonical_url",
     "uploader": "author",
+    "creator": "author",
+    "channel": "author",
     "artist": "author",
     "album": "collection",
     "playlist": "collection",
+    "playlist_title": "collection",
     "date": "upload_date",
     "uploaded": "upload_date",
+    "upload_date": "upload_date",
     "res": "resolution",
     "quality": "resolution",
+    "thumbnail": "thumbnail_url",
 }
+
+# yt-dlp-inspired field expression inside {…} or %(…)x
+# name[>strftime|:fmt][,alt…][&replacement][|default]
+_brace_field_re = re.compile(r"\{([^{}]+)\}")
+_percent_field_re = re.compile(
+    r"%\(([^)]+)\)([ljhqBUDS]|[diouxXeEfFgGcrs])?"
+)
+default_outtmpl_na = ""
 
 
 @dataclass
@@ -192,9 +207,9 @@ def _lookup_field(
     lowered = key.lower()
     if lowered in {"ext", "extension"}:
         return ext
-    if lowered in {"name", "filename", "original", "original_name"}:
+    if lowered in {"name", "original", "original_name"}:
         return Path(original_name).stem if original_name else ""
-    if lowered in {"fullname", "basename"}:
+    if lowered in {"filename", "fullname", "basename"}:
         return original_name
     if lowered in {"type", "media_type", "mediatype"}:
         return media_type
@@ -216,7 +231,7 @@ def _format_value(value: Any, fmt: str | None, *, field_key: str) -> str:
     if value is None:
         return ""
     if field_key.lower() in {"date", "upload_date", "uploaded"} or (
-        fmt and "%" in fmt and isinstance(value, str)
+        fmt and "%" in fmt and isinstance(value, (str, datetime))
     ):
         dt = value if isinstance(value, datetime) else _parse_upload_date(str(value))
         if dt is not None:
@@ -232,6 +247,121 @@ def _format_value(value: Any, fmt: str | None, *, field_key: str) -> str:
     return str(value)
 
 
+def _split_field_expr(expr: str) -> tuple[list[str], str | None, str | None]:
+    """split yt-dlp-like field expr into alternatives, replacement, default.
+
+    Grammar (subset): name[>strf|:fmt][,alt…][&replacement][|default]
+    """
+    text = expr.strip()
+    default: str | None = None
+    replacement: str | None = None
+    if "|" in text:
+        # default is after the last unescaped conceptually; use first | at top level
+        left, _, right = text.partition("|")
+        text = left
+        default = right
+    if "&" in text:
+        left, _, right = text.partition("&")
+        text = left
+        replacement = right
+    alternatives = [part.strip() for part in text.split(",") if part.strip()]
+    if not alternatives:
+        alternatives = [""]
+    return alternatives, replacement, default
+
+
+def _parse_alt_field(alt: str) -> tuple[str, str | None]:
+    """parse one alternative into (field_key, format).
+
+    Supports `date>%Y-%m-%d` (yt-dlp) and legacy `date:%Y-%m-%d`.
+    """
+    text = alt.strip()
+    if ">" in text:
+        key, _, fmt = text.partition(">")
+        return key.strip(), (fmt or None)
+    # colon format only when it looks like strftime / printf (avoid dict keys)
+    if ":" in text:
+        key, _, fmt = text.partition(":")
+        key = key.strip()
+        fmt = fmt.strip()
+        if key and (
+            "%" in fmt
+            or re.fullmatch(r"[0-9]*[diouxXeEfFgGcrs]?", fmt)
+            or re.fullmatch(r"[<>^]?[0-9]*\.?[0-9]*[diouxXeEfFgGcrs]?", fmt)
+        ):
+            return key, fmt or None
+    return text, None
+
+
+def _is_empty(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and value.strip() == "":
+        return True
+    if isinstance(value, (list, dict)) and len(value) == 0:
+        return True
+    return False
+
+
+def _expand_field_expr(
+    expr: str,
+    meta: item_metadata,
+    *,
+    original_name: str,
+    ext: str,
+    media_type: str,
+    size: int | None,
+    na_placeholder: str,
+    conversion: str | None = None,
+) -> str:
+    alternatives, replacement, default = _split_field_expr(expr)
+    chosen_value: Any = ""
+    found = False
+    for alt in alternatives:
+        key, fmt = _parse_alt_field(alt)
+        value = _lookup_field(
+            meta,
+            original_name=original_name,
+            ext=ext,
+            media_type=media_type,
+            size=size,
+            key=key,
+        )
+        text = _format_value(value, fmt, field_key=key)
+        if not _is_empty(text):
+            chosen_value = text
+            found = True
+            break
+        chosen_value = text
+
+    if found:
+        if replacement is not None:
+            # str.format mini-language subset: replacement may contain {}
+            try:
+                out = replacement.format(chosen_value)
+            except (ValueError, IndexError, KeyError):
+                out = replacement.replace("{}", str(chosen_value))
+                if "{" in out and "}" in out:
+                    try:
+                        out = replacement.format(value=chosen_value)
+                    except (ValueError, IndexError, KeyError):
+                        out = replacement
+        else:
+            out = str(chosen_value)
+    else:
+        if default is not None:
+            out = default
+        else:
+            out = na_placeholder
+
+    if conversion == "S":
+        out = sanitize_component(out)
+    elif conversion == "l" and isinstance(chosen_value, list):
+        out = ", ".join(str(v) for v in chosen_value)
+    # field values must not introduce path separators unless intentionally in template
+    return out.replace("/", "_").replace("\\", "_")
+
+
 def render_template(
     template: str,
     meta: item_metadata,
@@ -239,29 +369,49 @@ def render_template(
     original_name: str = "",
     size: int | None = None,
     media_type: str | None = None,
+    na_placeholder: str | None = None,
 ) -> str:
-    """render a template string to a relative path (unsanitized segments joined)."""
+    """render a template string to a relative path (unsanitized segments joined).
+
+    Supports:
+      - `{field}` / `{field:%Y-%m}` (legacy)
+      - `{field|default}` / `{a,b|default}` alternatives
+      - `{field&replacement|default}` when non-empty
+      - `{date>%Y-%m-%d}` yt-dlp-style strftime
+      - `%(field)s` / `%(title|NA)s` yt-dlp OUTPUT TEMPLATE form
+    """
     if not template or not template.strip():
         return original_name or "unnamed"
     ext = Path(original_name).suffix.lstrip(".") if original_name else ""
     mtype = media_type or detect_media_type(original_name)
+    na = default_outtmpl_na if na_placeholder is None else na_placeholder
 
-    def repl(match: re.Match[str]) -> str:
-        key = match.group(1)
-        fmt = match.group(2)
-        value = _lookup_field(
+    def brace_repl(match: re.Match[str]) -> str:
+        return _expand_field_expr(
+            match.group(1),
             meta,
             original_name=original_name,
             ext=ext,
             media_type=mtype,
             size=size,
-            key=key,
+            na_placeholder=na,
         )
-        text = _format_value(value, fmt, field_key=key)
-        # field values must not introduce path separators
-        return text.replace("/", "_").replace("\\", "_")
 
-    rendered = _placeholder_re.sub(repl, template)
+    def percent_repl(match: re.Match[str]) -> str:
+        return _expand_field_expr(
+            match.group(1),
+            meta,
+            original_name=original_name,
+            ext=ext,
+            media_type=mtype,
+            size=size,
+            na_placeholder=na,
+            conversion=match.group(2),
+        )
+
+    # percent form first so "%(title)s" is not partially eaten
+    rendered = _percent_field_re.sub(percent_repl, template)
+    rendered = _brace_field_re.sub(brace_repl, rendered)
     # collapse accidental empty segments from missing fields
     parts = [p for p in rendered.replace("\\", "/").split("/") if p not in {"", "."}]
     return "/".join(parts) if parts else (original_name or "unnamed")
@@ -319,6 +469,7 @@ def resolve_output_path(
     size: int | None = None,
     media_type: str | None = None,
     on_conflict: str = "rename",
+    na_placeholder: str | None = None,
 ) -> rendered_path:
     """compute final absolute path under output_dir.
 
@@ -334,6 +485,7 @@ def resolve_output_path(
             original_name=original_name,
             size=size,
             media_type=media_type,
+            na_placeholder=na_placeholder,
         )
     else:
         base = original_name or "unnamed"
@@ -379,6 +531,7 @@ def preview_template(
     *,
     original_name: str = "example.mp4",
     size: int | None = None,
+    na_placeholder: str | None = None,
 ) -> dict[str, Any]:
     """preview helper for CLI / GUI live preview."""
     if isinstance(meta, dict):
@@ -393,6 +546,7 @@ def preview_template(
             original_name=original_name,
             size=size,
             media_type=media_type,
+            na_placeholder=na_placeholder,
         )
     )
     return {

@@ -264,7 +264,10 @@
   - [x] 未加密 m3u8 media playlist 解析；加密／DRM 標記清楚拒絕
   - [x] CLI／GUI：`--external-downloader`、`--concurrent-fragments`；`docs/fragment-download.md`
   - [ ] 站點 extractor 全面改接片段基底（後續；Bilibili DASH 仍用既有分軌＋FFmpeg 合併）
-- [ ] Postprocessor 串接＋輸出模板（[#26](https://github.com/william563214/unified-downloader/issues/26)）
+- [x] Postprocessor 串接＋輸出模板（[#26](https://github.com/william563214/unified-downloader/issues/26)）
+  - 可設定順序 PP 鏈：checksum／av／extract／nfo／cover／move／exec
+  - 輸出模板：`{field|default}`、替代欄位、`>` strftime、`%(…)s`、`outtmpl_na_placeholder`
+  - 整合 ZIP extract 與分類 hook；`docs/postprocessor-chain.md`
 - [x] 依檔案類型＋來源網址自動分資料夾（[#27](https://github.com/william563214/unified-downloader/issues/27)）
   - 擴充規則引擎：副檔名／MIME／媒體類型＋來源網址（網域／路徑）；priority 排序
   - 與 [william563214/download_classify](https://github.com/william563214/download_classify) 規則 JSON 對齊（`rules`／`site_rules`／`extension_rules`）；GUI 編輯／預覽／匯入匯出

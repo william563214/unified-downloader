@@ -6,19 +6,20 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from udl.checksum import (
-    checksum_result,
-    expected_checksum,
-    resolve_expected,
-    verify_file,
-)
+from udl.checksum import checksum_result, expected_checksum
 from udl.config import load_config, udl_config
 from udl.events import emitter
 from udl.extractors.base import extract_result
 from udl.metadata import item_metadata
 from udl.naming import detect_media_type, pick_template, resolve_output_path
-from udl.postprocess.hook import hook_options, run_hook
-from udl.postprocess.zip_extract import extract_options, extract_zip
+from udl.postprocess.chain import (
+    chain_options,
+    exec_options,
+    run_postprocessor_chain,
+)
+from udl.postprocess.hook import hook_options
+from udl.postprocess.options import postprocess_options
+from udl.postprocess.zip_extract import extract_options
 from udl.rules import apply_rules
 from udl.store.db import connect
 from udl.store.duplicates import duplicate_mode, resolve_duplicate
@@ -87,6 +88,7 @@ def plan_file_destinations(
             size=f.size,
             media_type=media_type,
             on_conflict=conflict,
+            na_placeholder=cfg.outtmpl_na_placeholder,
         )
         if template or decision.folder or rendered.conflict_renamed:
             overrides[idx] = rendered.absolute
@@ -370,6 +372,38 @@ def finalize_download(
     )
 
 
+def build_chain_options(
+    cfg: udl_config,
+    *,
+    cli_checksum: expected_checksum | None = None,
+    checksum_auto: bool | None = None,
+    hook: hook_options | None = None,
+    extract: extract_options | None = None,
+    artifacts: postprocess_options | None = None,
+    exec_opts: exec_options | None = None,
+    pp_order: list[str] | None = None,
+) -> chain_options:
+    """assemble chain_options from udl_config plus per-job overrides."""
+    return chain_options(
+        order=list(pp_order or cfg.pp_order or []),
+        checksum_auto=cfg.checksum_auto if checksum_auto is None else checksum_auto,
+        cli_checksum=cli_checksum,
+        hook=hook or hook_options(),
+        extract=extract or extract_options(),
+        artifacts=artifacts or postprocess_options(),
+        exec_opts=exec_opts
+        or exec_options(
+            enabled=bool(cfg.exec_enabled),
+            command=cfg.exec_cmd,
+            timeout=cfg.exec_timeout,
+        ),
+        move_template=cfg.move_template,
+        rules=list(cfg.effective_rules()),
+        name_conflict=cfg.name_conflict,
+        outtmpl_na_placeholder=cfg.outtmpl_na_placeholder,
+    )
+
+
 def post_download_verify(
     result: extract_result,
     output_dir: Path,
@@ -382,142 +416,57 @@ def post_download_verify(
     hook: hook_options | None = None,
     extract: extract_options | None = None,
     emit: emitter | None = None,
+    config: udl_config | None = None,
+    artifacts: postprocess_options | None = None,
+    exec_opts: exec_options | None = None,
+    pp_order: list[str] | None = None,
+    conn: Any | None = None,
+    cancel: Any | None = None,
+    kind_hint: str | None = None,
+    run_full_chain: bool = False,
 ) -> tuple[dict[int, dict[str, Any]], list[checksum_result]]:
-    """verify checksums run optional AV hook then optional ZIP extract.
+    """run post-download verification via the ordered PP chain.
 
-    extract runs only when checksum and hook (if configured) pass for the file.
-    returns (file_failures, checksum_results). failures keyed by file index.
+    When run_full_chain is False (default, backward compatible), only
+    checksum / av / extract steps run (nfo/cover/move/exec skipped here so
+    callers that still invoke run_postprocess separately keep working).
+    When True, the full configured order runs including nfo/cover/move/exec.
     """
-    skip_indexes = skip_indexes or set()
-    file_dest_overrides = file_dest_overrides or {}
-    hook = hook or hook_options()
-    extract = extract or extract_options()
-    failures: dict[int, dict[str, Any]] = {}
-    results: list[checksum_result] = []
-    classify_rules = load_config().effective_rules()
-
-    for idx, f in enumerate(result.files):
-        if idx in skip_indexes:
-            continue
-        dest_dir = output_dir / f.relative_dir if f.relative_dir else output_dir
-        dest = file_dest_overrides.get(idx, dest_dir / f.name)
-        if not dest.is_file():
-            continue
-        file_id = f"{job_id}:{idx}"
-        file_meta = f.metadata or result.metadata
-        file_ok = True
-        expected = resolve_expected(
-            path=dest,
-            metadata=file_meta,
-            cli=cli_checksum,
-            auto=checksum_auto,
-        )
-        if expected is not None:
-            checked = verify_file(dest, expected)
-            results.append(checked)
-            if emit is not None:
-                emit.checksum(
-                    job=job_id,
-                    file=file_id,
-                    ok=checked.ok,
-                    algo=checked.algo,
-                    expected=checked.expected,
-                    actual=checked.actual,
-                    source=checked.source,
-                    path=checked.path,
-                    message=checked.message,
-                )
-            if not checked.ok:
-                file_ok = False
-                failures[idx] = {
-                    "algo": checked.algo,
-                    "expected": checked.expected,
-                    "actual": checked.actual,
-                    "source": checked.source,
-                    "message": checked.message or "checksum mismatch",
-                    "checksum": {
-                        "ok": False,
-                        "algo": checked.algo,
-                        "expected": checked.expected,
-                        "actual": checked.actual,
-                        "source": checked.source,
-                        "message": checked.message or "checksum mismatch",
-                    },
-                }
-                if emit is not None:
-                    emit.error(
-                        job=job_id,
-                        file=file_id,
-                        message=checked.message or "checksum mismatch",
-                        code="checksum_mismatch",
-                    )
-
-        hook_res = run_hook(
-            dest,
-            hook,
-            emit=emit,
-            job=job_id,
-            file=file_id,
-        )
-        if hook_res is not None and not hook_res.ok:
-            file_ok = False
-            entry = failures.setdefault(
-                idx,
-                {
-                    "algo": expected.algo if expected else "sha256",
-                    "expected": expected.hex if expected else None,
-                    "actual": None,
-                    "source": expected.source if expected else None,
-                    "message": hook_res.message or "post-download hook failed",
-                },
-            )
-            entry["hook"] = hook_res.to_dict()
-            entry["message"] = hook_res.message or entry.get("message")
-            if emit is not None:
-                emit.error(
-                    job=job_id,
-                    file=file_id,
-                    message=hook_res.message or "post-download hook failed",
-                    code="hook_failed",
-                )
-
-        if not file_ok:
-            continue
-
-        meta_dict = file_meta.to_dict(omit_empty=True) if file_meta is not None else None
-        extract_res = extract_zip(
-            dest,
-            extract,
-            emit=emit,
-            job=job_id,
-            file=file_id,
-            source_url=result.url,
-            metadata=meta_dict,
-            rules=classify_rules,
-            classify_root=output_dir,
-        )
-        if extract_res is not None and not extract_res.ok:
-            entry = failures.setdefault(
-                idx,
-                {
-                    "algo": expected.algo if expected else "sha256",
-                    "expected": expected.hex if expected else None,
-                    "actual": None,
-                    "source": expected.source if expected else None,
-                    "message": extract_res.message or "extract failed",
-                },
-            )
-            entry["extract"] = extract_res.to_dict()
-            entry["message"] = extract_res.message or entry.get("message")
-        elif extract_res is not None and extract_res.ok:
-            if file_meta is not None:
-                file_meta.extra["extract"] = extract_res.to_dict()
-            elif f.metadata is None and result.metadata is not None:
-                result.metadata.extra.setdefault("extract_by_file", {})[
-                    file_id
-                ] = extract_res.to_dict()
-
-    return failures, results
+    cfg = config if config is not None else load_config()
+    order = list(pp_order or cfg.pp_order or [])
+    if not run_full_chain:
+        # preserve legacy split: verify-only subset in default relative order
+        verify_steps = {"checksum", "av", "extract"}
+        order = [s for s in (order or []) if s in verify_steps] or [
+            "checksum",
+            "av",
+            "extract",
+        ]
+    opts = build_chain_options(
+        cfg,
+        cli_checksum=cli_checksum,
+        checksum_auto=checksum_auto,
+        hook=hook,
+        extract=extract,
+        artifacts=artifacts,
+        exec_opts=exec_opts,
+        pp_order=order,
+    )
+    chain = run_postprocessor_chain(
+        result,
+        output_dir,
+        opts,
+        job_id=job_id,
+        emit=emit,
+        conn=conn,
+        cancel=cancel,
+        skip_indexes=skip_indexes,
+        file_dest_overrides=file_dest_overrides,
+        kind_hint=kind_hint or result.kind,
+    )
+    if file_dest_overrides is not None:
+        file_dest_overrides.update(chain.path_overrides)
+    return chain.file_failures, chain.checksum_results
 
 
 def file_digest(path: Path) -> tuple[int | None, str | None]:

@@ -11,6 +11,10 @@
 - proxy、UA、限速集中於網路層；curl_cffi 指紋模擬選用預設關（同 Cloudflare）
 - CLI `--impersonate`／`--request-handler`；GUI 網路設定；NOTICE 記載 yt-dlp Unlicense `8973412`（closes #24）
 - Extractor 註冊表＋lazy 載入：每站 `_VALID_URL`；`scripts/make_lazy_extractors.py` 產生 stub；sidecar 啟動不 import 全部模組（closes #23；參考 yt-dlp Unlicense commit 8973412）
+- v0.10：可設定順序的 postprocessor 鏈（checksum／av／extract／nfo／cover／move／exec）
+- 輸出模板語法補強：`{field|default}`、替代欄位、`>` strftime、`%(…)s`（對齊 yt-dlp OUTPUT TEMPLATE）
+- ZIP 解壓後分類 hook 與 move 步驟整合既有規則；GUI 可調 PP 順序
+- 文件：`docs/postprocessor-chain.md`、naming-rules／NOTICE／ROADMAP（closes #26）
 - ZIP 有序密碼表：依序試密（僅 udl.secrets）；成功可置頂；per-job list／single／off
 - 修復中心一次性密碼重試並可選加入清單；歷史僅記 password N of M（closes #32）
 - 下載後可選自動解壓 ZIP（全域預設關；per-job inherit／on／off）

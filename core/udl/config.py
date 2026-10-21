@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from udl.paths import app_data_dir
+from udl.postprocess.chain import default_pp_order, normalize_pp_order
 from udl.rules import (
     classify_rule,
     extension_rules_to_list,
@@ -45,6 +46,8 @@ class udl_config:
     site_rules: list[classify_rule] = field(default_factory=list)
     extension_rules: list[classify_rule] = field(default_factory=list)
     name_conflict: str = "rename"
+    # yt-dlp-inspired NA placeholder for empty template fields
+    outtmpl_na_placeholder: str = ""
     # v0.9-D post-download hook / checksum defaults
     checksum_auto: bool = True
     post_cmd_enabled: bool = False
@@ -58,6 +61,12 @@ class udl_config:
     extract_max_uncompressed: int = 4 * 1024 * 1024 * 1024
     extract_max_ratio: float = 100.0
     extract_promote_password: bool = True
+    # v0.10 ordered postprocessor chain
+    pp_order: list[str] = field(default_factory=lambda: list(default_pp_order))
+    move_template: str = ""
+    exec_enabled: bool = False
+    exec_cmd: str = ""
+    exec_timeout: int = 120
 
     def effective_rules(self) -> list[classify_rule]:
         """priority-ordered site + custom + extension rules."""
@@ -73,6 +82,7 @@ class udl_config:
             "site_templates": dict(self.site_templates),
             "type_templates": dict(self.type_templates),
             "name_conflict": self.name_conflict,
+            "outtmpl_na_placeholder": self.outtmpl_na_placeholder,
             "rules": rules_to_list(self.rules),
             "site_rules": site_rules_to_list(self.site_rules),
             "extension_rules": extension_rules_to_list(self.extension_rules),
@@ -87,6 +97,11 @@ class udl_config:
             "extract_max_uncompressed": self.extract_max_uncompressed,
             "extract_max_ratio": self.extract_max_ratio,
             "extract_promote_password": self.extract_promote_password,
+            "pp_order": list(self.pp_order),
+            "move_template": self.move_template,
+            "exec_enabled": self.exec_enabled,
+            "exec_cmd": self.exec_cmd,
+            "exec_timeout": self.exec_timeout,
         }
 
     @classmethod
@@ -131,6 +146,18 @@ class udl_config:
             )
         except (TypeError, ValueError):
             max_ratio = 100.0
+        try:
+            exec_timeout = int(
+                data.get("exec_timeout") or data.get("execTimeout") or 120
+            )
+        except (TypeError, ValueError):
+            exec_timeout = 120
+        pp_raw = (
+            data.get("pp_order")
+            or data.get("ppOrder")
+            or data.get("postprocessor_order")
+            or data.get("postprocessorOrder")
+        )
         return cls(
             name_template=str(data.get("name_template") or data.get("template") or ""),
             site_templates={str(k): str(v) for k, v in site_templates.items()},
@@ -143,6 +170,13 @@ class udl_config:
                 data.get("extension_rules") or data.get("extensionRules")
             ),
             name_conflict=conflict,
+            outtmpl_na_placeholder=str(
+                data.get("outtmpl_na_placeholder")
+                if "outtmpl_na_placeholder" in data
+                else data.get("outtmplNaPlaceholder")
+                if "outtmplNaPlaceholder" in data
+                else ""
+            ),
             checksum_auto=bool(checksum_auto),
             post_cmd_enabled=bool(data.get("post_cmd_enabled")),
             post_cmd=str(data.get("post_cmd") or ""),
@@ -170,6 +204,17 @@ class udl_config:
                     else data.get("extractPromotePassword")
                 )
             ),
+            pp_order=normalize_pp_order(pp_raw),
+            move_template=str(
+                data.get("move_template") or data.get("moveTemplate") or ""
+            ),
+            exec_enabled=bool(
+                data.get("exec_enabled")
+                if "exec_enabled" in data
+                else data.get("execEnabled")
+            ),
+            exec_cmd=str(data.get("exec_cmd") or data.get("execCmd") or ""),
+            exec_timeout=max(1, exec_timeout),
         )
 
 
@@ -213,6 +258,7 @@ def merge_config_dict(base: udl_config, overlay: dict[str, Any] | None) -> udl_c
     for key in (
         "name_template",
         "name_conflict",
+        "outtmpl_na_placeholder",
         "checksum_auto",
         "post_cmd_enabled",
         "post_cmd",
@@ -224,6 +270,11 @@ def merge_config_dict(base: udl_config, overlay: dict[str, Any] | None) -> udl_c
         "extract_max_uncompressed",
         "extract_max_ratio",
         "extract_promote_password",
+        "pp_order",
+        "move_template",
+        "exec_enabled",
+        "exec_cmd",
+        "exec_timeout",
     ):
         if key in overlay and overlay[key] is not None:
             data[key] = overlay[key]

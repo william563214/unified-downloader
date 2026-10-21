@@ -164,6 +164,33 @@ export type AppSettings = {
   extractMaxUncompressed: number;
   extractMaxRatio: number;
   extractPromotePassword: boolean;
+  // v0.10 ordered postprocessor chain
+  ppOrder: string[];
+  moveTemplate: string;
+  execEnabled: boolean;
+  execCmd: string;
+  execTimeout: number;
+  outtmplNaPlaceholder: string;
+};
+
+export const default_pp_order = [
+  "checksum",
+  "av",
+  "extract",
+  "nfo",
+  "cover",
+  "move",
+  "exec",
+] as const;
+
+export const pp_step_labels: Record<string, string> = {
+  checksum: "校驗",
+  av: "防毒／掃毒",
+  extract: "解壓 ZIP",
+  nfo: "NFO",
+  cover: "封面",
+  move: "搬移／分類",
+  exec: "Exec",
 };
 
 export type AutoExtractOverride = "inherit" | "on" | "off";
@@ -251,6 +278,12 @@ export const default_settings: AppSettings = {
   extractMaxUncompressed: 4 * 1024 * 1024 * 1024,
   extractMaxRatio: 100,
   extractPromotePassword: true,
+  ppOrder: [...default_pp_order],
+  moveTemplate: "",
+  execEnabled: false,
+  execCmd: "",
+  execTimeout: 120,
+  outtmplNaPlaceholder: "",
 };
 
 /** fields never written to exported settings JSON */
@@ -329,6 +362,12 @@ export function importSettingsJson(
   if (!merged.concurrentFragments || merged.concurrentFragments < 1) {
     merged.concurrentFragments = 1;
   }
+  merged.ppOrder = normalizePpOrder(merged.ppOrder);
+  if (merged.moveTemplate == null) merged.moveTemplate = "";
+  if (merged.execEnabled == null) merged.execEnabled = false;
+  if (merged.execCmd == null) merged.execCmd = "";
+  if (!merged.execTimeout) merged.execTimeout = 120;
+  if (merged.outtmplNaPlaceholder == null) merged.outtmplNaPlaceholder = "";
   return merged;
 }
 
@@ -650,5 +689,34 @@ export function settingsToConfigPayload(settings: AppSettings): Record<string, u
     extract_max_uncompressed: settings.extractMaxUncompressed,
     extract_max_ratio: settings.extractMaxRatio,
     extract_promote_password: settings.extractPromotePassword,
+    pp_order: settings.ppOrder?.length ? settings.ppOrder : [...default_pp_order],
+    move_template: settings.moveTemplate,
+    exec_enabled: settings.execEnabled,
+    exec_cmd: settings.execCmd,
+    exec_timeout: settings.execTimeout,
+    outtmpl_na_placeholder: settings.outtmplNaPlaceholder,
   };
+}
+
+export function normalizePpOrder(order: string[] | undefined | null): string[] {
+  const known = new Set<string>(default_pp_order);
+  const seen: string[] = [];
+  for (const raw of order || []) {
+    const key = String(raw || "")
+      .trim()
+      .toLowerCase();
+    const mapped =
+      key === "hook" || key === "scan" || key === "antivirus"
+        ? "av"
+        : key === "zip" || key === "unzip"
+          ? "extract"
+          : key;
+    if (known.has(mapped) && !seen.includes(mapped)) {
+      seen.push(mapped);
+    }
+  }
+  for (const step of default_pp_order) {
+    if (!seen.includes(step)) seen.push(step);
+  }
+  return seen;
 }

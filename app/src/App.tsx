@@ -29,6 +29,7 @@ import {
   type SiteClassifyRule,
   type ZipPasswordEntry,
   defaultExtensionRules,
+  default_pp_order,
   default_settings,
   default_site_flags,
   emptyExtensionRule,
@@ -41,6 +42,8 @@ import {
   history_cover_path,
   importDownloadClassifyJson,
   importSettingsJson,
+  normalizePpOrder,
+  pp_step_labels,
   site_ids,
 } from "./settings";
 import { applyTheme, type ThemeMode } from "./theme";
@@ -359,6 +362,14 @@ export default function App() {
             loaded.extractPromotePassword == null
               ? true
               : Boolean(loaded.extractPromotePassword),
+          ppOrder: normalizePpOrder(
+            loaded.ppOrder?.length ? loaded.ppOrder : [...default_pp_order],
+          ),
+          moveTemplate: loaded.moveTemplate ?? "",
+          execEnabled: Boolean(loaded.execEnabled),
+          execCmd: loaded.execCmd ?? "",
+          execTimeout: loaded.execTimeout || 120,
+          outtmplNaPlaceholder: loaded.outtmplNaPlaceholder ?? "",
         };
         setSettings(merged);
         setSettingsDraft(merged);
@@ -2348,7 +2359,136 @@ export default function App() {
           </div>
 
           <div className="settings-block" id="settings-postprocess">
-            <h3>後處理（NFO／封面）</h3>
+            <h3>後處理串接</h3>
+            <p className="hint">
+              下載完成後依序執行：校驗、防毒、解壓、NFO、封面、搬移、exec。可用上下鍵調整順序（參考 yt-dlp postprocessor）。
+            </p>
+            <div className="pp-order-list" aria-label="後處理順序">
+              {(settingsDraft.ppOrder || [...default_pp_order]).map((step, index) => (
+                <div key={step} className="pp-order-row">
+                  <span className="pp-order-index">{index + 1}</span>
+                  <span className="pp-order-name">
+                    {pp_step_labels[step] || step}
+                    <code className="pp-order-key">{step}</code>
+                  </span>
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={index === 0}
+                    onClick={() => {
+                      setSettingsDraft((s) => {
+                        const order = [...(s.ppOrder || [...default_pp_order])];
+                        const tmp = order[index - 1];
+                        order[index - 1] = order[index];
+                        order[index] = tmp;
+                        return { ...s, ppOrder: order };
+                      });
+                      setSettingsDirty(true);
+                    }}
+                    title="上移"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={
+                      index >= (settingsDraft.ppOrder || default_pp_order).length - 1
+                    }
+                    onClick={() => {
+                      setSettingsDraft((s) => {
+                        const order = [...(s.ppOrder || [...default_pp_order])];
+                        const tmp = order[index + 1];
+                        order[index + 1] = order[index];
+                        order[index] = tmp;
+                        return { ...s, ppOrder: order };
+                      });
+                      setSettingsDirty(true);
+                    }}
+                    title="下移"
+                  >
+                    ↓
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setSettingsDraft((s) => ({
+                  ...s,
+                  ppOrder: [...default_pp_order],
+                }));
+                setSettingsDirty(true);
+              }}
+            >
+              重設預設順序
+            </button>
+            <label className="field">
+              <span>搬移模板（選用；空白則僅套用分類規則）</span>
+              <input
+                value={settingsDraft.moveTemplate || ""}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    moveTemplate: e.target.value,
+                  }));
+                  setSettingsDirty(true);
+                }}
+                placeholder="{site}/{author}/{title}.{ext}"
+                spellCheck={false}
+              />
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={Boolean(settingsDraft.execEnabled)}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    execEnabled: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>啟用 Exec 後處理（與掃毒 hook 分開）</span>
+            </label>
+            {settingsDraft.execEnabled && (
+              <>
+                <label className="field">
+                  <span>Exec 指令（{"{path}"} = 本機檔案）</span>
+                  <input
+                    value={settingsDraft.execCmd || ""}
+                    onChange={(e) => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        execCmd: e.target.value,
+                      }));
+                      setSettingsDirty(true);
+                    }}
+                    placeholder="echo done {path}"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="field compact">
+                  <span>Exec 逾時（秒）</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={settingsDraft.execTimeout || 120}
+                    onChange={(e) => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        execTimeout: Number(e.target.value) || 120,
+                      }));
+                      setSettingsDirty(true);
+                    }}
+                  />
+                </label>
+              </>
+            )}
+            <h3>NFO／封面</h3>
             <p className="hint">
               全域開關開啟後，再依站點勾選是否輸出；封面可選嵌入 mp4／mkv
             </p>
@@ -2765,6 +2905,25 @@ export default function App() {
 
           <div className="settings-block" id="settings-naming">
             <h3>命名模板</h3>
+            <p className="hint">
+              支援 {"{field|預設}"}、{"{a,b|NA}"}、{"{date>%Y-%m-%d}"} 與 yt-dlp 風格{" "}
+              {"%(title|NA)s"}（見 docs/naming-rules.md）
+            </p>
+            <label className="field compact">
+              <span>空白欄位佔位（outtmpl NA）</span>
+              <input
+                value={settingsDraft.outtmplNaPlaceholder || ""}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    outtmplNaPlaceholder: e.target.value,
+                  }));
+                  setSettingsDirty(true);
+                }}
+                placeholder="空白或 NA"
+                spellCheck={false}
+              />
+            </label>
             <p className="hint">
               使用 metadata 欄位，例如{" "}
               {"{site}/{author}/{date:%Y-%m}/{title} [{id}].{ext}"}；空白＝沿用站點預設檔名

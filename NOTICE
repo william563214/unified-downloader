@@ -183,10 +183,21 @@ signed/unsigned app bundle by default; the optional download is user-initiated.
   Explicitly **not** ported: DRM／encrypted HLS key fetch, SAMPLE-AES,
   Widevine／PlayReady bypass, or any encrypted-stream decryption.
 
+### yt-dlp postprocessor / OUTPUT TEMPLATE — Unlicense
+- Upstream: https://github.com/yt-dlp/yt-dlp
+- License: **Unlicense** (public domain dedication)
+- Referenced commit: `8973412` (`yt_dlp/postprocessor`, OUTPUT TEMPLATE docs)
+- Notes: udl’s ordered postprocessor chain (`udl.postprocess.chain`) and
+  naming template defaults / alternatives / `|default` / `%(field)s` syntax
+  are **inspired by** yt-dlp’s postprocessor pipeline and output template
+  field grammar. No yt-dlp source is copied or vendored into this tree;
+  only concepts and documented field forms are reimplemented under GPL-3.0-or-later.
+
 ## Intentionally not ported
 - gallery-dl **library/import/vendored source** (GPL-2.0-only) — incompatible
   with linking into GPL-3.0-or-later udl; subprocess aggregation only (above).
 - MegaBasterd — GUI-only Java app; MEGA protocol is built-in; megatools/MEGAcmd remain optional fallback.
-- yt-dlp sources / extractors — only lazy-registry and networking *architecture*
-  ideas are mirrored under Unlicense terms; do not vendor yt-dlp modules.
+- yt-dlp sources / extractors — only lazy-registry, networking, fragment, and
+  PP/outtmpl *architecture* ideas are mirrored under Unlicense terms; do not
+  vendor yt-dlp modules.
 - yt-dlp DRM／encrypted-stream handling — udl refuses encrypted manifests.
