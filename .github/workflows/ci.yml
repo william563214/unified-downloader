@@ -17,6 +17,8 @@ jobs:
         working-directory: core
         run: |
           uv sync --extra dev
+          uv run python ../scripts/make_lazy_extractors.py
+          git diff --exit-code -- udl/extractors/lazy_extractors.py
           uv run ruff check udl
           uv run udl sites
           uv run udl gallerydl status --json >/dev/null || true

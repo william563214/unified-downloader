@@ -5,6 +5,7 @@
 ## 設計原則
 
 - 仿 gallery-dl「每站一個 extractor + URL pattern 集中註冊」的**概念**，**禁止**複製或 `import gallery-dl`（GPL-2.0-only，與本專案 GPL-3.0-or-later 不相容）。
+- URL 比對採 yt-dlp 風格：每站一類別、`_VALID_URL`（regex 或序列）；建置時由 `scripts/make_lazy_extractors.py` 產生 `lazy_extractors.py` stub，sidecar 啟動**不** import 全部站點模組（見 NOTICE：yt-dlp Unlicense commit `8973412`）。
 - 共用下載邏輯放在 `udl.download.http`（續傳、重試、並行、取消、限速、可選 aria2、JSON-lines 進度）。
 - 代理／UA 經 `udl.network.apply_to_session`；機密經 `udl.secrets`（見 `docs/networking.md`）。
 - 影音合併等後處理放在 `udl.postprocess`（目前 `ffmpeg.py`）。
@@ -15,11 +16,12 @@
 ## 必做步驟
 
 1. 在 `core/udl/extractors/<site>.py`（或套件目錄）實作：
-   - `matches(url: str) -> bool`
-   - `class <site>_extractor(extractor)`，設定 `site`、`label`，實作 `resolve()`
-2. 在 `core/udl/router.py` 的 `registry` 把 `status` 從 `"stub"` 改成 `"implemented"` 或 `"external"`（或新增 entry）。
-3. 更新根目錄 `NOTICE`：上游 repo URL、授權、**移植當下的 commit SHA**。
-4. 更新 `ROADMAP.md` 勾選項目。
+   - `class <site>_extractor(extractor)`，設定 `site`、`label`、`status`、`kind_hint`、`_VALID_URL`，實作 `resolve()`
+   - 可選 `matches(url) -> bool`（通常委派 `Cls.suitable(url)`）；無法用 regex 比對時覆寫 `suitable()`（例如 gallery-dl 子行程 `-E`）
+2. 把類別加入 `core/udl/extractors/_extractors.py` 的 `extractors` 清單（順序＝優先權；`direct` 必須最後）。
+3. 重新產生 lazy stub：`uv run --directory core python scripts/make_lazy_extractors.py`（或同等指令）。
+4. 更新根目錄 `NOTICE`：上游 repo URL、授權、**移植當下的 commit SHA**。
+5. 更新 `ROADMAP.md` 勾選項目。
 
 ## 介面契約
 
@@ -29,11 +31,20 @@ from udl.extractors.base import extractor, extract_result, extracted_file
 class my_extractor(extractor):
     site = "mysite"       # registry / JSON 用的穩定 id
     label = "My Site"     # UI 徽章
+    status = "implemented"
+    kind_hint = "file"
+    _VALID_URL = r"(?i)https?://(?:www\.)?example\.com/.*"
 
     def resolve(self, url: str, *, password: str | None = None) -> extract_result:
         # 回傳 title + files（含直接下載 URL、檔名、相對目錄、選用 size/headers）
         ...
 ```
+
+### Lazy 註冊表
+
+- 執行期預設載入 `udl.extractors.lazy_extractors`（僅 stub + `_VALID_URL`）。
+- 實例化匹配到的類別時才 `import` 對應模組。
+- 產生／除錯可設 `UDL_NO_LAZY_EXTRACTORS=1` 強制 eager 載入 `_extractors.py`。
 
 預設的 `extractor.download()` 已足夠：把 `extracted_file` 轉成 `download_item` 並呼叫共用引擎。若站點需要特殊傳輸（例如 Bilibili DASH + FFmpeg），可覆寫 `download()`，但仍須透過 `emitter` 發出相同事件；合併階段請發 `merging`。
 

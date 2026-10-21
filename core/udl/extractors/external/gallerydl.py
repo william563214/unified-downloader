@@ -724,6 +724,14 @@ re_progress = re.compile(
 class gallerydl_extractor(external_extractor):
     site = "gallerydl"
     label = "gallery-dl"
+    status = "external"
+    kind_hint = "gallery|file"
+    # matching needs gallery-dl `-E` subprocess; override suitable()
+    _VALID_URL = False
+
+    @classmethod
+    def suitable(cls, url: str) -> bool:
+        return matches(url)
 
     def __init__(self, *, tool: str | Path | None = None) -> None:
         self.tool_override = tool

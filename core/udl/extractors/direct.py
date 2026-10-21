@@ -38,8 +38,7 @@ re_filename = re.compile(
 
 def matches(url: str) -> bool:
     """match any http/https URL (router registers this last)."""
-    parsed = urlparse(url.strip())
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    return direct_extractor.suitable(url)
 
 
 def filename_from_content_disposition(header: str | None) -> str | None:
@@ -196,6 +195,10 @@ def _item_id_for(url: str) -> str:
 class direct_extractor(extractor):
     site = "direct"
     label = "Direct"
+    status = "implemented"
+    kind_hint = "file"
+    # lowest priority catch-all; router registers this last
+    _VALID_URL = r"(?i)https?://[^/\s]+(?:[/\?#].*)?$"
 
     def __init__(self) -> None:
         self._session = Session()

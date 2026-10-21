@@ -168,6 +168,12 @@ class probe_info:
 class bilibili_extractor(extractor):
     site = "bilibili"
     label = "Bilibili"
+    status = "implemented"
+    kind_hint = "video|bangumi|cheese|audio|space|favlist|popular|collection"
+    _VALID_URL = (
+        r"(?i)https?://(?:[^/]+\.)?(?:bilibili\.com|b23\.tv|bili2233\.cn|biliapi\.net)"
+        r"(?:[/?#]|$|/.*)"
+    )
 
     def __init__(
         self,
@@ -2749,7 +2755,10 @@ def _error_code(exc: BaseException) -> str:
 
 
 def matches(url: str) -> bool:
-    host = urlparse(url if "://" in url else f"https://{url}").netloc.lower()
+    text = url if "://" in url else f"https://{url}"
+    if bilibili_extractor.suitable(text):
+        return True
+    host = urlparse(text).netloc.lower()
     if (
         "bilibili.com" in host
         or "b23.tv" in host

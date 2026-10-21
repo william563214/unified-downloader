@@ -1,26 +1,41 @@
-"""URL router / site registry (gallery-dl-like design concept only).
+"""URL router / site registry with lazy extractor loading.
 
-Do NOT import or copy gallery-dl (GPL-2.0-only). Patterns and extractors
-live here so the CLI and GUI share one source of truth.
+Matching uses per-class `_VALID_URL` (yt-dlp-inspired). By default the
+registry is built from generated `lazy_extractors` stubs so importing
+`udl.router` does not load every site module. Instantiating a matched
+extractor imports only that module.
+
+Set `UDL_NO_LAZY_EXTRACTORS=1` to force eager imports (used by
+`scripts/make_lazy_extractors.py`).
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from udl.extractors import bilibili as bilibili_mod
-from udl.extractors import bunkr as bunkr_mod
-from udl.extractors import direct as direct_mod
-from udl.extractors import gofile as gofile_mod
-from udl.extractors import iwara as iwara_mod
-from udl.extractors import mega as mega_mod
 from udl.extractors.base import extractor
-from udl.extractors.external import gallerydl as gallerydl_mod
 
 Matcher = Callable[[str], bool]
 Factory = Callable[[], extractor]
+
+
+def _load_extractor_classes() -> list[type[extractor]]:
+    no_lazy = os.environ.get("UDL_NO_LAZY_EXTRACTORS", "").strip().lower()
+    if no_lazy in {"1", "true", "yes", "on"}:
+        from udl.extractors._extractors import extractors as eager
+
+        return list(eager)
+    try:
+        from udl.extractors.lazy_extractors import extractors as lazy
+
+        return list(lazy)
+    except ImportError:
+        from udl.extractors._extractors import extractors as eager
+
+        return list(eager)
 
 
 @dataclass(frozen=True)
@@ -31,68 +46,24 @@ class site_entry:
     factory: Factory
     status: str  # implemented | stub | external
     kind_hint: str
+    cls: type[extractor] | None = None
+
+    @classmethod
+    def from_extractor(cls, ie: type[extractor]) -> site_entry:
+        return cls(
+            site=ie.site,
+            label=ie.label,
+            match=ie.suitable,
+            factory=ie,
+            status=ie.status,
+            kind_hint=ie.kind_hint,
+            cls=ie,
+        )
 
 
-# registry order matters — first match wins
+# registry order matters — first match wins (direct last)
 registry: list[site_entry] = [
-    site_entry(
-        site="gofile",
-        label="Gofile",
-        match=gofile_mod.matches,
-        factory=gofile_mod.gofile_extractor,
-        status="implemented",
-        kind_hint="folder|file",
-    ),
-    site_entry(
-        site="bunkr",
-        label="Bunkr",
-        match=bunkr_mod.matches,
-        factory=bunkr_mod.bunkr_extractor,
-        status="implemented",
-        kind_hint="album|file",
-    ),
-    site_entry(
-        site="iwara",
-        label="Iwara",
-        match=iwara_mod.matches,
-        factory=iwara_mod.iwara_extractor,
-        status="implemented",
-        kind_hint="video|playlist|profile",
-    ),
-    site_entry(
-        site="bilibili",
-        label="Bilibili",
-        match=bilibili_mod.matches,
-        factory=bilibili_mod.bilibili_extractor,
-        status="implemented",
-        kind_hint="video|bangumi|cheese|audio|space|favlist|popular|collection",
-    ),
-    site_entry(
-        site="mega",
-        label="MEGA",
-        match=mega_mod.matches,
-        factory=mega_mod.mega_extractor,
-        status="implemented",
-        kind_hint="file|folder",
-    ),
-    # above direct: URLs recognized by external gallery-dl (GPL-2.0-only subprocess)
-    site_entry(
-        site="gallerydl",
-        label="gallery-dl",
-        match=gallerydl_mod.matches,
-        factory=gallerydl_mod.gallerydl_extractor,
-        status="external",
-        kind_hint="gallery|file",
-    ),
-    # lowest priority: any HTTP/HTTPS URL not claimed above
-    site_entry(
-        site="direct",
-        label="Direct",
-        match=direct_mod.matches,
-        factory=direct_mod.direct_extractor,
-        status="implemented",
-        kind_hint="file",
-    ),
+    site_entry.from_extractor(ie) for ie in _load_extractor_classes()
 ]
 
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Extractor 註冊表＋lazy 載入：每站 `_VALID_URL`；`scripts/make_lazy_extractors.py` 產生 stub；sidecar 啟動不 import 全部模組（closes #23；參考 yt-dlp Unlicense commit 8973412）
 - ZIP 有序密碼表：依序試密（僅 udl.secrets）；成功可置頂；per-job list／single／off
 - 修復中心一次性密碼重試並可選加入清單；歷史僅記 password N of M（closes #32）
 - 下載後可選自動解壓 ZIP（全域預設關；per-job inherit／on／off）

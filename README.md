@@ -8,8 +8,8 @@
 ```
 unified-downloader/
 ├─ core/udl/              # Python 核心套件
-│  ├─ router.py           # URL → extractor 註冊表
-│  ├─ extractors/         # gofile、bunkr、iwara、bilibili/、external/{mega,gallerydl}
+│  ├─ router.py           # URL → extractor 註冊表（lazy stubs）
+│  ├─ extractors/         # 每站 `_VALID_URL`；lazy_extractors 建置產生
 │  ├─ download/http.py    # 共用 HTTP：續傳、重試、並行、取消、限速、aria2
 │  ├─ network.py          # 代理／UA／限速設定
 │  ├─ secrets.py          # OS keychain（keyring）
@@ -21,7 +21,7 @@ unified-downloader/
 ├─ app/                   # Tauri v2 + React/TS GUI（sidecar 叫 udl）
 ├─ docs/                  # 事件、metadata、networking、scheduler、page-download、checksum-hook…
 ├─ packaging/             # PyInstaller spec
-└─ scripts/               # sidecar 建置腳本
+└─ scripts/               # sidecar 建置；make_lazy_extractors.py
 ```
 
 GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-lines（見 `docs/events.md`）。  
