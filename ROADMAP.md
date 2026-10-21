@@ -256,7 +256,7 @@
 ### v0.10 — 跨站基礎設施（進行中）
 
 - [x] Extractor 註冊表＋lazy 載入（`_VALID_URL`／`make_lazy_extractors`；參考 yt-dlp Unlicense commit `8973412`；[#23](https://github.com/william563214/unified-downloader/issues/23)）
-- [ ] RequestHandler 網路抽象（[#24](https://github.com/william563214/unified-downloader/issues/24)）
+- [x] RequestHandler 網路抽象（[#24](https://github.com/william563214/unified-downloader/issues/24)）：`udl.network` 套件化（urllib／requests／可選 curl_cffi／websockets）；proxy、UA、限速集中；curl_cffi 指紋模擬選用預設關（同 Cloudflare）；見 NOTICE／`docs/networking.md`
 - [ ] 共用片段下載基底 HLS／DASH／HTTP（[#25](https://github.com/william563214/unified-downloader/issues/25)）
 - [ ] Postprocessor 串接＋輸出模板（[#26](https://github.com/william563214/unified-downloader/issues/26)）
 - [ ] 依檔案類型＋來源網址自動分資料夾（[#27](https://github.com/william563214/unified-downloader/issues/27)）

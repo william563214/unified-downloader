@@ -107,6 +107,13 @@ struct AppSettings {
     proxy_username: String,
     #[serde(default)]
     user_agent: String,
+    // curl_cffi browser impersonation: opt-in / off by default
+    #[serde(default)]
+    curl_cffi_impersonate: bool,
+    #[serde(default = "default_impersonate_target")]
+    curl_cffi_impersonate_target: String,
+    #[serde(default = "default_request_handler")]
+    request_handler: String,
     #[serde(default)]
     aria2_enabled: bool,
     #[serde(default = "default_aria2_rpc_url")]
@@ -222,6 +229,14 @@ fn default_proxy_mode() -> String {
     "none".into()
 }
 
+fn default_impersonate_target() -> String {
+    "chrome".into()
+}
+
+fn default_request_handler() -> String {
+    "auto".into()
+}
+
 fn default_aria2_rpc_url() -> String {
     "http://127.0.0.1:6800/jsonrpc".into()
 }
@@ -315,6 +330,9 @@ impl Default for AppSettings {
             proxy_url: String::new(),
             proxy_username: String::new(),
             user_agent: String::new(),
+            curl_cffi_impersonate: false,
+            curl_cffi_impersonate_target: default_impersonate_target(),
+            request_handler: default_request_handler(),
             aria2_enabled: false,
             aria2_rpc_url: default_aria2_rpc_url(),
             aria2_rpc_secret: String::new(),
@@ -433,6 +451,22 @@ fn append_proxy_ua_args(args: &mut Vec<String>, settings: &AppSettings) {
     if !ua.is_empty() {
         args.push("--user-agent".into());
         args.push(ua.to_string());
+    }
+    let handler = settings.request_handler.trim().to_lowercase();
+    let handler = match handler.as_str() {
+        "requests" | "urllib" | "curl_cffi" => handler,
+        _ => "auto".into(),
+    };
+    if handler != "auto" {
+        args.push("--request-handler".into());
+        args.push(handler);
+    }
+    if settings.curl_cffi_impersonate {
+        args.push("--impersonate".into());
+        let target = settings.curl_cffi_impersonate_target.trim();
+        if !target.is_empty() {
+            args.push(target.to_string());
+        }
     }
 }
 

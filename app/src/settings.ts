@@ -81,6 +81,10 @@ export type AppSettings = {
   proxyUrl: string;
   proxyUsername: string;
   userAgent: string;
+  // curl_cffi browser impersonation: opt-in / off by default
+  curlCffiImpersonate: boolean;
+  curlCffiImpersonateTarget: string;
+  requestHandler: "auto" | "requests" | "urllib" | "curl_cffi";
   aria2Enabled: boolean;
   aria2RpcUrl: string;
   aria2RpcSecret: string;
@@ -168,6 +172,9 @@ export const default_settings: AppSettings = {
   proxyUrl: "",
   proxyUsername: "",
   userAgent: "",
+  curlCffiImpersonate: false,
+  curlCffiImpersonateTarget: "chrome",
+  requestHandler: "auto",
   aria2Enabled: false,
   aria2RpcUrl: "http://127.0.0.1:6800/jsonrpc",
   aria2RpcSecret: "",
@@ -255,6 +262,15 @@ export function importSettingsJson(
   }
   if (!merged.extractMaxRatio) merged.extractMaxRatio = 100;
   if (merged.extractPromotePassword == null) merged.extractPromotePassword = true;
+  if (merged.curlCffiImpersonate == null) merged.curlCffiImpersonate = false;
+  if (!merged.curlCffiImpersonateTarget) merged.curlCffiImpersonateTarget = "chrome";
+  if (
+    merged.requestHandler !== "requests" &&
+    merged.requestHandler !== "urllib" &&
+    merged.requestHandler !== "curl_cffi"
+  ) {
+    merged.requestHandler = "auto";
+  }
   return merged;
 }
 
