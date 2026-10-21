@@ -130,6 +130,9 @@ export type AppSettings = {
   connections: number;
   segmentedEnabled: boolean;
   segmentedForSites: boolean;
+  // fragment backend (v0.10): native | aria2c | ffmpeg
+  externalDownloader: "native" | "aria2c" | "ffmpeg";
+  concurrentFragments: number;
   // bilibili CDN / Host (v0.7-B)
   cdnHosts: string;
   preferCdn: boolean;
@@ -221,6 +224,8 @@ export const default_settings: AppSettings = {
   connections: 8,
   segmentedEnabled: true,
   segmentedForSites: false,
+  externalDownloader: "native",
+  concurrentFragments: 1,
   cdnHosts: "",
   preferCdn: false,
   customHost: "",
@@ -315,6 +320,15 @@ export function importSettingsJson(
   }
   if (!Array.isArray(merged.siteRules)) merged.siteRules = [];
   if (!Array.isArray(merged.extensionRules)) merged.extensionRules = [];
+  if (
+    merged.externalDownloader !== "aria2c" &&
+    merged.externalDownloader !== "ffmpeg"
+  ) {
+    merged.externalDownloader = "native";
+  }
+  if (!merged.concurrentFragments || merged.concurrentFragments < 1) {
+    merged.concurrentFragments = 1;
+  }
   return merged;
 }
 

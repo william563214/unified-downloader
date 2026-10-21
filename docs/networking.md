@@ -21,6 +21,8 @@ v0.10 起 `udl.network` 採 yt-dlp 風格的 **RequestHandler** 抽象（Unlicen
 | 多連線分段 | 開啟 | IDM 風格動態分段；無 Range 時單連線 |
 | 每檔連線數 | 8 | 上限 32；並受 per-host 上限約束 |
 | 站點也用分段 | 關閉 | 純 HTTP 檔案的站點 extractor；Gofile／Bunkr／Iwara／MEGA **永遠排除** |
+| 片段後端 | `native` | HLS／DASH／HTTP 分段列表：`native`／`aria2c`／`ffmpeg`（見 `docs/fragment-download.md`） |
+| 並行片段數 | 1 | native 後端同時下載的片段數（上限 32） |
 | Bilibili CDN 主機 | 空 | 逗號分隔偏好 CDN hostname；改寫 playurl netloc |
 | 優先偏好 CDN | 關閉 | 開啟後置換節點排在原始 URL 前 |
 | 自訂 Host | 空 | 媒體下載可選 Host 標頭（通常留空） |
@@ -104,6 +106,15 @@ uv run udl get URL -o ./out --segmented-for-sites
 ```
 
 `progress` 事件可帶 `segments`（各區段起迄／已下載）與 `connections`；GUI 任務列會顯示分段進度條。詳見 `docs/events.md`。
+
+## 片段下載（v0.10）
+
+HLS／DASH／HTTP 分段列表走 `udl.download.fragment`；外部 aria2c／ffmpeg 與 native 同一介面。整檔 aria2 **RPC** 與 aria2c **子行程**不同。詳見 `docs/fragment-download.md`。
+
+```bash
+uv run udl get URL -o ./out --external-downloader aria2c
+uv run udl get URL -o ./out --concurrent-fragments 4
+```
 
 ## 通用直連（v0.9-A）
 

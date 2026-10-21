@@ -122,6 +122,8 @@ class emitter:
         bps: float | None = None,
         segments: list[dict[str, Any]] | None = None,
         connections: int | None = None,
+        fragment_index: int | None = None,
+        fragment_count: int | None = None,
     ) -> None:
         payload: dict[str, Any] = {"job": job, "file": file, "bytes": bytes}
         if total is not None:
@@ -132,6 +134,10 @@ class emitter:
             payload["segments"] = segments
         if connections is not None:
             payload["connections"] = connections
+        if fragment_index is not None:
+            payload["fragment_index"] = fragment_index
+        if fragment_count is not None:
+            payload["fragment_count"] = fragment_count
         self.emit(ev_progress, **payload)
 
     def merging(
@@ -458,6 +464,8 @@ def dump_schema() -> dict[str, Any]:
                 "bps": "float?",
                 "segments": "list? (id/start/end/current/downloaded/total/done)",
                 "connections": "int?",
+                "fragment_index": "int? (HLS/DASH fragment progress)",
+                "fragment_count": "int?",
             },
             ev_merging: {
                 "job": "str",

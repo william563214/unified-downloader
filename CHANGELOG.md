@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- v0.10 共用片段下載基底（HLS／DASH／HTTP 分段）：續傳／重試／合併；接 v0.9-A 分段與 aria2 RPC
+- 外部 aria2c／ffmpeg 子行程同一介面；加密串流清楚拒絕（closes #25）
+- 文件：`docs/fragment-download.md`；NOTICE 記載 yt-dlp Unlicense commit `8973412`
 - v0.10 自動分資料夾：檔案類型（副檔名／MIME／媒體類型）＋來源網址（網域／路徑）規則；priority 排序
 - 規則 JSON 對齊 download_classify（`rules`／`site_rules`／`extension_rules`）；GUI 編輯／預覽／匯入匯出；下載路徑與 ZIP 解壓後套用（closes #27）
 - v0.10：`udl.network` 抽象成 RequestHandler（urllib／requests／可選 curl_cffi／websockets）

@@ -58,6 +58,11 @@ class network_settings:
     # when True also use segmented for site extractors that yield plain HTTP
     # (gofile bunkr iwara mega always excluded)
     segmented_for_sites: bool = False
+    # fragment backend for HLS/DASH/HTTP segment lists: native | aria2c | ffmpeg
+    # (aria2 JSON-RPC above remains the optional whole-file backend)
+    external_downloader: str = "native"
+    # concurrent fragment downloads for native backend
+    concurrent_fragments: int = 1
     # bilibili CDN / Host (shared networking settings; used by bili stream download)
     # preferred CDN hostnames e.g. upos-sz-mirrorcos.bilivideo.com
     cdn_hosts: list[str] = field(default_factory=list)
@@ -297,6 +302,17 @@ def settings_from_cli_args(args: Any) -> network_settings:
     if getattr(args, "segmented", None) is False:
         segmented_enabled = False
     segmented_for_sites = bool(getattr(args, "segmented_for_sites", False))
+    external_downloader = (
+        getattr(args, "external_downloader", None) or "native"
+    )
+    external_downloader = str(external_downloader).strip().lower() or "native"
+    if external_downloader not in {"native", "aria2c", "ffmpeg"}:
+        external_downloader = "native"
+    concurrent_fragments = getattr(args, "concurrent_fragments", None)
+    if concurrent_fragments is None:
+        concurrent_fragments = 1
+    else:
+        concurrent_fragments = max(1, min(int(concurrent_fragments), 32))
     cdn_raw = getattr(args, "cdn_hosts", None) or getattr(args, "bili_cdn", None)
     cdn_hosts: list[str] = []
     if cdn_raw:
@@ -331,6 +347,8 @@ def settings_from_cli_args(args: Any) -> network_settings:
         connections=connections,
         per_host_connections=per_host,
         segmented_for_sites=segmented_for_sites,
+        external_downloader=external_downloader,
+        concurrent_fragments=concurrent_fragments,
         cdn_hosts=cdn_hosts,
         prefer_cdn_replace=prefer_cdn or bool(cdn_hosts),
         custom_host=str(custom_host).strip() if custom_host else None,

@@ -63,6 +63,9 @@ class download_options:
     segmented: bool | None = None
     connections: int | None = None
     per_host_connections: int | None = None
+    # fragment / external backend (native | aria2c | ffmpeg); None = network
+    external_downloader: str | None = None
+    concurrent_fragments: int | None = None
     # filled by engine
     _job_limiter: rate_limiter | None = field(default=None, repr=False, compare=False)
 
@@ -118,6 +121,8 @@ def options_from_network(
         segmented=segmented,
         connections=conns,
         per_host_connections=net.per_host_connections,
+        external_downloader=net.external_downloader,
+        concurrent_fragments=net.concurrent_fragments,
         _job_limiter=make_job_limiter(job_limit),
     )
 

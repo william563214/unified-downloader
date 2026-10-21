@@ -3617,6 +3617,50 @@ export default function App() {
               />
               <span>站點 extractor 的純 HTTP 檔案也使用分段（排除 Gofile／Bunkr／Iwara／MEGA）</span>
             </label>
+            <h4>片段下載後端（HLS／DASH）</h4>
+            <p className="hint">
+              共用片段基底：續傳／重試／合併。native 走內建 HTTP（可接多連線分段與 aria2
+              RPC）；aria2c／ffmpeg 為外部子行程，介面相同。不做 DRM 或加密串流繞過。
+            </p>
+            <div className="settings-grid">
+              <label className="field compact">
+                <span>外部下載器</span>
+                <select
+                  value={settingsDraft.externalDownloader}
+                  onChange={(e) => {
+                    const value = e.target.value as
+                      | "native"
+                      | "aria2c"
+                      | "ffmpeg";
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      externalDownloader: value,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                >
+                  <option value="native">native（內建）</option>
+                  <option value="aria2c">aria2c（子行程）</option>
+                  <option value="ffmpeg">ffmpeg（子行程）</option>
+                </select>
+              </label>
+              <label className="field compact">
+                <span>並行片段數</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={32}
+                  value={settingsDraft.concurrentFragments}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      concurrentFragments: Number(e.target.value) || 1,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                />
+              </label>
+            </div>
             <h4>Bilibili CDN／Host</h4>
             <p className="hint">
               偏好 CDN 節點會改寫 playurl 主機名並依健康度排序；自訂 Host 僅加在媒體下載請求。不繞過區域鎖。

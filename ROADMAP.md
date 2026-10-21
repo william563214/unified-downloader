@@ -257,7 +257,13 @@
 
 - [x] Extractor 註冊表＋lazy 載入（`_VALID_URL`／`make_lazy_extractors`；參考 yt-dlp Unlicense commit `8973412`；[#23](https://github.com/william563214/unified-downloader/issues/23)）
 - [x] RequestHandler 網路抽象（[#24](https://github.com/william563214/unified-downloader/issues/24)）：`udl.network` 套件化（urllib／requests／可選 curl_cffi／websockets）；proxy、UA、限速集中；curl_cffi 指紋模擬選用預設關（同 Cloudflare）；見 NOTICE／`docs/networking.md`
-- [ ] 共用片段下載基底 HLS／DASH／HTTP（[#25](https://github.com/william563214/unified-downloader/issues/25)）
+- [x] 共用片段下載基底 HLS／DASH／HTTP（[#25](https://github.com/william563214/unified-downloader/issues/25)）
+  - [x] `udl.download.fragment`：續傳 `.udl.frag.json`、重試、有序合併
+  - [x] 整合 v0.9-A `segmented` 與可選 aria2 JSON-RPC
+  - [x] `udl.download.external`：aria2c／ffmpeg 子行程同一介面；缺二進位回退 native
+  - [x] 未加密 m3u8 media playlist 解析；加密／DRM 標記清楚拒絕
+  - [x] CLI／GUI：`--external-downloader`、`--concurrent-fragments`；`docs/fragment-download.md`
+  - [ ] 站點 extractor 全面改接片段基底（後續；Bilibili DASH 仍用既有分軌＋FFmpeg 合併）
 - [ ] Postprocessor 串接＋輸出模板（[#26](https://github.com/william563214/unified-downloader/issues/26)）
 - [x] 依檔案類型＋來源網址自動分資料夾（[#27](https://github.com/william563214/unified-downloader/issues/27)）
   - 擴充規則引擎：副檔名／MIME／媒體類型＋來源網址（網域／路徑）；priority 排序

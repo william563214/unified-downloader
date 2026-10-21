@@ -116,6 +116,12 @@ Bilibili 清單翻頁／巢狀展開進度（在最終 `probe` 之前可能多�
 }
 ```
 
+HLS／DASH 片段下載（v0.10）可附帶：
+
+```json
+{"ev":"progress","job":"<job-id>","file":"<file-id>","bytes":4096,"bps":1048576.0,"fragment_index":3,"fragment_count":120}
+```
+
 ### `merging`
 
 後處理合併階段（例如 FFmpeg 合併 DASH 影＋音）。GUI 可顯示「合併中」。

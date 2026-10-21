@@ -173,6 +173,21 @@ def _add_network_args(parser: argparse.ArgumentParser, *, download: bool = False
                 "HTTP file URLs (gofile bunkr iwara mega excluded)"
             ),
         )
+        parser.add_argument(
+            "--external-downloader",
+            choices=["native", "aria2c", "ffmpeg"],
+            default=None,
+            help=(
+                "fragment backend for HLS/DASH/HTTP segment lists "
+                "(default native; aria2c/ffmpeg are subprocesses)"
+            ),
+        )
+        parser.add_argument(
+            "--concurrent-fragments",
+            type=int,
+            default=None,
+            help="concurrent native fragment downloads (default 1, max 32)",
+        )
     parser.add_argument(
         "--cdn-hosts",
         default=None,
