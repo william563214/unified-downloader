@@ -131,6 +131,11 @@ struct AppSettings {
     segmented_enabled: bool,
     #[serde(default)]
     segmented_for_sites: bool,
+    // fragment backend (v0.10): native | aria2c | ffmpeg
+    #[serde(default = "default_external_downloader")]
+    external_downloader: String,
+    #[serde(default = "default_concurrent_fragments")]
+    concurrent_fragments: u32,
     // bilibili CDN / Host (v0.7-B networking)
     #[serde(default)]
     cdn_hosts: String,
@@ -241,6 +246,14 @@ fn default_request_handler() -> String {
     "auto".into()
 }
 
+fn default_external_downloader() -> String {
+    "native".into()
+}
+
+fn default_concurrent_fragments() -> u32 {
+    1
+}
+
 fn default_aria2_rpc_url() -> String {
     "http://127.0.0.1:6800/jsonrpc".into()
 }
@@ -345,6 +358,8 @@ impl Default for AppSettings {
             connections: default_connections(),
             segmented_enabled: true,
             segmented_for_sites: false,
+            external_downloader: default_external_downloader(),
+            concurrent_fragments: default_concurrent_fragments(),
             cdn_hosts: String::new(),
             prefer_cdn: false,
             custom_host: String::new(),
@@ -544,6 +559,14 @@ fn append_network_args(
     if settings.segmented_for_sites {
         args.push("--segmented-for-sites".into());
     }
+    let ext = settings.external_downloader.trim().to_ascii_lowercase();
+    if matches!(ext.as_str(), "aria2c" | "ffmpeg" | "native") {
+        args.push("--external-downloader".into());
+        args.push(ext);
+    }
+    let frags = settings.concurrent_fragments.max(1).min(32);
+    args.push("--concurrent-fragments".into());
+    args.push(frags.to_string());
     let cdn = settings.cdn_hosts.trim();
     if !cdn.is_empty() {
         args.push("--cdn-hosts".into());
@@ -753,6 +776,17 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, S
     };
     if settings.aria2_rpc_url.trim().is_empty() {
         settings.aria2_rpc_url = default_aria2_rpc_url();
+    }
+    let ext = settings.external_downloader.trim().to_ascii_lowercase();
+    settings.external_downloader = match ext.as_str() {
+        "aria2c" | "ffmpeg" | "native" => ext,
+        _ => default_external_downloader(),
+    };
+    if settings.concurrent_fragments == 0 {
+        settings.concurrent_fragments = 1;
+    }
+    if settings.concurrent_fragments > 32 {
+        settings.concurrent_fragments = 32;
     }
     let path = settings_path(&app)?;
     if let Some(parent) = path.parent() {

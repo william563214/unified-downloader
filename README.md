@@ -10,7 +10,7 @@ unified-downloader/
 ├─ core/udl/              # Python 核心套件
 │  ├─ router.py           # URL → extractor 註冊表（lazy stubs）
 │  ├─ extractors/         # 每站 `_VALID_URL`；lazy_extractors 建置產生
-│  ├─ download/http.py    # 共用 HTTP：續傳、重試、並行、取消、限速、aria2
+│  ├─ download/           # 共用 HTTP／分段／片段基底／aria2／external(aria2c|ffmpeg)
 │  ├─ network.py          # 代理／UA／限速設定
 │  ├─ secrets.py          # OS keychain（keyring）
 │  ├─ postprocess/        # FFmpeg 合併／佈建；NFO／封面（v0.5-D）

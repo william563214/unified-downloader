@@ -169,9 +169,24 @@ signed/unsigned app bundle by default; the optional download is user-initiated.
   curl_cffi browser impersonation is **opt-in / off by default** (same policy
   as Cloudflare challenge bypass). No paywall, VIP, ToS, or DRM bypass.
 
+## Fragment / external downloaders (adapted patterns)
+
+### yt-dlp fragment + external downloader — `core/udl/download/fragment.py`, `external.py`
+- Upstream: https://github.com/yt-dlp/yt-dlp
+- License: **Unlicense** (public domain dedication; see upstream `LICENSE`)
+- Referenced commit: `897341241f2b` (`8973412`)
+- Notes: Resume / retry / append-merge bookkeeping and the external
+  aria2c／ffmpeg subprocess call surface are adapted from
+  `yt_dlp/downloader/fragment.py` and `external.py`. Rewritten for udl’s
+  events, network settings, and shared HTTP engine (including v0.9-A
+  multi-connection segmented downloads and optional aria2 JSON-RPC).
+  Explicitly **not** ported: DRM／encrypted HLS key fetch, SAMPLE-AES,
+  Widevine／PlayReady bypass, or any encrypted-stream decryption.
+
 ## Intentionally not ported
 - gallery-dl **library/import/vendored source** (GPL-2.0-only) — incompatible
   with linking into GPL-3.0-or-later udl; subprocess aggregation only (above).
 - MegaBasterd — GUI-only Java app; MEGA protocol is built-in; megatools/MEGAcmd remain optional fallback.
 - yt-dlp sources / extractors — only lazy-registry and networking *architecture*
   ideas are mirrored under Unlicense terms; do not vendor yt-dlp modules.
+- yt-dlp DRM／encrypted-stream handling — udl refuses encrypted manifests.
