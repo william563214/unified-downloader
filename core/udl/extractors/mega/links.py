@@ -46,6 +46,10 @@ re_cloud_node = re.compile(
 
 
 def matches(url: str) -> bool:
+    from udl.extractors.mega.extractor import mega_extractor
+
+    if mega_extractor.suitable(url):
+        return True
     try:
         raw = url.strip()
         if re_cloud_node.match(raw):

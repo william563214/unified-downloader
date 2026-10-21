@@ -253,6 +253,14 @@
 - [x] 分類規則 hook 預留（接 [#27](https://github.com/william563214/unified-downloader/issues/27)）；文件 `docs/auto-extract.md`
 - [x] 有序 ZIP 密碼表（[#32](https://github.com/william563214/unified-downloader/issues/32)）：僅存 `udl.secrets`；依序試密；成功可置頂；per-job list／single／off；修復中心一次性密碼＋可選加入清單
 
+### v0.10 — 跨站基礎設施（進行中）
+
+- [x] Extractor 註冊表＋lazy 載入（`_VALID_URL`／`make_lazy_extractors`；參考 yt-dlp Unlicense commit `8973412`；[#23](https://github.com/william563214/unified-downloader/issues/23)）
+- [ ] RequestHandler 網路抽象（[#24](https://github.com/william563214/unified-downloader/issues/24)）
+- [ ] 共用片段下載基底 HLS／DASH／HTTP（[#25](https://github.com/william563214/unified-downloader/issues/25)）
+- [ ] Postprocessor 串接＋輸出模板（[#26](https://github.com/william563214/unified-downloader/issues/26)）
+- [ ] 依檔案類型＋來源網址自動分資料夾（[#27](https://github.com/william563214/unified-downloader/issues/27)）
+
 ### 規劃中（非本 PR）
 
 - [ ] **瀏覽器擴充功能**（Chrome／Edge MV3）：重用 [william563214/download_classify](https://github.com/william563214/download_classify) — 右鍵選單、下載接管、native messaging／localhost＋token

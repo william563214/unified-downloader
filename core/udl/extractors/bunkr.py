@@ -191,6 +191,15 @@ def sanitize_filename(name: str) -> str:
 class bunkr_extractor(extractor):
     site = "bunkr"
     label = "Bunkr"
+    status = "implemented"
+    kind_hint = "album|file"
+    _VALID_URL = (
+        r"(?i)https?://(?:[^/]*\.)?bunkr\.(?:"
+        r"si|fi|cr|ph|pk|ps|sk|ws|ac|ci|black|red|media|site|by|ru|is|to|ax|sx|pa|"
+        r"org|com|net|nu"
+        r")/(?:a|f|i|v)/[A-Za-z0-9_-]+",
+        r"(?i)https?://[^/]*bunkr[^/]*/(?:a|f|i|v)/[A-Za-z0-9_-]+",
+    )
 
     def __init__(self) -> None:
         self._session = Session()
@@ -395,6 +404,8 @@ class bunkr_extractor(extractor):
 
 
 def matches(url: str) -> bool:
+    if bunkr_extractor.suitable(url):
+        return True
     host = urlparse(url).netloc.lower().split(":")[0]
     if not bunkr_host_re.search(host) and "bunkr" not in host:
         return False

@@ -26,6 +26,16 @@ mega_backend_env = "UDL_MEGA_BACKEND"
 class mega_extractor(extractor):
     site = "mega"
     label = "MEGA"
+    status = "implemented"
+    kind_hint = "file|folder"
+    _VALID_URL = (
+        r"(?i)https?://(?:www\.)?mega(?:\.co)?\.(?:nz|io)/(?:file|folder|embed)/"
+        r"[A-Za-z0-9_-]+(?:#.*)?",
+        r"(?i)https?://(?:www\.)?mega(?:\.co)?\.(?:nz|io)/#!?[A-Za-z0-9_-]+![A-Za-z0-9_-]+.*",
+        r"(?i)https?://(?:www\.)?mega(?:\.co)?\.(?:nz|io)/#F![A-Za-z0-9_-]+![A-Za-z0-9_-]+.*",
+        r"(?i)mega://node/[A-Za-z0-9_-]+/?$",
+        r"(?i)mega:node:[A-Za-z0-9_-]+/?$",
+    )
 
     def __init__(
         self,

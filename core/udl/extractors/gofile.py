@@ -16,7 +16,6 @@ import time
 from itertools import count
 from pathlib import PurePosixPath
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
 from requests import Session
@@ -52,6 +51,9 @@ def _content_id(url: str) -> str:
 class gofile_extractor(extractor):
     site = "gofile"
     label = "Gofile"
+    status = "implemented"
+    kind_hint = "folder|file"
+    _VALID_URL = r"(?i)https?://(?:www\.)?gofile\.io/d/[A-Za-z0-9]+(?:[/?#]|$)"
 
     def __init__(self) -> None:
         self._session = Session()
@@ -292,11 +294,4 @@ class gofile_extractor(extractor):
 
 
 def matches(url: str) -> bool:
-    host = urlparse(url).netloc.lower()
-    if "gofile.io" not in host:
-        return False
-    try:
-        _content_id(url)
-        return True
-    except ValueError:
-        return False
+    return gofile_extractor.suitable(url)

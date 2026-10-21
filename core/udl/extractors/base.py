@@ -1,12 +1,16 @@
 """Extractor interface for all site modules.
 
 Other agents adding sites should implement `extractor`
-and register patterns in `udl.router`. See docs/extractor-interface.md.
+with `_VALID_URL` and register via `_extractors.py`
+(lazy stubs from `scripts/make_lazy_extractors.py`).
+See docs/extractor-interface.md.
 """
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event
@@ -41,19 +45,68 @@ class extract_result:
     metadata: item_metadata | None = None
 
 
+def _as_url_patterns(value: Any) -> tuple[str, ...]:
+    if value is None or value is False:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, Sequence):
+        return tuple(str(item) for item in value)
+    return (str(value),)
+
+
 class extractor(ABC):
     """base class for site extractors.
 
     Lifecycle for `udl get`:
-      1. router.match(url) -> extractor class
-      2. inst = cls()
+      1. router.match(url) -> extractor class (via `_VALID_URL` / suitable)
+      2. inst = cls()  # lazy stubs import the real module here
       3. result = inst.resolve(url, password=...)
       4. inst.download(result, output_dir, emit=..., cancel=...)
+
+    URL matching follows the yt-dlp idea: each class declares `_VALID_URL`
+    (regex or sequence of regexes). Build-time lazy stubs carry only that
+    metadata so sidecar startup does not import every site module.
     """
 
     site: str = "unknown"
     # human label for UI badge
     label: str = "Unknown"
+    # registry metadata (implemented | stub | external)
+    status: str = "implemented"
+    kind_hint: str = "unknown"
+    # yt-dlp-style URL pattern(s); False disables regex matching
+    # (override suitable() instead, e.g. gallery-dl subprocess probe)
+    _VALID_URL: Any = None
+    # set on lazy stubs: dotted module path of the real class
+    _module: str | None = None
+
+    @classmethod
+    def _match_valid_url(cls, url: str) -> re.Match[str] | None:
+        """return the first `_VALID_URL` match or None."""
+        patterns = _as_url_patterns(cls.__dict__.get("_VALID_URL", cls._VALID_URL))
+        if not patterns:
+            return None
+        cache_key = "_VALID_URL_RE"
+        compiled = cls.__dict__.get(cache_key)
+        if compiled is None:
+            compiled = tuple(re.compile(p) for p in patterns)
+            setattr(cls, cache_key, compiled)
+        text = (url or "").strip()
+        for regex in compiled:
+            matched = regex.match(text)
+            if matched is not None:
+                return matched
+        return None
+
+    @classmethod
+    def suitable(cls, url: str) -> bool:
+        """true when this extractor should handle the URL.
+
+        Must stay import-light on overrides so lazy stubs can call it
+        without pulling every site module at process start.
+        """
+        return cls._match_valid_url(url) is not None
 
     @abstractmethod
     def resolve(

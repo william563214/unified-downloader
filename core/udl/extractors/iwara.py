@@ -60,8 +60,7 @@ def sanitize_filename(name: str) -> str:
 
 
 def matches(url: str) -> bool:
-    host = urlparse(url).netloc.lower()
-    return "iwara.tv" in host or "iwara.ai" in host
+    return iwara_extractor.suitable(url)
 
 
 def parse_iwara_url(url: str) -> tuple[str, str] | None:
@@ -158,6 +157,9 @@ def _cloudflare_hint(use_cloudflare_bypass: bool) -> str:
 class iwara_extractor(extractor):
     site = "iwara"
     label = "Iwara"
+    status = "implemented"
+    kind_hint = "video|playlist|profile"
+    _VALID_URL = r"(?i)https?://(?:[^/]+\.)?(?:iwara\.tv|iwara\.ai)(?:[/?#]|$|/.*)"
 
     def __init__(
         self,

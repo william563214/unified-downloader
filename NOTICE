@@ -145,6 +145,19 @@ Users may instead install FFmpeg themselves and point Settings → FFmpeg path
 (or set `UDL_FFMPEG`). This project does not redistribute FFmpeg inside the
 signed/unsigned app bundle by default; the optional download is user-initiated.
 
+## Design inspiration (Unlicense — not a port of upstream code)
+
+### yt-dlp lazy extractor registry — `scripts/make_lazy_extractors.py`,
+`core/udl/extractors/lazy_load.py`, `core/udl/extractors/lazy_extractors.py`
+- Upstream: https://github.com/yt-dlp/yt-dlp
+- License: **Unlicense** (public domain dedication)
+- Referenced commit: `8973412`
+- Notes: udl adopts the *idea* of per-site extractor classes with
+  `_VALID_URL` matching and a build-time generated lazy stub registry so
+  sidecar startup does not import every site module. Adapted from
+  `devscripts/make_lazy_extractors.py` and `devscripts/lazy_load_template.py`
+  at that commit. No yt-dlp extractor implementations are vendored.
+
 ## Intentionally not ported
 - gallery-dl **library/import/vendored source** (GPL-2.0-only) — incompatible
   with linking into GPL-3.0-or-later udl; subprocess aggregation only (above).
