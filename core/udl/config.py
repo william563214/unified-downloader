@@ -10,7 +10,16 @@ from pathlib import Path
 from typing import Any
 
 from udl.paths import app_data_dir
-from udl.rules import classify_rule, parse_rules, rules_to_list
+from udl.rules import (
+    classify_rule,
+    extension_rules_to_list,
+    flatten_rules,
+    parse_extension_rules,
+    parse_rules,
+    parse_site_rules,
+    rules_to_list,
+    site_rules_to_list,
+)
 
 config_filename = "udl.config.json"
 udl_config_env = "UDL_CONFIG"
@@ -31,7 +40,10 @@ class udl_config:
     name_template: str = ""
     site_templates: dict[str, str] = field(default_factory=dict)
     type_templates: dict[str, str] = field(default_factory=_default_type_templates)
+    # layered classification (download_classify-compatible)
     rules: list[classify_rule] = field(default_factory=list)
+    site_rules: list[classify_rule] = field(default_factory=list)
+    extension_rules: list[classify_rule] = field(default_factory=list)
     name_conflict: str = "rename"
     # v0.9-D post-download hook / checksum defaults
     checksum_auto: bool = True
@@ -47,6 +59,14 @@ class udl_config:
     extract_max_ratio: float = 100.0
     extract_promote_password: bool = True
 
+    def effective_rules(self) -> list[classify_rule]:
+        """priority-ordered site + custom + extension rules."""
+        return flatten_rules(
+            rules=self.rules,
+            site_rules=self.site_rules,
+            extension_rules=self.extension_rules,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "name_template": self.name_template,
@@ -54,6 +74,8 @@ class udl_config:
             "type_templates": dict(self.type_templates),
             "name_conflict": self.name_conflict,
             "rules": rules_to_list(self.rules),
+            "site_rules": site_rules_to_list(self.site_rules),
+            "extension_rules": extension_rules_to_list(self.extension_rules),
             "checksum_auto": self.checksum_auto,
             "post_cmd_enabled": self.post_cmd_enabled,
             "post_cmd": self.post_cmd,
@@ -114,6 +136,12 @@ class udl_config:
             site_templates={str(k): str(v) for k, v in site_templates.items()},
             type_templates=merged_types,
             rules=parse_rules(data),
+            site_rules=parse_site_rules(
+                data.get("site_rules") or data.get("siteRules")
+            ),
+            extension_rules=parse_extension_rules(
+                data.get("extension_rules") or data.get("extensionRules")
+            ),
             name_conflict=conflict,
             checksum_auto=bool(checksum_auto),
             post_cmd_enabled=bool(data.get("post_cmd_enabled")),
@@ -209,6 +237,10 @@ def merge_config_dict(base: udl_config, overlay: dict[str, Any] | None) -> udl_c
         data["type_templates"] = merged
     if "rules" in overlay:
         data["rules"] = overlay["rules"]
+    if "site_rules" in overlay:
+        data["site_rules"] = overlay["site_rules"]
+    if "extension_rules" in overlay:
+        data["extension_rules"] = overlay["extension_rules"]
     return udl_config.from_dict(data)
 
 

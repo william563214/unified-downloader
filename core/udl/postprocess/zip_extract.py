@@ -306,13 +306,25 @@ def after_extract_classify_hook(
     source_url: str | None = None,
     metadata: dict[str, Any] | None = None,
     rules: list[Any] | None = None,
-) -> None:
-    """hook for folder classification rules (issue #27).
+    classify_root: Path | None = None,
+) -> list[dict[str, Any]]:
+    """apply folder classification rules to extracted members (issue #27).
 
-    When type/url classification is present callers may move extracted members.
-    Currently a no-op placeholder so extract remains independent of #27.
+    Moves files under ``classify_root`` (default: archive parent) when a rule
+    matches by file type and/or source URL. Best-effort; never raises.
     """
-    _ = (extracted_paths, archive, source_url, metadata, rules)
+    if not rules or not extracted_paths:
+        return []
+    from udl.rules import classify_paths
+
+    root = classify_root if classify_root is not None else archive.parent
+    return classify_paths(
+        extracted_paths,
+        rules,
+        source_url=source_url,
+        metadata=metadata,
+        root=root,
+    )
 
 
 def extract_zip(
@@ -324,6 +336,8 @@ def extract_zip(
     file: str | None = None,
     source_url: str | None = None,
     metadata: dict[str, Any] | None = None,
+    rules: list[Any] | None = None,
+    classify_root: Path | None = None,
     classify_hook: Callable[..., None] | None = None,
 ) -> extract_result | None:
     """extract one archive when enabled and recognized. returns None when skipped."""
@@ -369,13 +383,20 @@ def extract_zip(
     if result.ok:
         hook = classify_hook or after_extract_classify_hook
         try:
-            hook(
+            moved = hook(
                 [Path(p) for p in result.extracted_paths],
                 archive=archive,
                 source_url=source_url,
                 metadata=metadata,
-                rules=None,
+                rules=rules,
+                classify_root=classify_root,
             )
+            if isinstance(moved, list) and moved:
+                result.extracted_paths = [
+                    str(item.get("to") or item.get("from") or "")
+                    for item in moved
+                    if item.get("to") or item.get("from")
+                ]
         except Exception:  # noqa: BLE001
             # classification is best-effort never fail extract
             pass

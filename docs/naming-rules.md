@@ -21,7 +21,7 @@
 | `{ext}` | 原始副檔名（不含點） |
 | `{name}` | 原始檔名（不含副檔名） |
 | `{filename}` | 原始完整檔名 |
-| `{type}` | 粗分媒體類型 video／audio／image／archive／other |
+| `{type}` | 粗分媒體類型 video／audio／image／archive／document／program／other |
 
 空白模板＝沿用各站 extractor 原本的 `relative_dir` + `name`。
 
@@ -82,17 +82,31 @@ udl config show --json
 
 ## 分類規則
 
-有序列表，**第一個符合的啟用規則生效**。
+依 **priority**（數字越小越先）排序；同分再依設定檔順序。命中第一個啟用規則即生效。
+
+層級與 [william563214/download_classify](https://github.com/william563214/download_classify) 對齊，方便與未來瀏覽器擴充共用 JSON：
+
+| 層級 | 設定鍵 | 預設 priority |
+|------|--------|---------------|
+| 網站規則 | `site_rules` | 10 |
+| 自訂規則 | `rules` | 50+ |
+| 副檔名對照 | `extension_rules` | 900+ |
+
+下載路徑規劃（`plan_file_destinations`）與 ZIP 解壓後（`after_extract_classify_hook`）都會套用同一套有效規則。
 
 ### 比對欄位（`match`）
 
-- `site`／`sites`
+- `site`／`sites`（udl 站點 id，如 iwara）
 - `author`（精確、不分大小寫）／`author_regex`
 - `tags_any`／`tags_all`
 - `title_regex`／`collection_regex`
 - `duration_min`／`duration_max`（秒）
 - `size_min`／`size_max`（位元組）
-- `media_type`／`media_types`（video／audio／image／archive／other）
+- `media_type`／`media_types`（video／audio／image／archive／document／program／other）
+- `extensions`（副檔名，不含點）
+- `mime_types`
+- `hosts`／`source_hosts`／`source_page`／`url_patterns`／`filename`（download_classify 式；同規則內多組為 **OR**）
+- `match_target`：`source`／`download`／`either`（網站規則用）
 
 ### 動作（`action`）
 
@@ -103,36 +117,58 @@ udl config show --json
 | `folder_and_template` | 兩者皆套用 |
 | `skip` | 略過此檔（寫入歷史 status=`skipped`） |
 
-範例：
+範例（自訂 + 網站 + 副檔名）：
 
 ```json
 {
-  "id": "iwara-long",
-  "name": "Iwara 長片",
-  "enabled": true,
-  "match": {
-    "site": "iwara",
-    "duration_min": 600,
-    "media_type": "video"
-  },
-  "action": {
-    "type": "folder_and_template",
-    "folder": "Iwara/Long",
-    "template": "{author}/{title}.{ext}"
-  }
+  "rules": [
+    {
+      "id": "iwara-long",
+      "name": "Iwara 長片",
+      "enabled": true,
+      "priority": 40,
+      "match": {
+        "site": "iwara",
+        "duration_min": 600,
+        "media_type": "video"
+      },
+      "action": {
+        "type": "folder_and_template",
+        "folder": "Iwara/Long",
+        "template": "{author}/{title}.{ext}"
+      }
+    }
+  ],
+  "site_rules": [
+    {
+      "id": "site-iwara",
+      "name": "Iwara",
+      "host": "iwara.tv",
+      "target_folder": "Sites/iwara.tv",
+      "match_target": "either",
+      "priority": 10,
+      "enabled": true
+    }
+  ],
+  "extension_rules": [
+    { "name": "影片", "extension": "mp4", "target_folder": "Media/Video" },
+    { "name": "壓縮檔", "extension": "zip", "target_folder": "Archives" }
+  ]
 }
 ```
+
+download_classify 匯出／匯入 JSON 僅含 `rules`／`site_rules`／`extension_rules`（自訂規則用 `matchers` + `target_folder`）。
 
 ### CLI
 
 ```bash
 udl rules list --json
 udl rules test "https://www.iwara.tv/video/…" --json
-udl rules test --metadata '{"site":"bunkr","title":"x","tags":["a"]}' --json
-udl config save --data '{"name_template":"…","rules":[…]}'
+udl rules test --metadata '{"site":"bunkr","title":"x","tags":["a"]}' --name demo.mp4 --json
+udl config save --data '{"name_template":"…","rules":[…],"site_rules":[…],"extension_rules":[…]}'
 ```
 
-GUI 設定頁可編輯模板（含即時預覽）與規則（新增／排序／刪除／以 URL 測試）。
+GUI 設定頁可編輯三層規則（新增／排序／刪除）、匯入／匯出 download_classify JSON、載入預設副檔名表，並以 URL 測試預覽目標路徑。
 
 ## 修復中心
 

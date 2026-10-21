@@ -62,7 +62,10 @@ class rendered_path:
 
 
 def detect_media_type(name: str | None, *, mime: str | None = None) -> str:
-    """coarse media type from filename extension or mime hint."""
+    """coarse media type from filename extension or mime hint.
+
+    returns video / audio / image / archive / document / program / other
+    """
     if mime:
         lower = mime.lower()
         if lower.startswith("video/"):
@@ -71,6 +74,21 @@ def detect_media_type(name: str | None, *, mime: str | None = None) -> str:
             return "audio"
         if lower.startswith("image/"):
             return "image"
+        if lower in {
+            "application/zip",
+            "application/x-rar-compressed",
+            "application/x-7z-compressed",
+            "application/gzip",
+            "application/x-tar",
+        }:
+            return "archive"
+        if lower in {
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "text/plain",
+        }:
+            return "document"
     ext = Path(name or "").suffix.lower().lstrip(".")
     if ext in {"mp4", "mkv", "webm", "avi", "mov", "flv", "m4v", "ts", "mpg", "mpeg"}:
         return "video"
@@ -78,8 +96,12 @@ def detect_media_type(name: str | None, *, mime: str | None = None) -> str:
         return "audio"
     if ext in {"jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "svg"}:
         return "image"
-    if ext in {"zip", "rar", "7z", "tar", "gz"}:
+    if ext in {"zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz"}:
         return "archive"
+    if ext in {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "odt"}:
+        return "document"
+    if ext in {"exe", "msi", "dmg", "pkg", "apk", "appimage", "deb", "rpm"}:
+        return "program"
     return "other"
 
 

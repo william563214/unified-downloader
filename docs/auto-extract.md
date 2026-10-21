@@ -79,7 +79,7 @@ udl repair fix retry-extract --issues '[…]' --extract-password '…' \
 
 ## 分類規則 hook（#27）
 
-解壓成功後呼叫 `after_extract_classify_hook`。若 #27 尚未實作，此 hook 為 no-op 預留。
+解壓成功後呼叫 `after_extract_classify_hook`：以有效分類規則（網站／自訂／副檔名）依檔名類型與來源 URL 移動解壓成員到下載根目錄下的目標資料夾。分類失敗不影響解壓結果（best-effort）。詳見 `docs/naming-rules.md`。
 
 ## GUI
 

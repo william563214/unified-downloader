@@ -259,11 +259,14 @@
 - [x] RequestHandler 網路抽象（[#24](https://github.com/william563214/unified-downloader/issues/24)）：`udl.network` 套件化（urllib／requests／可選 curl_cffi／websockets）；proxy、UA、限速集中；curl_cffi 指紋模擬選用預設關（同 Cloudflare）；見 NOTICE／`docs/networking.md`
 - [ ] 共用片段下載基底 HLS／DASH／HTTP（[#25](https://github.com/william563214/unified-downloader/issues/25)）
 - [ ] Postprocessor 串接＋輸出模板（[#26](https://github.com/william563214/unified-downloader/issues/26)）
-- [ ] 依檔案類型＋來源網址自動分資料夾（[#27](https://github.com/william563214/unified-downloader/issues/27)）
+- [x] 依檔案類型＋來源網址自動分資料夾（[#27](https://github.com/william563214/unified-downloader/issues/27)）
+  - 擴充規則引擎：副檔名／MIME／媒體類型＋來源網址（網域／路徑）；priority 排序
+  - 與 [william563214/download_classify](https://github.com/william563214/download_classify) 規則 JSON 對齊（`rules`／`site_rules`／`extension_rules`）；GUI 編輯／預覽／匯入匯出
+  - 下載路徑放置與 ZIP 解壓輸出共用有效規則；文件 `docs/naming-rules.md`／`docs/auto-extract.md`
 
 ### 規劃中（非本 PR）
 
-- [ ] **瀏覽器擴充功能**（Chrome／Edge MV3）：重用 [william563214/download_classify](https://github.com/william563214/download_classify) — 右鍵選單、下載接管、native messaging／localhost＋token
+- [ ] **瀏覽器擴充功能**（Chrome／Edge MV3）：重用 [william563214/download_classify](https://github.com/william563214/download_classify) — 右鍵選單、下載接管、native messaging／localhost＋token；規則格式已與本機共用
   - **不做**：DRM／加密串流繞過、系統級下載攔截（system-wide download hooking）
 
 ## 不做／延後
