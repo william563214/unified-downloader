@@ -37,6 +37,17 @@ export type RuleMatch = {
   media_type?: string;
   media_types?: string[];
   collection_regex?: string;
+  /** file extensions without dot e.g. mp4,zip */
+  extensions?: string[];
+  mime_types?: string[];
+  filename?: string[];
+  /** download / page host patterns (download_classify site matchers) */
+  hosts?: string[];
+  source_hosts?: string[];
+  source_page?: string[];
+  url_patterns?: string[];
+  /** site rule: source | download | either */
+  match_target?: "source" | "download" | "either";
 };
 
 export type RuleAction = {
@@ -45,12 +56,37 @@ export type RuleAction = {
   template?: string;
 };
 
+export type ClassifyRuleKind = "custom" | "site" | "extension";
+
 export type ClassifyRule = {
   id: string;
   name: string;
   enabled: boolean;
+  priority?: number;
+  kind?: ClassifyRuleKind;
   match: RuleMatch;
   action: RuleAction;
+};
+
+/** download_classify SiteClassificationRule */
+export type SiteClassifyRule = {
+  id: string;
+  name: string;
+  host: string;
+  target_folder: string;
+  match_target: "source" | "download" | "either";
+  priority: number;
+  enabled: boolean;
+};
+
+/** download_classify ExtensionRule */
+export type ExtensionClassifyRule = {
+  id?: string;
+  name: string;
+  extension: string;
+  target_folder: string;
+  priority?: number;
+  enabled?: boolean;
 };
 
 export type AppSettings = {
@@ -74,6 +110,8 @@ export type AppSettings = {
   typeTemplates: Record<string, string>;
   nameConflict: NameConflictMode;
   classificationRules: ClassifyRule[];
+  siteRules: SiteClassifyRule[];
+  extensionRules: ExtensionClassifyRule[];
   // networking (v0.5)
   speedLimit: string;
   jobSpeedLimit: string;
@@ -166,6 +204,8 @@ export const default_settings: AppSettings = {
   typeTemplates: {},
   nameConflict: "rename",
   classificationRules: [],
+  siteRules: [],
+  extensionRules: [],
   speedLimit: "",
   jobSpeedLimit: "",
   proxyMode: "none",
@@ -241,6 +281,8 @@ export function importSettingsJson(
     siteTemplates: { ...current.siteTemplates, ...(parsed.siteTemplates || {}) },
     typeTemplates: { ...current.typeTemplates, ...(parsed.typeTemplates || {}) },
     classificationRules: parsed.classificationRules ?? current.classificationRules,
+    siteRules: parsed.siteRules ?? current.siteRules,
+    extensionRules: parsed.extensionRules ?? current.extensionRules,
   };
   // never import secrets from file
   merged.aria2RpcSecret = current.aria2RpcSecret;
@@ -271,6 +313,8 @@ export function importSettingsJson(
   ) {
     merged.requestHandler = "auto";
   }
+  if (!Array.isArray(merged.siteRules)) merged.siteRules = [];
+  if (!Array.isArray(merged.extensionRules)) merged.extensionRules = [];
   return merged;
 }
 
@@ -393,9 +437,183 @@ export function emptyRule(): ClassifyRule {
     id: newRuleId(),
     name: "新規則",
     enabled: true,
+    priority: 50,
+    kind: "custom",
     match: { site: "" },
     action: { type: "folder", folder: "" },
   };
+}
+
+export function emptySiteRule(): SiteClassifyRule {
+  return {
+    id: newRuleId(),
+    name: "新網站規則",
+    host: "",
+    target_folder: "Sites/",
+    match_target: "either",
+    priority: 10,
+    enabled: true,
+  };
+}
+
+export function emptyExtensionRule(): ExtensionClassifyRule {
+  return {
+    id: newRuleId(),
+    name: "副檔名",
+    extension: "",
+    target_folder: "Others",
+    priority: 900,
+    enabled: true,
+  };
+}
+
+/** mirrors william563214/download_classify default extension table */
+export function defaultExtensionRules(): ExtensionClassifyRule[] {
+  const rows: Array<[string, string, string]> = [
+    ["文件", "pdf", "Documents"],
+    ["文件", "doc", "Documents"],
+    ["文件", "docx", "Documents"],
+    ["文件", "xlsx", "Documents"],
+    ["文件", "pptx", "Documents"],
+    ["文件", "txt", "Documents"],
+    ["壓縮檔", "zip", "Archives"],
+    ["壓縮檔", "rar", "Archives"],
+    ["壓縮檔", "7z", "Archives"],
+    ["壓縮檔", "tar", "Archives"],
+    ["壓縮檔", "gz", "Archives"],
+    ["圖片", "png", "Media/Images"],
+    ["圖片", "jpg", "Media/Images"],
+    ["圖片", "jpeg", "Media/Images"],
+    ["圖片", "gif", "Media/Images"],
+    ["圖片", "webp", "Media/Images"],
+    ["圖片", "svg", "Media/Images"],
+    ["影片", "mp4", "Media/Video"],
+    ["影片", "mkv", "Media/Video"],
+    ["影片", "avi", "Media/Video"],
+    ["影片", "mov", "Media/Video"],
+    ["影片", "webm", "Media/Video"],
+    ["音樂", "mp3", "Media/Audio"],
+    ["音樂", "flac", "Media/Audio"],
+    ["音樂", "wav", "Media/Audio"],
+    ["音樂", "aac", "Media/Audio"],
+    ["程式", "exe", "Programs"],
+    ["程式", "msi", "Programs"],
+    ["程式", "dmg", "Programs"],
+    ["程式", "pkg", "Programs"],
+    ["程式", "apk", "Programs"],
+  ];
+  return rows.map(([name, extension, target_folder], index) => ({
+    id: `ext-${extension}`,
+    name,
+    extension,
+    target_folder,
+    priority: 900 + index,
+    enabled: true,
+  }));
+}
+
+export type DownloadClassifyExport = {
+  rules: Array<{
+    id: string;
+    name: string;
+    target_folder: string;
+    priority: number;
+    enabled: boolean;
+    matchers: Record<string, string[]>;
+  }>;
+  site_rules: SiteClassifyRule[];
+  extension_rules: ExtensionClassifyRule[];
+};
+
+export function exportDownloadClassifyJson(settings: AppSettings): string {
+  const rules = (settings.classificationRules || []).map((rule) => {
+    const matchers: Record<string, string[]> = {};
+    if (rule.match?.hosts?.length) matchers.site = [...rule.match.hosts];
+    if (rule.match?.source_hosts?.length) {
+      matchers.source_site = [...rule.match.source_hosts];
+    }
+    if (rule.match?.source_page?.length) {
+      matchers.source_page = [...rule.match.source_page];
+    }
+    if (rule.match?.filename?.length) matchers.filename = [...rule.match.filename];
+    if (rule.match?.extensions?.length) {
+      matchers.extension = [...rule.match.extensions];
+    }
+    return {
+      id: rule.id,
+      name: rule.name,
+      target_folder: rule.action?.folder || "Others",
+      priority: rule.priority ?? 50,
+      enabled: rule.enabled !== false,
+      matchers,
+    };
+  });
+  const payload: DownloadClassifyExport = {
+    rules,
+    site_rules: settings.siteRules || [],
+    extension_rules: settings.extensionRules || [],
+  };
+  return `${JSON.stringify(payload, null, 2)}\n`;
+}
+
+export function importDownloadClassifyJson(
+  raw: string,
+  current: AppSettings,
+): AppSettings {
+  const parsed = JSON.parse(raw) as Partial<DownloadClassifyExport> & {
+    classificationRules?: ClassifyRule[];
+  };
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("規則 JSON 格式無效");
+  }
+  const next = { ...current };
+  if (Array.isArray(parsed.site_rules)) {
+    next.siteRules = parsed.site_rules.map((r) => ({
+      id: r.id || newRuleId(),
+      name: r.name || r.host || "網站規則",
+      host: r.host || "",
+      target_folder: r.target_folder || "",
+      match_target: r.match_target || "either",
+      priority: r.priority ?? 10,
+      enabled: r.enabled !== false,
+    }));
+  }
+  if (Array.isArray(parsed.extension_rules)) {
+    next.extensionRules = parsed.extension_rules.map((r, index) => ({
+      id: r.id || `ext-${r.extension || index}`,
+      name: r.name || r.extension || "副檔名",
+      extension: (r.extension || "").replace(/^\./, "").toLowerCase(),
+      target_folder: r.target_folder || "Others",
+      priority: r.priority ?? 900 + index,
+      enabled: r.enabled !== false,
+    }));
+  }
+  if (Array.isArray(parsed.rules)) {
+    next.classificationRules = parsed.rules.map((r) => {
+      const matchers = r.matchers || {};
+      return {
+        id: r.id || newRuleId(),
+        name: r.name || "規則",
+        enabled: r.enabled !== false,
+        priority: r.priority ?? 50,
+        kind: "custom" as const,
+        match: {
+          hosts: matchers.site,
+          source_hosts: matchers.source_site,
+          source_page: matchers.source_page,
+          filename: matchers.filename,
+          extensions: matchers.extension,
+        },
+        action: {
+          type: "folder" as const,
+          folder: r.target_folder || "",
+        },
+      };
+    });
+  } else if (Array.isArray(parsed.classificationRules)) {
+    next.classificationRules = parsed.classificationRules;
+  }
+  return next;
 }
 
 export function settingsToConfigPayload(settings: AppSettings): Record<string, unknown> {
@@ -405,6 +623,8 @@ export function settingsToConfigPayload(settings: AppSettings): Record<string, u
     type_templates: settings.typeTemplates,
     name_conflict: settings.nameConflict,
     rules: settings.classificationRules,
+    site_rules: settings.siteRules,
+    extension_rules: settings.extensionRules,
     checksum_auto: settings.checksumAuto,
     post_cmd_enabled: settings.avHookEnabled,
     post_cmd: settings.avHookCommand,

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- v0.10 自動分資料夾：檔案類型（副檔名／MIME／媒體類型）＋來源網址（網域／路徑）規則；priority 排序
+- 規則 JSON 對齊 download_classify（`rules`／`site_rules`／`extension_rules`）；GUI 編輯／預覽／匯入匯出；下載路徑與 ZIP 解壓後套用（closes #27）
 - v0.10：`udl.network` 抽象成 RequestHandler（urllib／requests／可選 curl_cffi／websockets）
 - proxy、UA、限速集中於網路層；curl_cffi 指紋模擬選用預設關（同 Cloudflare）
 - CLI `--impersonate`／`--request-handler`；GUI 網路設定；NOTICE 記載 yt-dlp Unlicense `8973412`（closes #24）

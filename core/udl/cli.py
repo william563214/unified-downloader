@@ -29,7 +29,13 @@ from udl.postprocess.options import parse_site_toggle_list, postprocess_options
 from udl.postprocess.zip_extract import extract_options
 from udl.repair import apply_repair_actions, scan_repair
 from udl.router import get_extractor, resolve
-from udl.rules import parse_rules, test_rules_against_metadata
+from udl.rules import (
+    extension_rules_to_list,
+    parse_rules,
+    site_rules_to_list,
+    test_rules_against_metadata,
+    to_download_classify_export,
+)
 from udl.scheduler import note_traffic
 from udl.secrets import delete_secret, get_secret, set_secret
 from udl.session import (
@@ -2235,13 +2241,24 @@ def cmd_naming(args: argparse.Namespace) -> int:
 def cmd_rules(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     if args.rules_command == "list":
-        payload = {"rules": [r.to_dict() for r in cfg.rules]}
+        payload = {
+            "rules": [r.to_dict() for r in cfg.rules],
+            "site_rules": site_rules_to_list(cfg.site_rules),
+            "extension_rules": extension_rules_to_list(cfg.extension_rules),
+            "effective": [r.to_dict() for r in cfg.effective_rules()],
+            "download_classify": to_download_classify_export(
+                rules=cfg.rules,
+                site_rules=cfg.site_rules,
+                extension_rules=cfg.extension_rules,
+            ),
+        }
         _print_json(payload, bool(args.json))
         return 0
     if args.rules_command == "test":
         meta: dict[str, Any] | item_metadata
         original_name = args.name
         size = args.size
+        source_url = None
         if args.metadata:
             try:
                 meta = json.loads(args.metadata)
@@ -2251,7 +2268,9 @@ def cmd_rules(args: argparse.Namespace) -> int:
             if not isinstance(meta, dict):
                 print(json.dumps({"error": "metadata must be a JSON object"}))
                 return 1
+            source_url = meta.get("canonical_url") or meta.get("source_url")
         elif args.url:
+            source_url = args.url
             info = resolve(args.url)
             if not info.supported:
                 print(json.dumps({"error": info.message or "unsupported URL"}))
@@ -2276,10 +2295,11 @@ def cmd_rules(args: argparse.Namespace) -> int:
             print(json.dumps({"error": "provide url or --metadata"}))
             return 2
         payload = test_rules_against_metadata(
-            cfg.rules,
+            cfg.effective_rules(),
             meta,
             size=size,
             original_name=original_name,
+            source_url=source_url,
         )
         _print_json(payload, bool(args.json))
         return 0

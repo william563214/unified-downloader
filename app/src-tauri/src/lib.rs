@@ -94,6 +94,10 @@ struct AppSettings {
     name_conflict: String,
     #[serde(default)]
     classification_rules: Vec<serde_json::Value>,
+    #[serde(default)]
+    site_rules: Vec<serde_json::Value>,
+    #[serde(default)]
+    extension_rules: Vec<serde_json::Value>,
     // networking v0.5
     #[serde(default)]
     speed_limit: String,
@@ -324,6 +328,8 @@ impl Default for AppSettings {
             type_templates: HashMap::new(),
             name_conflict: default_name_conflict(),
             classification_rules: Vec::new(),
+            site_rules: Vec::new(),
+            extension_rules: Vec::new(),
             speed_limit: String::new(),
             job_speed_limit: String::new(),
             proxy_mode: default_proxy_mode(),
@@ -693,6 +699,8 @@ fn settings_to_udl_config(settings: &AppSettings) -> serde_json::Value {
         "type_templates": settings.type_templates,
         "name_conflict": settings.name_conflict,
         "rules": settings.classification_rules,
+        "site_rules": settings.site_rules,
+        "extension_rules": settings.extension_rules,
         "checksum_auto": settings.checksum_auto,
         "post_cmd_enabled": settings.av_hook_enabled,
         "post_cmd": settings.av_hook_command,

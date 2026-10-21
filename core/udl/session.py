@@ -38,6 +38,7 @@ def plan_file_destinations(
     config: udl_config | None = None,
     name_template: str | None = None,
     on_duplicate: duplicate_mode = "skip",
+    source_url: str | None = None,
 ) -> tuple[set[int], dict[int, Path], dict[int, Any]]:
     """apply classification rules + naming templates without touching the DB.
 
@@ -45,18 +46,23 @@ def plan_file_destinations(
     """
     cfg = config if config is not None else load_config()
     meta = result.metadata or item_metadata(site=result.site, title=result.title)
+    job_url = source_url or getattr(result, "url", None) or meta.canonical_url
+    rules = cfg.effective_rules()
     skip_indexes: set[int] = set()
     overrides: dict[int, Path] = {}
     decisions: dict[int, Any] = {}
     for idx, f in enumerate(result.files):
         file_meta = f.metadata or meta
         media_type = detect_media_type(f.name)
+        file_url = getattr(f, "url", None) or job_url
         decision = apply_rules(
-            cfg.rules,
+            rules,
             file_meta,
             size=f.size,
             media_type=media_type,
             original_name=f.name,
+            source_url=job_url,
+            download_url=file_url,
         )
         decisions[idx] = decision
         if decision.skip:
@@ -153,6 +159,7 @@ def prepare_download(
         config=cfg,
         name_template=name_template,
         on_duplicate=on_duplicate,
+        source_url=url,
     )
     skip_indexes: set[int] = set(rule_skips)
 
@@ -387,6 +394,7 @@ def post_download_verify(
     extract = extract or extract_options()
     failures: dict[int, dict[str, Any]] = {}
     results: list[checksum_result] = []
+    classify_rules = load_config().effective_rules()
 
     for idx, f in enumerate(result.files):
         if idx in skip_indexes:
@@ -485,6 +493,8 @@ def post_download_verify(
             file=file_id,
             source_url=result.url,
             metadata=meta_dict,
+            rules=classify_rules,
+            classify_root=output_dir,
         )
         if extract_res is not None and not extract_res.ok:
             entry = failures.setdefault(

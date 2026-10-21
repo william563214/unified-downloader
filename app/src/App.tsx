@@ -17,6 +17,7 @@ import {
   type ClassifyRule,
   type CoverNaming,
   type DuplicateMode,
+  type ExtensionClassifyRule,
   type ExtractPasswordMode,
   type FfmpegStatus,
   type HistoryEntry,
@@ -25,14 +26,20 @@ import {
   type QueueEntry,
   type RepairIssue,
   type RepairScanResult,
+  type SiteClassifyRule,
   type ZipPasswordEntry,
+  defaultExtensionRules,
   default_settings,
   default_site_flags,
+  emptyExtensionRule,
   emptyRule,
+  emptySiteRule,
+  exportDownloadClassifyJson,
   exportSettingsJson,
   extractUrls,
   detectSite,
   history_cover_path,
+  importDownloadClassifyJson,
   importSettingsJson,
   site_ids,
 } from "./settings";
@@ -318,6 +325,10 @@ export default function App() {
           nameConflict: loaded.nameConflict || default_settings.nameConflict,
           classificationRules: Array.isArray(loaded.classificationRules)
             ? loaded.classificationRules
+            : [],
+          siteRules: Array.isArray(loaded.siteRules) ? loaded.siteRules : [],
+          extensionRules: Array.isArray(loaded.extensionRules)
+            ? loaded.extensionRules
             : [],
           megaBackend:
             loaded.megaBackend === "external" ? "external" : "builtin",
@@ -1455,19 +1466,35 @@ export default function App() {
       // persist draft rules first so core config matches editor
       await invoke("save_settings", { settings: settingsDraft });
       const result = await invoke<{
-        decision?: { matched?: boolean; rule_name?: string; skip?: boolean; folder?: string; template?: string; message?: string };
+        decision?: {
+          matched?: boolean;
+          rule_name?: string;
+          skip?: boolean;
+          folder?: string;
+          template?: string;
+          message?: string;
+          kind?: string;
+          priority?: number;
+        };
+        preview_path?: string;
+        media_type?: string;
         evaluated?: Array<{ name?: string; matches?: boolean }>;
       }>("rules_test", { url: target });
       const d = result.decision;
       if (!d?.matched) {
-        setRulesTestResult("沒有規則命中");
+        setRulesTestResult(
+          `沒有規則命中${result.media_type ? `（偵測類型：${result.media_type}）` : ""}`,
+        );
       } else {
         setRulesTestResult(
           [
             d.message || `命中：${d.rule_name || ""}`,
+            d.kind ? `層級：${d.kind}` : null,
+            d.priority != null ? `優先序：${d.priority}` : null,
             d.skip ? "動作：略過" : null,
             d.folder ? `資料夾：${d.folder}` : null,
             d.template ? `模板：${d.template}` : null,
+            result.preview_path ? `預覽路徑：${result.preview_path}` : null,
           ]
             .filter(Boolean)
             .join(" · "),
@@ -1489,6 +1516,19 @@ export default function App() {
     setSettingsDirty(true);
   }
 
+  function updateRuleMatch(index: number, patch: Partial<ClassifyRule["match"]>) {
+    setSettingsDraft((s) => {
+      const rules = [...(s.classificationRules || [])];
+      const current = rules[index];
+      rules[index] = {
+        ...current,
+        match: { ...current.match, ...patch },
+      };
+      return { ...s, classificationRules: rules };
+    });
+    setSettingsDirty(true);
+  }
+
   function moveRule(index: number, delta: number) {
     setSettingsDraft((s) => {
       const rules = [...(s.classificationRules || [])];
@@ -1497,9 +1537,68 @@ export default function App() {
       const tmp = rules[index];
       rules[index] = rules[next];
       rules[next] = tmp;
-      return { ...s, classificationRules: rules };
+      // keep priority aligned with visual order (download_classify style)
+      const renumbered = rules.map((rule, i) => ({
+        ...rule,
+        priority: (rule.priority ?? 50) < 100 ? 50 + i : rule.priority,
+      }));
+      return { ...s, classificationRules: renumbered };
     });
     setSettingsDirty(true);
+  }
+
+  function updateSiteRule(index: number, patch: Partial<SiteClassifyRule>) {
+    setSettingsDraft((s) => {
+      const rules = [...(s.siteRules || [])];
+      rules[index] = { ...rules[index], ...patch };
+      return { ...s, siteRules: rules };
+    });
+    setSettingsDirty(true);
+  }
+
+  function updateExtensionRule(
+    index: number,
+    patch: Partial<ExtensionClassifyRule>,
+  ) {
+    setSettingsDraft((s) => {
+      const rules = [...(s.extensionRules || [])];
+      rules[index] = { ...rules[index], ...patch };
+      return { ...s, extensionRules: rules };
+    });
+    setSettingsDirty(true);
+  }
+
+  function exportClassifyRulesFile() {
+    const blob = new Blob([exportDownloadClassifyJson(settingsDraft)], {
+      type: "application/json",
+    });
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = "download-classify-rules.json";
+    a.click();
+    URL.revokeObjectURL(href);
+  }
+
+  async function importClassifyRulesFile() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json,.json";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      void file.text().then((text) => {
+        try {
+          const merged = importDownloadClassifyJson(text, settingsDraft);
+          setSettingsDraft(merged);
+          setSettingsDirty(true);
+          setRulesTestResult("已匯入 download_classify 規則 JSON");
+        } catch (e) {
+          setRulesTestResult(humanizeError(String(e)));
+        }
+      });
+    };
+    input.click();
   }
 
   async function refreshZipPasswords() {
@@ -2765,7 +2864,153 @@ export default function App() {
 
           <div className="settings-block">
             <h3>分類規則</h3>
-            <p className="hint">由上到下比對，第一個命中的規則生效（資料夾／模板／略過）</p>
+            <p className="hint">
+              優先序與{" "}
+              <a
+                href="https://github.com/william563214/download_classify"
+                target="_blank"
+                rel="noreferrer"
+              >
+                download_classify
+              </a>
+              對齊：網站規則 → 自訂規則 → 副檔名；數字越小越先。可與檔案類型（副檔名／媒體類型）及來源網址（網域／路徑）組合。ZIP 解壓後亦會套用。
+            </p>
+            <div className="actions">
+              <button type="button" className="ghost" onClick={exportClassifyRulesFile}>
+                匯出規則 JSON
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => void importClassifyRulesFile()}
+              >
+                匯入規則 JSON
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    extensionRules: defaultExtensionRules(),
+                  }));
+                  setSettingsDirty(true);
+                }}
+              >
+                載入預設副檔名表
+              </button>
+            </div>
+
+            <h4>網站規則（來源／下載網域）</h4>
+            <p className="hint">對應 download_classify site_rules；預設 priority 10</p>
+            {(settingsDraft.siteRules || []).map((rule, index) => (
+              <div key={rule.id} className="rule-editor">
+                <div className="settings-grid">
+                  <label className="field compact">
+                    <span>名稱</span>
+                    <input
+                      value={rule.name}
+                      onChange={(e) => updateSiteRule(index, { name: e.target.value })}
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>網域</span>
+                    <input
+                      value={rule.host}
+                      onChange={(e) => updateSiteRule(index, { host: e.target.value })}
+                      placeholder="iwara.tv / *.bilibili.com"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>比對對象</span>
+                    <select
+                      value={rule.match_target || "either"}
+                      onChange={(e) =>
+                        updateSiteRule(index, {
+                          match_target: e.target.value as SiteClassifyRule["match_target"],
+                        })
+                      }
+                    >
+                      <option value="either">來源或下載</option>
+                      <option value="source">僅來源</option>
+                      <option value="download">僅下載</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="settings-grid">
+                  <label className="field compact">
+                    <span>目標資料夾</span>
+                    <input
+                      value={rule.target_folder}
+                      onChange={(e) =>
+                        updateSiteRule(index, { target_folder: e.target.value })
+                      }
+                      placeholder="Sites/iwara.tv"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>優先序</span>
+                    <input
+                      type="number"
+                      value={rule.priority ?? 10}
+                      onChange={(e) =>
+                        updateSiteRule(index, {
+                          priority: Number(e.target.value) || 10,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={rule.enabled !== false}
+                      onChange={(e) =>
+                        updateSiteRule(index, { enabled: e.target.checked })
+                      }
+                    />
+                    <span>啟用</span>
+                  </label>
+                </div>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="ghost danger"
+                    onClick={() => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        siteRules: (s.siteRules || []).filter((_, i) => i !== index),
+                      }));
+                      setSettingsDirty(true);
+                    }}
+                  >
+                    刪除
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div className="actions">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    siteRules: [...(s.siteRules || []), emptySiteRule()],
+                  }));
+                  setSettingsDirty(true);
+                }}
+              >
+                新增網站規則
+              </button>
+            </div>
+
+            <h4>自訂規則</h4>
+            <p className="hint">
+              可同時設副檔名、來源 URL、站點 id、作者等；同一規則內 download_classify
+              式 matchers（網域／副檔名／檔名）為 OR
+            </p>
             {(settingsDraft.classificationRules || []).map((rule, index) => (
               <div key={rule.id} className="rule-editor">
                 <div className="settings-grid">
@@ -2777,14 +3022,22 @@ export default function App() {
                     />
                   </label>
                   <label className="field compact">
-                    <span>站點</span>
+                    <span>優先序</span>
                     <input
-                      value={rule.match?.site || ""}
+                      type="number"
+                      value={rule.priority ?? 50 + index}
                       onChange={(e) =>
                         updateRule(index, {
-                          match: { ...rule.match, site: e.target.value },
+                          priority: Number(e.target.value) || 50,
                         })
                       }
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>站點 id</span>
+                    <input
+                      value={rule.match?.site || ""}
+                      onChange={(e) => updateRuleMatch(index, { site: e.target.value })}
                       placeholder="iwara / bunkr / …"
                     />
                   </label>
@@ -2810,13 +3063,61 @@ export default function App() {
                 </div>
                 <div className="settings-grid">
                   <label className="field compact">
+                    <span>來源／下載網域</span>
+                    <input
+                      value={(rule.match?.hosts || []).join(",")}
+                      onChange={(e) =>
+                        updateRuleMatch(index, {
+                          hosts: e.target.value
+                            .split(",")
+                            .map((v) => v.trim())
+                            .filter(Boolean),
+                        })
+                      }
+                      placeholder="iwara.tv, gofile.io"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>來源頁 URL 樣式</span>
+                    <input
+                      value={(rule.match?.source_page || []).join(",")}
+                      onChange={(e) =>
+                        updateRuleMatch(index, {
+                          source_page: e.target.value
+                            .split(",")
+                            .map((v) => v.trim())
+                            .filter(Boolean),
+                        })
+                      }
+                      placeholder="*iwara.tv/video/*"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>副檔名</span>
+                    <input
+                      value={(rule.match?.extensions || []).join(",")}
+                      onChange={(e) =>
+                        updateRuleMatch(index, {
+                          extensions: e.target.value
+                            .split(",")
+                            .map((v) => v.trim().replace(/^\./, "").toLowerCase())
+                            .filter(Boolean),
+                        })
+                      }
+                      placeholder="mp4, mkv, zip"
+                      spellCheck={false}
+                    />
+                  </label>
+                </div>
+                <div className="settings-grid">
+                  <label className="field compact">
                     <span>標題 regex</span>
                     <input
                       value={rule.match?.title_regex || ""}
                       onChange={(e) =>
-                        updateRule(index, {
-                          match: { ...rule.match, title_regex: e.target.value },
-                        })
+                        updateRuleMatch(index, { title_regex: e.target.value })
                       }
                       spellCheck={false}
                     />
@@ -2826,9 +3127,7 @@ export default function App() {
                     <input
                       value={rule.match?.author || ""}
                       onChange={(e) =>
-                        updateRule(index, {
-                          match: { ...rule.match, author: e.target.value },
-                        })
+                        updateRuleMatch(index, { author: e.target.value })
                       }
                     />
                   </label>
@@ -2837,11 +3136,9 @@ export default function App() {
                     <input
                       value={rule.match?.media_type || ""}
                       onChange={(e) =>
-                        updateRule(index, {
-                          match: { ...rule.match, media_type: e.target.value },
-                        })
+                        updateRuleMatch(index, { media_type: e.target.value })
                       }
-                      placeholder="video / image"
+                      placeholder="video / image / archive / document / program"
                     />
                   </label>
                 </div>
@@ -2928,11 +3225,100 @@ export default function App() {
                   setSettingsDirty(true);
                 }}
               >
-                新增規則
+                新增自訂規則
               </button>
             </div>
+
+            <h4>副檔名對照</h4>
+            <p className="hint">對應 download_classify extension_rules；預設 priority 900+</p>
+            {(settingsDraft.extensionRules || []).map((rule, index) => (
+              <div key={rule.id || `${rule.extension}-${index}`} className="rule-editor">
+                <div className="settings-grid">
+                  <label className="field compact">
+                    <span>名稱</span>
+                    <input
+                      value={rule.name}
+                      onChange={(e) =>
+                        updateExtensionRule(index, { name: e.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>副檔名</span>
+                    <input
+                      value={rule.extension}
+                      onChange={(e) =>
+                        updateExtensionRule(index, {
+                          extension: e.target.value.replace(/^\./, "").toLowerCase(),
+                        })
+                      }
+                      placeholder="mp4"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="field compact">
+                    <span>目標資料夾</span>
+                    <input
+                      value={rule.target_folder}
+                      onChange={(e) =>
+                        updateExtensionRule(index, {
+                          target_folder: e.target.value,
+                        })
+                      }
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={rule.enabled !== false}
+                      onChange={(e) =>
+                        updateExtensionRule(index, { enabled: e.target.checked })
+                      }
+                    />
+                    <span>啟用</span>
+                  </label>
+                </div>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="ghost danger"
+                    onClick={() => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        extensionRules: (s.extensionRules || []).filter(
+                          (_, i) => i !== index,
+                        ),
+                      }));
+                      setSettingsDirty(true);
+                    }}
+                  >
+                    刪除
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div className="actions">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    extensionRules: [
+                      ...(s.extensionRules || []),
+                      emptyExtensionRule(),
+                    ],
+                  }));
+                  setSettingsDirty(true);
+                }}
+              >
+                新增副檔名規則
+              </button>
+            </div>
+
             <label className="field">
-              <span>以 URL 測試規則</span>
+              <span>以 URL 測試／預覽規則</span>
               <div className="folder-row">
                 <input
                   value={rulesTestUrl}
