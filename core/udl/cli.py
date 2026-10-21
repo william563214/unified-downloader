@@ -185,6 +185,23 @@ def _add_network_args(parser: argparse.ArgumentParser, *, download: bool = False
         default=None,
         help="optional Host header override for media downloads",
     )
+    parser.add_argument(
+        "--impersonate",
+        nargs="?",
+        const="chrome",
+        default=None,
+        help=(
+            "opt-in curl_cffi browser impersonation (default off; "
+            "optional target e.g. chrome, chrome131, safari). "
+            "Requires optional dependency curl_cffi. Same opt-in policy as --cloudflare-bypass."
+        ),
+    )
+    parser.add_argument(
+        "--request-handler",
+        choices=["auto", "requests", "urllib", "curl_cffi"],
+        default="auto",
+        help="preferred RequestHandler backend (default auto)",
+    )
 
 
 def _apply_network(args: argparse.Namespace) -> None:

@@ -65,6 +65,12 @@ class network_settings:
     prefer_cdn_replace: bool = False
     # optional Host header override for media downloads (empty = unset)
     custom_host: str | None = None
+    # curl_cffi browser impersonation: opt-in / off by default (same policy as Cloudflare)
+    impersonate: bool = False
+    # target e.g. chrome / chrome131 / safari; ignored when impersonate is False
+    impersonate_target: str | None = None
+    # preferred RequestHandler backend: auto / requests / urllib / curl_cffi
+    request_handler: str = "auto"
 
 
 _active: network_settings = network_settings()
@@ -299,6 +305,17 @@ def settings_from_cli_args(args: Any) -> network_settings:
     prefer_cdn = bool(
         getattr(args, "prefer_cdn", False) or getattr(args, "bili_prefer_cdn", False)
     )
+    impersonate_raw = getattr(args, "impersonate", None)
+    impersonate = False
+    impersonate_target: str | None = None
+    if impersonate_raw is not None and impersonate_raw is not False:
+        impersonate = True
+        if isinstance(impersonate_raw, str) and impersonate_raw.strip():
+            impersonate_target = impersonate_raw.strip()
+        else:
+            impersonate_target = "chrome"
+    handler = getattr(args, "request_handler", None) or "auto"
+    handler = str(handler).strip().lower() or "auto"
     return network_settings(
         user_agent=str(ua),
         proxy_mode=proxy_mode,
@@ -317,4 +334,7 @@ def settings_from_cli_args(args: Any) -> network_settings:
         cdn_hosts=cdn_hosts,
         prefer_cdn_replace=prefer_cdn or bool(cdn_hosts),
         custom_host=str(custom_host).strip() if custom_host else None,
+        impersonate=impersonate,
+        impersonate_target=impersonate_target,
+        request_handler=handler,
     )

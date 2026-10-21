@@ -83,7 +83,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - **頁面擷取（v0.9-D）**：貼網頁 URL → 列出直連／站點候選 → 勾選入佇列；CLI `udl page`（見 `docs/page-download.md`）。
 - **校驗／掃毒（v0.9-D）**：下載後 MD5／SHA-1／SHA-256；可選 Defender／ClamAV 指令（預設關）；見 `docs/checksum-hook.md`。
 - **FFmpeg 首次佈建**：偵測不到時可下載目前 OS／arch 靜態建置並驗證 checksum（見 `NOTICE`）。CLI：`udl ffmpeg status` / `udl ffmpeg install`。
-- **網路**：見 `docs/networking.md`（全域限速、代理三模式、可選 aria2 RPC、自訂 UA）。
+- **網路**：見 `docs/networking.md`（全域限速、代理三模式、可選 aria2 RPC、自訂 UA、v0.10 RequestHandler）。
 - **排程／配額**：見 `docs/scheduler.md`（具名佇列、時段、完成後動作、流量配額、時段限速）。
 - **MEGA**：內建 Python 客戶端（分段＋CBC-MAC；見 `docs/mega.md`）；可選 megatools／MEGAcmd 外部後端。
 

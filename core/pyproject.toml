@@ -24,6 +24,16 @@ dev = [
 iwara = [
   "cloudscraper>=1.2.71",
 ]
+curl-cffi = [
+  "curl_cffi>=0.10.0,<0.17",
+]
+websockets = [
+  "websockets>=13.0",
+]
+network = [
+  "curl_cffi>=0.10.0,<0.17",
+  "websockets>=13.0",
+]
 
 [project.scripts]
 udl = "udl.cli:main"

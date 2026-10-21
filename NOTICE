@@ -158,7 +158,20 @@ signed/unsigned app bundle by default; the optional download is user-initiated.
   `devscripts/make_lazy_extractors.py` and `devscripts/lazy_load_template.py`
   at that commit. No yt-dlp extractor implementations are vendored.
 
+### yt-dlp networking — `core/udl/network/`
+- Upstream: https://github.com/yt-dlp/yt-dlp (`yt_dlp/networking`)
+- License: **Unlicense** (public domain dedication)
+- Reference commit: `897341241f2bfb2439fe0367f4c7c9ccd29a3828`
+- Notes: udl reimplements a slim Request / Response / RequestHandler /
+  RequestDirector interface in the same style (urllib, requests, optional
+  curl_cffi, optional websockets). This is **not** a copy of yt-dlp sources;
+  proxy, User-Agent, and rate limits are centralized in `udl.network`.
+  curl_cffi browser impersonation is **opt-in / off by default** (same policy
+  as Cloudflare challenge bypass). No paywall, VIP, ToS, or DRM bypass.
+
 ## Intentionally not ported
 - gallery-dl **library/import/vendored source** (GPL-2.0-only) — incompatible
   with linking into GPL-3.0-or-later udl; subprocess aggregation only (above).
 - MegaBasterd — GUI-only Java app; MEGA protocol is built-in; megatools/MEGAcmd remain optional fallback.
+- yt-dlp sources / extractors — only lazy-registry and networking *architecture*
+  ideas are mirrored under Unlicense terms; do not vendor yt-dlp modules.

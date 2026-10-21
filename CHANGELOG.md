@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- v0.10：`udl.network` 抽象成 RequestHandler（urllib／requests／可選 curl_cffi／websockets）
+- proxy、UA、限速集中於網路層；curl_cffi 指紋模擬選用預設關（同 Cloudflare）
+- CLI `--impersonate`／`--request-handler`；GUI 網路設定；NOTICE 記載 yt-dlp Unlicense `8973412`（closes #24）
 - Extractor 註冊表＋lazy 載入：每站 `_VALID_URL`；`scripts/make_lazy_extractors.py` 產生 stub；sidecar 啟動不 import 全部模組（closes #23；參考 yt-dlp Unlicense commit 8973412）
 - ZIP 有序密碼表：依序試密（僅 udl.secrets）；成功可置頂；per-job list／single／off
 - 修復中心一次性密碼重試並可選加入清單；歷史僅記 password N of M（closes #32）

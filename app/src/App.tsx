@@ -3005,6 +3005,56 @@ export default function App() {
                 spellCheck={false}
               />
             </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={Boolean(settingsDraft.curlCffiImpersonate)}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    curlCffiImpersonate: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>
+                啟用 curl_cffi 瀏覽器指紋模擬（預設關；需選用依賴，政策同 Cloudflare
+                繞過）
+              </span>
+            </label>
+            {settingsDraft.curlCffiImpersonate && (
+              <label className="field compact">
+                <span>Impersonate 目標</span>
+                <input
+                  value={settingsDraft.curlCffiImpersonateTarget}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      curlCffiImpersonateTarget: e.target.value,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="chrome / chrome131 / safari"
+                  spellCheck={false}
+                />
+              </label>
+            )}
+            <label className="field compact">
+              <span>RequestHandler 後端</span>
+              <select
+                value={settingsDraft.requestHandler}
+                onChange={(e) => {
+                  const value = e.target.value as AppSettings["requestHandler"];
+                  setSettingsDraft((s) => ({ ...s, requestHandler: value }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="auto">自動（requests／urllib）</option>
+                <option value="requests">requests</option>
+                <option value="urllib">urllib</option>
+                <option value="curl_cffi">curl_cffi</option>
+              </select>
+            </label>
             <label className="field compact">
               <span>代理模式</span>
               <select
