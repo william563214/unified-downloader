@@ -228,9 +228,19 @@ migrations: list[tuple[int, str]] = [
 def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
     path = default_db_path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    # timeout helps GUI + MCP (or multiple CLI) share the same DB safely
+    conn = sqlite3.connect(str(path), check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("pragma foreign_keys = on")
+    # WAL allows concurrent readers while a writer holds a short transaction
+    try:
+        conn.execute("pragma journal_mode=WAL")
+    except sqlite3.Error:
+        pass
+    try:
+        conn.execute("pragma busy_timeout=5000")
+    except sqlite3.Error:
+        pass
     migrate(conn)
     return conn
 

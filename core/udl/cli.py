@@ -987,6 +987,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sec_del.add_argument("key", help="secret key")
     p_sec_del.add_argument("--json", action="store_true")
 
+    p_mcp = sub.add_parser(
+        "mcp",
+        help=(
+            "run Model Context Protocol server over stdio "
+            "(optional dep: uv sync --extra mcp)"
+        ),
+    )
+    p_mcp.add_argument(
+        "--force",
+        action="store_true",
+        help="run even when GUI 'Enable MCP server' is off (or set UDL_MCP_FORCE=1)",
+    )
+
     add_iwara_parser(sub)
     add_mega_parser(sub)
 
@@ -1997,6 +2010,16 @@ def cmd_secrets(args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """stdio MCP server for AI clients; optional ``mcp`` extra."""
+    from udl.mcp_server import run_stdio_server
+
+    return run_stdio_server(
+        db_path=getattr(args, "db", None),
+        force=bool(getattr(args, "force", False)),
+    )
+
+
 def cmd_bili(args: argparse.Namespace) -> int:
     if args.bili_command != "login":
         return 2
@@ -2471,6 +2494,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_zip_passwords(args)
     if args.command == "secrets":
         return cmd_secrets(args)
+    if args.command == "mcp":
+        return cmd_mcp(args)
     if args.command == "iwara":
         _apply_network(args)
         return cmd_iwara(args)

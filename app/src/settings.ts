@@ -151,6 +151,8 @@ export type AppSettings = {
   notificationsEnabled: boolean;
   minimizeToTray: boolean;
   themeMode: "system" | "light" | "dark";
+  // MCP stdio server for AI clients (off by default)
+  mcpEnabled: boolean;
   // v0.9-D checksum / post-download hook
   checksumAuto: boolean;
   avHookEnabled: boolean;
@@ -267,6 +269,7 @@ export const default_settings: AppSettings = {
   notificationsEnabled: true,
   minimizeToTray: false,
   themeMode: "system",
+  mcpEnabled: false,
   checksumAuto: true,
   avHookEnabled: false,
   avHookPreset: "",
@@ -334,6 +337,7 @@ export function importSettingsJson(
   if (merged.notificationsEnabled == null) merged.notificationsEnabled = true;
   if (merged.minimizeToTray == null) merged.minimizeToTray = false;
   if (!merged.themeMode) merged.themeMode = "system";
+  if (merged.mcpEnabled == null) merged.mcpEnabled = false;
   if (merged.autoExtractZip == null) merged.autoExtractZip = false;
   if (merged.extractTo !== "same_folder") merged.extractTo = "subfolder";
   if (merged.extractDeleteZip == null) merged.extractDeleteZip = false;

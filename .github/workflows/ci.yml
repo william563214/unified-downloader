@@ -16,10 +16,11 @@ jobs:
       - name: Sync and lint Python
         working-directory: core
         run: |
-          uv sync --extra dev
+          uv sync --extra dev --extra mcp
           uv run python ../scripts/make_lazy_extractors.py
           git diff --exit-code -- udl/extractors/lazy_extractors.py
           uv run ruff check udl
+          uv run udl mcp --help >/dev/null
           uv run udl sites
           uv run udl gallerydl status --json >/dev/null || true
           uv run udl schema >/dev/null

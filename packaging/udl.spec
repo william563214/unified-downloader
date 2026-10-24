@@ -17,6 +17,11 @@ _qrcode_mods = collect_submodules("qrcode")
 # Pillow plugins used when rendering QR PNG for bilibili login
 _pil_mods = collect_submodules("PIL")
 _udl_mods = collect_submodules("udl")
+# optional MCP extra (stdio server for AI clients); ignore if not installed
+try:
+    _mcp_mods = collect_submodules("mcp")
+except Exception:  # noqa: BLE001
+    _mcp_mods = []
 
 a = Analysis(
     [str(root / "udl" / "__main__.py")],
@@ -59,7 +64,8 @@ a = Analysis(
     + _keyring_mods
     + _jaraco_mods
     + _qrcode_mods
-    + _pil_mods,
+    + _pil_mods
+    + _mcp_mods,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

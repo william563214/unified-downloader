@@ -193,6 +193,16 @@ signed/unsigned app bundle by default; the optional download is user-initiated.
   field grammar. No yt-dlp source is copied or vendored into this tree;
   only concepts and documented field forms are reimplemented under GPL-3.0-or-later.
 
+## Runtime dependencies (not ported into this tree)
+
+### Model Context Protocol Python SDK — `mcp` (optional extra)
+- Upstream: https://github.com/modelcontextprotocol/python-sdk
+- License: MIT
+- Homepage: https://modelcontextprotocol.io
+- Notes: Used only by `udl mcp` (stdio server). Install via
+  `uv sync --extra mcp` or packaged sidecar. No MCP sources are vendored
+  into this repository.
+
 ## Intentionally not ported
 - gallery-dl **library/import/vendored source** (GPL-2.0-only) — incompatible
   with linking into GPL-3.0-or-later udl; subprocess aggregation only (above).

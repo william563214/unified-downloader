@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- MCP：`udl mcp` stdio 伺服器（官方 `mcp` SDK；optional `--extra mcp`）供 Claude Desktop／Cursor 控制佇列與歷史
+- Tools：add_download／list_queue／get_status／pause／resume／cancel／search_history／list_supported_sites／resolve_url；唯讀 queue／history resources
+- 安全：不暴露憑證；MCP 無法開 Cloudflare／impersonation；輸出路徑限制在 download root；GUI 開關預設關＋可複製客戶端 JSON（closes #39）
 - v0.10 共用片段下載基底（HLS／DASH／HTTP 分段）：續傳／重試／合併；接 v0.9-A 分段與 aria2 RPC
 - 外部 aria2c／ffmpeg 子行程同一介面；加密串流清楚拒絕（closes #25）
 - 文件：`docs/fragment-download.md`；NOTICE 記載 yt-dlp Unlicense commit `8973412`

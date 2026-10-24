@@ -153,6 +153,89 @@ async function notifyJob(title: string, body: string): Promise<void> {
   }
 }
 
+type McpClientConfig = {
+  enabled: boolean;
+  transport: string;
+  snippet: string;
+  note?: string;
+};
+
+function McpClientConfigPanel({ enabled }: { enabled: boolean }) {
+  const [snippet, setSnippet] = useState("");
+  const [note, setNote] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cfg = await invoke<McpClientConfig>("get_mcp_client_config");
+        if (cancelled) return;
+        setSnippet(cfg.snippet || "");
+        setNote(cfg.note || "");
+        setLoadError(null);
+      } catch (err) {
+        if (cancelled) return;
+        setLoadError(humanizeError(String(err)));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function copySnippet() {
+    if (!snippet) return;
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setLoadError("無法寫入剪貼簿");
+    }
+  }
+
+  return (
+    <div className="mcp-config">
+      {!enabled && (
+        <p className="hint">
+          開啟上方開關並儲存設定後，AI 客戶端才能連線（或設環境變數
+          UDL_MCP_FORCE=1）。
+        </p>
+      )}
+      {loadError && <p className="error">{loadError}</p>}
+      {note && <p className="hint">{note}</p>}
+      <label className="field">
+        <span>客戶端設定片段（Claude Desktop／Cursor）</span>
+        <textarea
+          readOnly
+          rows={10}
+          value={snippet}
+          spellCheck={false}
+          aria-label="MCP client config JSON"
+        />
+      </label>
+      <div className="actions">
+        <button
+          type="button"
+          className="ghost"
+          disabled={!snippet}
+          onClick={() => void copySnippet()}
+        >
+          {copied ? "已複製" : "複製 JSON"}
+        </button>
+      </div>
+      <p className="hint">
+        Claude Desktop：併入 <code>claude_desktop_config.json</code> 的{" "}
+        <code>mcpServers</code>。Cursor：併入 MCP 設定的{" "}
+        <code>mcpServers</code>。開發環境需{" "}
+        <code>uv sync --extra mcp</code>；正式 sidecar 已打包 MCP SDK。
+      </p>
+    </div>
+  );
+}
+
 export default function App() {
   const [page, setPage] = useState<Page>("download");
   const [url, setUrl] = useState("");
@@ -349,6 +432,7 @@ export default function App() {
               : Boolean(loaded.notificationsEnabled),
           minimizeToTray: Boolean(loaded.minimizeToTray),
           themeMode: loaded.themeMode || "system",
+          mcpEnabled: Boolean(loaded.mcpEnabled),
           autoExtractZip: Boolean(loaded.autoExtractZip),
           extractTo:
             loaded.extractTo === "same_folder" ? "same_folder" : "subfolder",
@@ -2281,6 +2365,7 @@ export default function App() {
             <a href="#settings-accounts">帳號</a>
             <a href="#settings-tools">工具</a>
             <a href="#settings-shell">通知／托盤</a>
+            <a href="#settings-mcp">MCP</a>
             <a href="#settings-import">匯入匯出</a>
           </div>
 
@@ -4297,6 +4382,30 @@ export default function App() {
             <p className="hint">
               系統列圖示會顯示進行中／失敗數量；左鍵點擊可顯示主視窗。
             </p>
+          </div>
+
+          <div className="settings-block" id="settings-mcp">
+            <h3>MCP（AI 客戶端）</h3>
+            <p className="hint">
+              以 stdio 讓 Claude Desktop／Cursor 等客戶端控制佇列與歷史；與 GUI
+              共用同一 SQLite。預設關閉；不會開網路埠，也無法經 MCP
+              開啟 Cloudflare 繞過或讀取憑證。
+            </p>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.mcpEnabled}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    mcpEnabled: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>啟用 MCP 伺服器</span>
+            </label>
+            <McpClientConfigPanel enabled={settingsDraft.mcpEnabled} />
           </div>
 
           <div className="settings-block" id="settings-updater">
