@@ -26,7 +26,8 @@ fi
 
 export PATH="${HOME}/.local/bin:${PATH}"
 cd "$core"
-uv sync --extra dev
+# include optional MCP SDK so packaged `udl mcp` works for AI clients
+uv sync --extra dev --extra mcp
 uv run pyinstaller \
   --noconfirm \
   --clean \

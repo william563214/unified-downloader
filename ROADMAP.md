@@ -273,6 +273,15 @@
   - 與 [william563214/download_classify](https://github.com/william563214/download_classify) 規則 JSON 對齊（`rules`／`site_rules`／`extension_rules`）；GUI 編輯／預覽／匯入匯出
   - 下載路徑放置與 ZIP 解壓輸出共用有效規則；文件 `docs/naming-rules.md`／`docs/auto-extract.md`
 
+### MCP（Model Context Protocol）
+
+- [x] `udl mcp`：官方 `mcp` Python SDK、**僅 stdio**（不開網路埠）；optional extra `uv sync --extra mcp`（[#39](https://github.com/william563214/unified-downloader/issues/39)）
+- [x] Tools：`add_download`／`list_queue`／`get_status`／`pause`／`resume`／`cancel`／`search_history`／`list_supported_sites`／`resolve_url`；唯讀 resources `udl://queue`／`udl://history`
+- [x] 重用 queue／history SQLite／extractor registry；WAL＋busy_timeout 與 GUI 共用 DB
+- [x] 安全：不暴露 credentials／cookies／keychain／ZIP 密碼；無登入／密鑰設定工具；MCP **不得**開啟 Cloudflare／impersonation；輸出路徑限制在 download root
+- [x] GUI：設定「啟用 MCP 伺服器」（預設關）＋可複製 Claude Desktop／Cursor JSON
+- [x] README MCP 客戶端設定說明
+
 ### 規劃中（非本 PR）
 
 - [ ] **瀏覽器擴充功能**（Chrome／Edge MV3）：重用 [william563214/download_classify](https://github.com/william563214/download_classify) — 右鍵選單、下載接管、native messaging／localhost＋token；規則格式已與本機共用

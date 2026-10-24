@@ -168,6 +168,9 @@ struct AppSettings {
     minimize_to_tray: bool,
     #[serde(default = "default_theme_mode")]
     theme_mode: String,
+    // MCP stdio server for AI clients (off by default)
+    #[serde(default)]
+    mcp_enabled: bool,
     // v0.9-D checksum / post-download hook
     #[serde(default = "default_checksum_auto")]
     checksum_auto: bool,
@@ -399,6 +402,7 @@ impl Default for AppSettings {
             notifications_enabled: true,
             minimize_to_tray: false,
             theme_mode: default_theme_mode(),
+            mcp_enabled: false,
             checksum_auto: default_checksum_auto(),
             av_hook_enabled: false,
             av_hook_preset: String::new(),
@@ -1188,6 +1192,94 @@ fn get_app_paths(app: AppHandle) -> Result<serde_json::Value, String> {
         "appData": app_data_dir(&app)?.to_string_lossy(),
         "ffmpegDir": ffmpeg_install_dir(&app)?.to_string_lossy(),
         "settings": settings_path(&app)?.to_string_lossy(),
+    }))
+}
+
+/// Resolve how AI clients should launch `udl mcp` (stdio only).
+fn udl_mcp_launch(app: &AppHandle) -> (String, Vec<String>) {
+    if !use_sidecar_binary() {
+        let core = core_dir(app);
+        return (
+            "uv".into(),
+            vec![
+                "run".into(),
+                "--directory".into(),
+                core.to_string_lossy().into_owned(),
+                "udl".into(),
+                "mcp".into(),
+            ],
+        );
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for name in [
+                "udl",
+                "udl.exe",
+                "udl-x86_64-pc-windows-msvc.exe",
+                "udl-aarch64-apple-darwin",
+                "udl-x86_64-apple-darwin",
+                "udl-x86_64-unknown-linux-gnu",
+                "udl-aarch64-unknown-linux-gnu",
+            ] {
+                let candidate = dir.join(name);
+                if candidate.is_file() {
+                    return (
+                        candidate.to_string_lossy().into_owned(),
+                        vec!["mcp".into()],
+                    );
+                }
+            }
+            // Tauri externalBin often lives beside the app binary as udl-<triple>
+            if let Ok(entries) = fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let fname = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    if fname.starts_with("udl")
+                        && (fname == "udl"
+                            || fname == "udl.exe"
+                            || fname.contains("apple-darwin")
+                            || fname.contains("windows-msvc")
+                            || fname.contains("unknown-linux"))
+                        && path.is_file()
+                    {
+                        return (path.to_string_lossy().into_owned(), vec!["mcp".into()]);
+                    }
+                }
+            }
+        }
+    }
+    ("udl".into(), vec!["mcp".into()])
+}
+
+#[tauri::command]
+fn get_mcp_client_config(app: AppHandle) -> Result<serde_json::Value, String> {
+    let settings = load_settings_file(&app);
+    let (command, args) = udl_mcp_launch(&app);
+    let server = serde_json::json!({
+        "command": command,
+        "args": args,
+    });
+    let claude = serde_json::json!({
+        "mcpServers": {
+            "unified-downloader": server,
+        }
+    });
+    let cursor = serde_json::json!({
+        "mcpServers": {
+            "unified-downloader": server,
+        }
+    });
+    Ok(serde_json::json!({
+        "enabled": settings.mcp_enabled,
+        "transport": "stdio",
+        "claudeDesktop": claude,
+        "cursor": cursor,
+        "snippet": serde_json::to_string_pretty(&claude).unwrap_or_default(),
+        "note": "stdio only; enable MCP in settings before connecting. Never exposes credentials.",
     }))
 }
 
@@ -3242,6 +3334,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            get_mcp_client_config,
             set_proxy_password,
             clear_proxy_password,
             set_zip_password,

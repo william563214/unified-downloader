@@ -17,7 +17,8 @@ unified-downloader/
 │  ├─ metadata.py         # 統一 item_metadata（全站）
 │  ├─ store/              # SQLite 歷史／佇列／去重（migrations）
 │  ├─ events.py           # JSON-lines 事件（含 metadata / duplicate / postprocess）
-│  └─ cli.py              # resolve / probe / get / history / queue / iwara / secrets / …
+│  ├─ mcp_server.py       # optional MCP stdio server（AI 客戶端）
+│  └─ cli.py              # resolve / probe / get / history / queue / mcp / iwara / secrets / …
 ├─ app/                   # Tauri v2 + React/TS GUI（sidecar 叫 udl）
 ├─ docs/                  # 事件、metadata、networking、scheduler、page-download、checksum-hook…
 ├─ packaging/             # PyInstaller spec
@@ -95,6 +96,41 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 > - `docs/screenshots/queue-dashboard.png` — 統一佇列（進度／ETA／批次操作）
 > - `docs/screenshots/settings.png` — 整合設定頁（分區＋匯入匯出）
 > - `docs/screenshots/theme-dark.png` — 跟隨系統深色主題
+
+### MCP（AI 客戶端）
+
+讓 Claude Desktop、Cursor 等透過 [Model Context Protocol](https://modelcontextprotocol.io/) 以 **stdio** 控制下載佇列與歷史（不開網路埠）。
+
+1. 安裝 MCP 依賴（開發／CLI）：
+
+```bash
+cd core
+uv sync --extra mcp
+```
+
+2. 在 GUI **設定 → MCP** 勾選「啟用 MCP 伺服器」並儲存（預設關）。未啟用時 `udl mcp` 會拒絕啟動（除非 `UDL_MCP_FORCE=1` 或 `--force`）。
+3. 複製設定頁提供的 JSON，併入客戶端設定：
+
+**Claude Desktop**（`claude_desktop_config.json` 的 `mcpServers`）：
+
+```json
+{
+  "mcpServers": {
+    "unified-downloader": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/unified-downloader/core", "udl", "mcp"]
+    }
+  }
+}
+```
+
+打包後的 App 可改為指向 sidecar 二進位，例如 `"command": "/path/to/udl", "args": ["mcp"]`（設定頁會依環境產生正確片段）。
+
+**Cursor**：同樣把上述 `mcpServers` 區塊併入 Cursor MCP 設定。
+
+暴露的工具：`add_download`、`list_queue`、`get_status`、`pause`／`resume`／`cancel`、`search_history`、`list_supported_sites`、`resolve_url`；唯讀資源 `udl://queue`、`udl://history`。與 GUI 共用同一 SQLite（WAL）。
+
+**安全：** 不經 MCP 暴露 credentials／cookies／keychain／ZIP 密碼；無變更登入或密鑰的工具；無法開啟 Cloudflare bypass 或 curl_cffi impersonation；輸出路徑必須落在設定的下載根目錄內。
 
 ### 命名／規則／修復 CLI（v0.5）
 
