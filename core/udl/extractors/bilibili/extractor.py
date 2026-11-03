@@ -58,7 +58,13 @@ from udl.extractors.bilibili.subtitles import (
 )
 from udl.extractors.bilibili.templates import default_template_for, type_template_key
 from udl.metadata import item_metadata
-from udl.postprocess.ffmpeg import ffmpeg_missing_error, find_ffmpeg, merge_dash, merge_error
+from udl.postprocess.ffmpeg import (
+    ffmpeg_missing_error,
+    find_ffmpeg,
+    merge_dash,
+    merge_error,
+    remux_audio,
+)
 
 blocked_badges = frozenset(
     {
@@ -278,7 +284,10 @@ class bilibili_extractor(extractor):
         multi = len(parts) > 1 or len(probe.parts) > 1
         files: list[extracted_file] = []
         job_meta = self._job_metadata(probe)
-        ext = ".m4a" if probe.kind in {"audio", "audio_menu"} else f".{self.options.container}"
+        if probe.kind in {"audio", "audio_menu"} or self.options.audio_only:
+            ext = ".m4a"
+        else:
+            ext = f".{self.options.container}"
         for part in parts:
             part_id = self._part_item_id(part, probe.kind)
             part_meta = item_metadata(
@@ -1838,16 +1847,62 @@ class bilibili_extractor(extractor):
             self._write_extras(cli, meta, dest=path, emit=emit, job_id=job_id, file_id=file_id)
             return path
 
-        video_stream, used_qn = pick_video_stream(
-            dash, quality=qn_int, codecid=codec_int
-        )
         audio_stream = pick_audio_stream(dash, audio_quality=audio_int)
-        v_urls = candidate_urls(stream_urls(video_stream))
-        if not v_urls:
-            raise RuntimeError("DASH video entry has no URL")
         a_urls = (
             candidate_urls(stream_urls(audio_stream)) if audio_stream else []
         )
+        audio_only = bool(self.options.audio_only)
+
+        if audio_only:
+            if not a_urls:
+                raise RuntimeError("DASH has no audio stream for audio-only download")
+            find_ffmpeg(self.ffmpeg)
+            if dest.suffix.lower() not in {".m4a", ".mp3", ".flac", ".opus"}:
+                dest = dest.with_suffix(".m4a")
+            work = dest.parent / f".udl-bili-{file_id.replace(':', '_')}"
+            work.mkdir(parents=True, exist_ok=True)
+            audio_part = work / "audio.m4s"
+            media_headers = stream_headers()
+            try:
+                self._download_with_fallbacks(
+                    a_urls,
+                    audio_part,
+                    file_id=f"{file_id}:a",
+                    name=audio_part.name,
+                    opts=opts,
+                    job_id=job_id,
+                    emit=emit,
+                    headers=media_headers,
+                )
+                if cancel is not None and cancel.is_set():
+                    raise InterruptedError("cancelled")
+                if emit:
+                    emit.merging(
+                        job=job_id,
+                        file=file_id,
+                        path=str(dest),
+                        message="remuxing DASH audio with FFmpeg",
+                    )
+                remux_audio(audio_part, dest, ffmpeg=self.ffmpeg)
+                self._write_extras(
+                    cli,
+                    meta,
+                    dest=dest,
+                    emit=emit,
+                    job_id=job_id,
+                    file_id=file_id,
+                    player_hint=None,
+                )
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+            return dest
+
+        video_stream, used_qn = pick_video_stream(
+            dash, quality=qn_int, codecid=codec_int
+        )
+        v_urls = candidate_urls(stream_urls(video_stream))
+        if not v_urls:
+            raise RuntimeError("DASH video entry has no URL")
 
         work = dest.parent / f".udl-bili-{file_id.replace(':', '_')}"
         work.mkdir(parents=True, exist_ok=True)

@@ -366,6 +366,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="bilibili audio id (30251 Hi-Res / 30250 Dolby / 30280 / 30232 / 30216)",
     )
     p_get.add_argument(
+        "--audio-only",
+        action="store_true",
+        help=(
+            "download audio only when the extractor supports it "
+            "(Bilibili DASH／音訊稿件；其他站點忽略並照常下載)"
+        ),
+    )
+    p_get.add_argument(
         "--container",
         choices=("mp4", "mkv"),
         default="mp4",
@@ -1337,6 +1345,7 @@ def _bilibili_from_args(args: argparse.Namespace):
         audio_quality=audio_quality,
         part=args.part,
         container=getattr(args, "container", None) or "mp4",
+        audio_only=bool(getattr(args, "audio_only", False)),
         danmaku_format=danmaku,
         subtitle_format=subtitle,
         subtitle_languages=langs,

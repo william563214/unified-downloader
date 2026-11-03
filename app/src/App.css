@@ -470,6 +470,22 @@ button:disabled {
   color: var(--muted);
 }
 
+.hint.warn {
+  color: var(--danger);
+}
+
+.hotkey-bind-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.hotkey-bind-row button.recording {
+  border-color: var(--accent, #2a6f97);
+  color: var(--accent, #2a6f97);
+}
+
 .error {
   color: var(--danger);
 }
