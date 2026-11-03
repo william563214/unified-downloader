@@ -51,10 +51,14 @@ class network_settings:
     aria2_rpc_secret: str | None = None
     # multi-connection segmented downloads (v0.9-A); aria2 still optional backend
     segmented_enabled: bool = True
-    # max connections per file (IDM-style dynamic segmentation)
+    # starting connections per file (AIMD initial; IDM-style dynamic segmentation)
     connections: int = 8
-    # hard cap per host across segments of one file
+    # hard cap per host (adaptive never exceeds this)
     per_host_connections: int = 8
+    # global connection budget across active downloads in this process
+    global_max_connections: int = 24
+    # per-host AIMD adaptive concurrency (reduce on 429/503/reset/timeout)
+    adaptive_concurrency: bool = True
     # when True also use segmented for site extractors that yield plain HTTP
     # (gofile bunkr iwara mega always excluded)
     segmented_for_sites: bool = False
@@ -89,12 +93,24 @@ def configure_network(settings: network_settings) -> None:
     """replace the process-wide network settings."""
     global _active
     _active = settings
+    try:
+        from udl.network.adaptive import configure_adaptive_from_network
+
+        configure_adaptive_from_network(settings)
+    except Exception:  # noqa: BLE001 — adaptive is best-effort
+        pass
 
 
 def update_network(**kwargs: Any) -> network_settings:
     """patch and return the active network settings."""
     global _active
     _active = replace(_active, **kwargs)
+    try:
+        from udl.network.adaptive import configure_adaptive_from_network
+
+        configure_adaptive_from_network(_active)
+    except Exception:  # noqa: BLE001
+        pass
     return _active
 
 
@@ -298,6 +314,18 @@ def settings_from_cli_args(args: Any) -> network_settings:
         per_host = connections
     else:
         per_host = max(1, min(int(per_host), 32))
+    global_max = getattr(args, "global_max_connections", None)
+    if global_max is None:
+        global_max = 24
+    else:
+        global_max = max(1, min(int(global_max), 128))
+    adaptive = getattr(args, "adaptive_concurrency", None)
+    if adaptive is None:
+        adaptive_concurrency = not bool(getattr(args, "no_adaptive_concurrency", False))
+    else:
+        adaptive_concurrency = bool(adaptive)
+    if bool(getattr(args, "no_adaptive_concurrency", False)):
+        adaptive_concurrency = False
     segmented_enabled = not bool(getattr(args, "no_segmented", False))
     if getattr(args, "segmented", None) is False:
         segmented_enabled = False
@@ -346,6 +374,8 @@ def settings_from_cli_args(args: Any) -> network_settings:
         segmented_enabled=segmented_enabled,
         connections=connections,
         per_host_connections=per_host,
+        global_max_connections=global_max,
+        adaptive_concurrency=adaptive_concurrency,
         segmented_for_sites=segmented_for_sites,
         external_downloader=external_downloader,
         concurrent_fragments=concurrent_fragments,

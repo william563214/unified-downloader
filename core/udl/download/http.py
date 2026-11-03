@@ -28,7 +28,17 @@ from udl.download.segmented import (
     validators_match,
 )
 from udl.events import emitter
-from udl.network import active_network, apply_to_session, default_user_agent
+from udl.network import (
+    active_download_guard,
+    active_network,
+    apply_to_session,
+    classify_pressure,
+    default_user_agent,
+    global_tuner,
+    host_key_from_url,
+    parse_retry_after,
+    retry_delay,
+)
 
 # defaults (lowercase constants per project convention)
 default_chunk_size = 1024 * 1024
@@ -63,6 +73,8 @@ class download_options:
     segmented: bool | None = None
     connections: int | None = None
     per_host_connections: int | None = None
+    global_max_connections: int | None = None
+    adaptive_concurrency: bool | None = None
     # fragment / external backend (native | aria2c | ffmpeg); None = network
     external_downloader: str | None = None
     concurrent_fragments: int | None = None
@@ -121,13 +133,16 @@ def options_from_network(
         segmented=segmented,
         connections=conns,
         per_host_connections=net.per_host_connections,
+        global_max_connections=net.global_max_connections,
+        adaptive_concurrency=net.adaptive_concurrency,
         external_downloader=net.external_downloader,
         concurrent_fragments=net.concurrent_fragments,
         _job_limiter=make_job_limiter(job_limit),
     )
 
 
-def effective_connections(opts: download_options) -> int:
+def effective_connections(opts: download_options, url: str | None = None) -> int:
+    """resolve connection count; optionally AIMD-tuned per host."""
     net = active_network()
     conns = opts.connections if opts.connections is not None else net.connections
     host_cap = (
@@ -137,7 +152,27 @@ def effective_connections(opts: download_options) -> int:
     )
     conns = int(conns or default_connections)
     host_cap = int(host_cap or default_connections)
-    return max(1, min(conns, host_cap, 32))
+    ceiling = max(1, min(conns, host_cap, 32))
+    adaptive = (
+        opts.adaptive_concurrency
+        if opts.adaptive_concurrency is not None
+        else net.adaptive_concurrency
+    )
+    if not adaptive or not url:
+        return ceiling
+    tuner = global_tuner()
+    global_max = (
+        opts.global_max_connections
+        if opts.global_max_connections is not None
+        else net.global_max_connections
+    )
+    tuner.configure(
+        initial=conns,
+        per_host_max=host_cap,
+        global_max=int(global_max or 24),
+        enabled=True,
+    )
+    return tuner.suggest(url, ceiling=ceiling, initial=conns)
 
 
 def should_use_segmented(opts: download_options, *, site: str | None = None) -> bool:
@@ -246,28 +281,30 @@ def download_file(
 
     # multi-connection segmented path (falls back on SegmentedUnsupported)
     # callers (base/direct) set opts.segmented via should_use_segmented(site=...)
-    if opts.segmented is True and effective_connections(opts) > 1:
+    conns = effective_connections(opts, item.url)
+    if opts.segmented is True and conns > 1:
         try:
-            path = download_file_segmented(
-                url=item.url,
-                dest=dest,
-                file_id=item.file_id,
-                job_id=job_id,
-                session=session,
-                connections=effective_connections(opts),
-                retries=opts.retries,
-                timeout=opts.timeout,
-                chunk_size=opts.chunk_size,
-                progress_interval=opts.progress_interval,
-                cancel=cancel,
-                emit=emit,
-                headers=item.headers,
-                expected_size=item.expected_size,
-                etag=item.etag,
-                last_modified=item.last_modified,
-                accept_ranges=item.accept_ranges,
-                job_limiter=job_limiter,
-            )
+            with active_download_guard():
+                path = download_file_segmented(
+                    url=item.url,
+                    dest=dest,
+                    file_id=item.file_id,
+                    job_id=job_id,
+                    session=session,
+                    connections=conns,
+                    retries=opts.retries,
+                    timeout=opts.timeout,
+                    chunk_size=opts.chunk_size,
+                    progress_interval=opts.progress_interval,
+                    cancel=cancel,
+                    emit=emit,
+                    headers=item.headers,
+                    expected_size=item.expected_size,
+                    etag=item.etag,
+                    last_modified=item.last_modified,
+                    accept_ranges=item.accept_ranges,
+                    job_limiter=job_limiter,
+                )
             if own_session:
                 session.close()
             return path
@@ -279,95 +316,119 @@ def download_file(
             raise
 
     last_error: Exception | None = None
+    host = host_key_from_url(item.url)
+    tuner = global_tuner()
     try:
-        # validate ETag / Last-Modified before single-connection resume
-        part_size = tmp.stat().st_size if tmp.is_file() else 0
-        if part_size > 0 and (item.etag or item.last_modified):
-            if not _resume_validators_ok(session, item, opts):
-                tmp.unlink(missing_ok=True)
-                clear_state(tmp)
-                part_size = 0
-
-        for attempt in range(opts.retries):
-            if _is_cancelled(cancel):
-                raise InterruptedError("cancelled")
-
+        with active_download_guard():
+            # validate ETag / Last-Modified before single-connection resume
             part_size = tmp.stat().st_size if tmp.is_file() else 0
-            req_headers: dict[str, str] = {}
-            if item.headers:
-                req_headers.update(item.headers)
-            if part_size > 0:
-                req_headers["Range"] = f"bytes={part_size}-"
+            if part_size > 0 and (item.etag or item.last_modified):
+                if not _resume_validators_ok(session, item, opts):
+                    tmp.unlink(missing_ok=True)
+                    clear_state(tmp)
+                    part_size = 0
 
-            try:
-                response = session.get(
-                    item.url,
-                    headers=req_headers,
-                    stream=True,
-                    timeout=opts.timeout,
-                )
-            except requests.RequestException as exc:
-                last_error = exc
-                time.sleep(min(2**attempt, 8))
-                continue
+            for attempt in range(opts.retries):
+                if _is_cancelled(cancel):
+                    raise InterruptedError("cancelled")
 
-            with response:
-                if not _valid_status(response.status_code, part_size):
-                    last_error = RuntimeError(
-                        f"HTTP {response.status_code} for {item.url}"
-                    )
-                    if response.status_code in (403, 404):
-                        break
-                    time.sleep(min(2**attempt, 8))
-                    continue
-
-                content_type = (response.headers.get("Content-Type") or "").lower()
-                if "text/html" in content_type and item.expected_size is not None:
-                    # likely an auth/error interstitial rather than the payload
-                    last_error = RuntimeError(
-                        f"unexpected HTML response for {item.url} "
-                        f"(status {response.status_code}); check auth headers"
-                    )
-                    if tmp.exists():
-                        tmp.unlink(missing_ok=True)
-                    time.sleep(min(2**attempt, 8))
-                    continue
-
-                total = _total_from_headers(response.headers, part_size)
-                if total is None and item.expected_size is not None:
-                    total = item.expected_size
+                part_size = tmp.stat().st_size if tmp.is_file() else 0
+                req_headers: dict[str, str] = {}
+                if item.headers:
+                    req_headers.update(item.headers)
+                if part_size > 0:
+                    req_headers["Range"] = f"bytes={part_size}-"
 
                 try:
-                    _write_stream(
-                        response,
-                        tmp,
-                        part_size=part_size,
-                        total=total,
-                        opts=opts,
-                        job_id=job_id,
-                        file_id=item.file_id,
-                        emit=emit,
-                        job_limiter=job_limiter,
+                    response = session.get(
+                        item.url,
+                        headers=req_headers,
+                        stream=True,
+                        timeout=opts.timeout,
                     )
-                except InterruptedError:
-                    raise
-                except OSError as exc:
+                except requests.RequestException as exc:
                     last_error = exc
-                    time.sleep(min(2**attempt, 8))
+                    reason = classify_pressure(exc=exc)
+                    if reason:
+                        tuner.record_pressure(host, reason)
+                    time.sleep(retry_delay(attempt))
                     continue
 
-                if total is not None and tmp.stat().st_size != total:
-                    last_error = RuntimeError(
-                        f"size mismatch: got {tmp.stat().st_size} expected {total}"
-                    )
-                    if tmp.exists():
-                        tmp.unlink(missing_ok=True)
-                    continue
+                with response:
+                    if not _valid_status(response.status_code, part_size):
+                        last_error = RuntimeError(
+                            f"HTTP {response.status_code} for {item.url}"
+                        )
+                        if response.status_code in (403, 404):
+                            break
+                        reason = classify_pressure(status=response.status_code)
+                        ra = None
+                        if reason:
+                            tuner.record_pressure(host, reason)
+                            ra = parse_retry_after(
+                                response.headers.get("Retry-After")
+                            )
+                        time.sleep(retry_delay(attempt, retry_after=ra))
+                        continue
 
-                tmp.rename(dest)
-                if emit:
-                    emit.done(job=job_id, file=item.file_id, path=str(dest))
-                return dest
+                    content_type = (response.headers.get("Content-Type") or "").lower()
+                    if "text/html" in content_type and item.expected_size is not None:
+                        # likely an auth/error interstitial rather than the payload
+                        last_error = RuntimeError(
+                            f"unexpected HTML response for {item.url} "
+                            f"(status {response.status_code}); check auth headers"
+                        )
+                        if tmp.exists():
+                            tmp.unlink(missing_ok=True)
+                        time.sleep(retry_delay(attempt))
+                        continue
+
+                    total = _total_from_headers(response.headers, part_size)
+                    if total is None and item.expected_size is not None:
+                        total = item.expected_size
+
+                    try:
+                        _write_stream(
+                            response,
+                            tmp,
+                            part_size=part_size,
+                            total=total,
+                            opts=opts,
+                            job_id=job_id,
+                            file_id=item.file_id,
+                            emit=emit,
+                            job_limiter=job_limiter,
+                        )
+                    except InterruptedError:
+                        raise
+                    except OSError as exc:
+                        last_error = exc
+                        reason = classify_pressure(exc=exc)
+                        if reason:
+                            tuner.record_pressure(host, reason)
+                        time.sleep(retry_delay(attempt))
+                        continue
+
+                    if total is not None and tmp.stat().st_size != total:
+                        last_error = RuntimeError(
+                            f"size mismatch: got {tmp.stat().st_size} expected {total}"
+                        )
+                        if tmp.exists():
+                            tmp.unlink(missing_ok=True)
+                        continue
+
+                    tuner.record_success(host)
+                    tmp.rename(dest)
+                    if emit:
+                        emit.progress(
+                            job=job_id,
+                            file=item.file_id,
+                            bytes=dest.stat().st_size if dest.is_file() else 0,
+                            total=total,
+                            connections=1,
+                        )
+                        emit.done(job=job_id, file=item.file_id, path=str(dest))
+                    return dest
     finally:
         if own_session:
             session.close()

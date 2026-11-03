@@ -21,6 +21,13 @@ from requests import Session
 
 from udl.download.rate import make_job_limiter, rate_limiter, throttle
 from udl.events import emitter
+from udl.network.adaptive import (
+    classify_pressure,
+    global_tuner,
+    host_key_from_url,
+    parse_retry_after,
+    retry_delay,
+)
 
 # lowercase constants
 default_connections = 8
@@ -282,6 +289,9 @@ class _runtime:
     last_emit: float = 0.0
     started: float = field(default_factory=time.perf_counter)
     bytes_at_start: int = 0
+    # live AIMD worker cap (may drop below initial connections)
+    worker_limit: int = default_connections
+    host_key: str = "unknown"
 
 
 def download_file_segmented(
@@ -337,6 +347,13 @@ def download_file_segmented(
         raise SegmentedUnsupported("server does not support ranged downloads")
 
     total = int(total)
+    host = host_key_from_url(final_url)
+    tuner = global_tuner()
+    # adaptive suggest never exceeds caller ceiling (user max)
+    ceiling = max(1, min(int(connections), default_per_host_cap, 32))
+    adaptive_n = tuner.suggest(host, ceiling=ceiling, initial=ceiling)
+    worker_n = max(1, min(adaptive_n, ceiling))
+
     existing = load_state(meta_path)
     if existing is not None:
         if not validators_match(
@@ -355,7 +372,7 @@ def download_file_segmented(
             existing = None
 
     if existing is None or not existing.segments:
-        conns = max(1, min(connections, default_per_host_cap))
+        conns = worker_n
         segs = initial_segments(total, conns)
         state = segment_state(
             url=final_url,
@@ -383,9 +400,12 @@ def download_file_segmented(
         state=state,
         cancel=cancel,
         bytes_at_start=state.total_downloaded(),
+        worker_limit=worker_n,
+        host_key=host,
     )
     limiter = job_limiter or make_job_limiter(None)
-    max_workers = max(1, min(connections, len([s for s in state.segments if not s.done]) or 1))
+    # pool sized to user ceiling so AIMD can ramp up within the same download
+    max_workers = max(1, min(ceiling, len([s for s in state.segments if not s.done]) or 1))
 
     def _emit_progress(force: bool = False) -> None:
         if not emit:
@@ -414,6 +434,8 @@ def download_file_segmented(
             for s in segs_payload
             if not s["done"] and s["downloaded"] < s["total"]
         )
+        with rt.lock:
+            reported = min(active, rt.worker_limit) if active else rt.worker_limit
         emit.progress(
             job=job_id,
             file=file_id,
@@ -421,7 +443,7 @@ def download_file_segmented(
             total=total,
             bps=bps,
             segments=segs_payload,
-            connections=active,
+            connections=reported,
         )
         rt.last_emit = now
 
@@ -432,6 +454,16 @@ def download_file_segmented(
         with rt.lock:
             save_state(meta_path, state)
         rt.last_save = now
+
+    def _apply_pressure(reason: str) -> None:
+        new_limit = tuner.record_pressure(rt.host_key, reason)
+        with rt.lock:
+            rt.worker_limit = max(1, min(new_limit, ceiling))
+
+    def _apply_success() -> None:
+        new_limit = tuner.record_success(rt.host_key)
+        with rt.lock:
+            rt.worker_limit = max(1, min(new_limit, ceiling))
 
     def _download_one(seg_id: int) -> None:
         last_error: Exception | None = None
@@ -457,7 +489,10 @@ def download_file_segmented(
                 )
             except requests.RequestException as exc:
                 last_error = exc
-                time.sleep(min(2**attempt, 8))
+                reason = classify_pressure(exc=exc)
+                if reason:
+                    _apply_pressure(reason)
+                time.sleep(retry_delay(attempt))
                 continue
 
             with response:
@@ -465,7 +500,12 @@ def download_file_segmented(
                     last_error = RuntimeError(f"HTTP {response.status_code}")
                     if response.status_code in (403, 404, 416):
                         break
-                    time.sleep(min(2**attempt, 8))
+                    reason = classify_pressure(status=response.status_code)
+                    ra = None
+                    if reason:
+                        _apply_pressure(reason)
+                        ra = parse_retry_after(response.headers.get("Retry-After"))
+                    time.sleep(retry_delay(attempt, retry_after=ra))
                     continue
                 if response.status_code == 200 and start > 0:
                     # server ignored Range — not usable for segmented
@@ -512,21 +552,25 @@ def download_file_segmented(
                     raise
                 except OSError as exc:
                     last_error = exc
-                    time.sleep(min(2**attempt, 8))
+                    reason = classify_pressure(exc=exc)
+                    if reason:
+                        _apply_pressure(reason)
+                    time.sleep(retry_delay(attempt))
                     continue
 
             with rt.lock:
                 seg = next((s for s in state.segments if s.id == seg_id), None)
                 if seg is not None and seg.current > seg.end:
+                    _apply_success()
                     _maybe_save(force=True)
                     return
                 if seg is not None and seg.current > start:
                     # partial progress kept; retry remaining
                     last_error = RuntimeError("incomplete segment read")
-                    time.sleep(min(2**attempt, 8))
+                    time.sleep(retry_delay(attempt))
                     continue
             last_error = last_error or RuntimeError("segment download stalled")
-            time.sleep(min(2**attempt, 8))
+            time.sleep(retry_delay(attempt))
 
         if cancel is not None and cancel.is_set():
             raise InterruptedError("cancelled")
@@ -540,7 +584,7 @@ def download_file_segmented(
                 with rt.lock:
                     pending = [s for s in state.segments if not s.done]
                     active_ids = set(inflight.values())
-                    free_slots = max_workers - len(inflight)
+                    free_slots = max(0, rt.worker_limit - len(inflight))
                     for seg in pending:
                         if free_slots <= 0:
                             break
@@ -569,7 +613,9 @@ def download_file_segmented(
 
                     # dynamic split: reuse freed connection on the largest remnant
                     with rt.lock:
-                        new_seg = split_largest(state)
+                        new_seg = None
+                        if len(inflight) < rt.worker_limit:
+                            new_seg = split_largest(state)
                         if new_seg is not None:
                             save_state(meta_path, state)
                     _submit_pending()

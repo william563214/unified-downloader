@@ -270,6 +270,12 @@
   - [x] 未加密 m3u8 media playlist 解析；加密／DRM 標記清楚拒絕
   - [x] CLI／GUI：`--external-downloader`、`--concurrent-fragments`；`docs/fragment-download.md`
   - [ ] 站點 extractor 全面改接片段基底（後續；Bilibili DASH 仍用既有分軌＋FFmpeg 合併）
+- [x] Per-host 自適應連線並發（AIMD；[#45](https://github.com/william563214/unified-downloader/issues/45)）
+  - 靈感：[OpenSelena/omniget](https://github.com/OpenSelena/omniget) `adaptive_concurrency`
+  - 健康回應加法遞增；429／503／連線重置／逾時乘法減半；尊重 `Retry-After`；指數退避＋jitter
+  - 全域／per-host 上限寫入設定；學到的 per-host 上限持久化於 SQLite；GUI／CLI 可重置
+  - 套用原生 extractor 與通用直連／分段／片段下載；**不用來規避站點限速或配額**
+  - GUI 下載佇列顯示每任務目前連線數；`docs/networking.md`
 - [x] Postprocessor 串接＋輸出模板（[#26](https://github.com/william563214/unified-downloader/issues/26)）
   - 可設定順序 PP 鏈：checksum／av／extract／nfo／cover／move／exec
   - 輸出模板：`{field|default}`、替代欄位、`>` strftime、`%(…)s`、`outtmpl_na_placeholder`
@@ -303,3 +309,4 @@
 - 付費牆／VIP／區域限制／MEGA 配額繞過（含 SmartProxy／換 IP）
 - MegaBasterd GUI／SmartProxy 不移植（協定能力已內建於 `udl.extractors.mega`）
 - DRM／加密串流繞過；系統級下載攔截
+- 以自適應並發「衝高」連線來規避站點限速／配額／ToS（AIMD 僅在站點回推時減壓，永不超過使用者上限）
