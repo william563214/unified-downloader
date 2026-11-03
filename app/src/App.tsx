@@ -3813,11 +3813,11 @@ export default function App() {
             )}
             <h4>多連線分段下載</h4>
             <p className="hint">
-              IDM 風格動態分段（連線完成後切分最大剩餘區塊）；不支援 Range 時自動單連線。Gofile／Bunkr／Iwara／MEGA 不使用。aria2 啟用且可連線時仍優先 aria2。
+              IDM 風格動態分段（連線完成後切分最大剩餘區塊）；不支援 Range 時自動單連線。Gofile／Bunkr／Iwara／MEGA 不使用。aria2 啟用且可連線時仍優先 aria2。自適應並發僅在站點回推（429／503／重置／逾時）時降壓，永不超過下方上限，不用來規避限速。
             </p>
             <div className="settings-grid">
               <label className="field compact">
-                <span>每檔連線數</span>
+                <span>起始連線數</span>
                 <input
                   type="number"
                   min={1}
@@ -3832,6 +3832,69 @@ export default function App() {
                   }}
                 />
               </label>
+              <label className="field compact">
+                <span>每主機上限</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={32}
+                  value={settingsDraft.perHostConnections}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      perHostConnections: Number(e.target.value) || 1,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                />
+              </label>
+              <label className="field compact">
+                <span>全域連線預算</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={128}
+                  value={settingsDraft.globalMaxConnections}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      globalMaxConnections: Number(e.target.value) || 1,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                />
+              </label>
+            </div>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.adaptiveConcurrency}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    adaptiveConcurrency: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                }}
+              />
+              <span>啟用 per-host 自適應連線（AIMD）</span>
+            </label>
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      await invoke("host_limits_reset", {});
+                    } catch (err) {
+                      console.error(err);
+                    }
+                  })();
+                }}
+              >
+                重置已學習的主機連線上限
+              </button>
             </div>
             <label className="check">
               <input

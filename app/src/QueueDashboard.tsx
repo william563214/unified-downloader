@@ -247,6 +247,14 @@ export function QueueDashboard({
                         {formatEta(progress.etaSec)}
                         {" · "}
                         {progress.pct.toFixed(0)}%
+                        {(() => {
+                          const conns = job.files
+                            .map((f) => f.connections)
+                            .filter((n): n is number => typeof n === "number" && n > 0);
+                          if (!conns.length) return "";
+                          const totalConns = conns.reduce((a, b) => a + b, 0);
+                          return ` · ${totalConns} 連線`;
+                        })()}
                       </span>
                     </div>
                     <div className="bar" aria-hidden>
@@ -288,6 +296,9 @@ export function QueueDashboard({
                             {formatSpeed(file.bps)}
                             {" · ETA "}
                             {formatEta(remain)}
+                            {file.connections != null && file.connections > 0
+                              ? ` · ${file.connections} 連線`
+                              : ""}
                             {" · "}
                             {file.alreadyDownloaded
                               ? "已下載"

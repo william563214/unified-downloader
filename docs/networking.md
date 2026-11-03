@@ -19,7 +19,10 @@ v0.10 起 `udl.network` 採 yt-dlp 風格的 **RequestHandler** 抽象（Unlicen
 | curl_cffi 指紋模擬 | **關閉** | 選用；需安裝 `curl_cffi`；政策同 Cloudflare 繞過 |
 | aria2 RPC | 關閉 | 啟用後檔案下載交給 aria2；連不上則回退內建引擎 |
 | 多連線分段 | 開啟 | IDM 風格動態分段；無 Range 時單連線 |
-| 每檔連線數 | 8 | 上限 32；並受 per-host 上限約束 |
+| 起始連線數 | 8 | AIMD 起點；上限 32 |
+| 每主機上限 | 8 | adaptive 永不超過此值 |
+| 全域連線預算 | 24 | 行程內活躍下載共用的連線總預算 |
+| 自適應並發 | 開啟 | per-host AIMD；429／503／重置／逾時時降壓；學到的上限寫入 SQLite |
 | 站點也用分段 | 關閉 | 純 HTTP 檔案的站點 extractor；Gofile／Bunkr／Iwara／MEGA **永遠排除** |
 | 片段後端 | `native` | HLS／DASH／HTTP 分段列表：`native`／`aria2c`／`ffmpeg`（見 `docs/fragment-download.md`） |
 | 並行片段數 | 1 | native 後端同時下載的片段數（上限 32） |
@@ -105,7 +108,27 @@ uv run udl get URL -o ./out --no-segmented
 uv run udl get URL -o ./out --segmented-for-sites
 ```
 
-`progress` 事件可帶 `segments`（各區段起迄／已下載）與 `connections`；GUI 任務列會顯示分段進度條。詳見 `docs/events.md`。
+`progress` 事件可帶 `segments`（各區段起迄／已下載）與 `connections`；GUI 任務列會顯示分段進度條與目前連線數。詳見 `docs/events.md`。
+
+## Per-host 自適應連線（AIMD）
+
+靈感來自 [OpenSelena/omniget](https://github.com/OpenSelena/omniget) 的 `adaptive_concurrency`（見 NOTICE）：
+
+1. 以「起始連線數」為起點，受「每主機上限」與「全域連線預算」約束
+2. 健康回應累積後 **加法＋1**；遇 HTTP 429／503、連線重置或逾時 **乘法÷2**
+3. 尊重 `Retry-After`；重試採指數退避＋jitter
+4. 學到的 per-host 上限寫入 SQLite（`host_connection_limits`），下次重用
+5. **不做**：提高壓力以規避站點限速／配額／ToS；永不超過使用者上限
+
+```bash
+uv run udl get URL -o ./out --connections 8 --per-host-connections 8 --global-max-connections 24
+uv run udl get URL -o ./out --no-adaptive-concurrency
+uv run udl host-limits list --json
+uv run udl host-limits reset --json
+uv run udl host-limits reset --host cdn.example.com --json
+```
+
+GUI 設定「網路」可開關自適應並發、調整上限，並以「重置已學習的主機連線上限」清空 SQLite；下載佇列檔案列會顯示目前連線數。
 
 ## 片段下載（v0.10）
 
@@ -170,16 +193,18 @@ uv run udl get URL -o ./out --connections 12
 
 ## GUI
 
-設定頁「網路」區塊（zh-TW）：全域／單任務限速、代理三模式、自訂 URL／帳密、User-Agent、**curl_cffi 指紋模擬（預設關）**、RequestHandler 後端、aria2、**每檔連線數／分段開關／站點也用分段**。  
+設定頁「網路」區塊（zh-TW）：全域／單任務限速、代理三模式、自訂 URL／帳密、User-Agent、**curl_cffi 指紋模擬（預設關）**、RequestHandler 後端、aria2、**起始／每主機／全域連線上限、自適應 AIMD、重置學習值、分段開關／站點也用分段**。  
 密碼欄僅在儲存時寫入 keychain；不會留在 `settings.json`。  
-下載佇列任務詳情在多連線時顯示分段進度條。
+下載佇列任務詳情顯示目前連線數；多連線時另顯示分段進度條。
 
 ## 模組對照
 
 | 模組 | 職責 |
 |------|------|
 | `udl.network` | 行程設定、RequestHandler 導演、代理／UA、`apply_to_session`、連線數／分段旗標 |
+| `udl.network.adaptive` | per-host AIMD 自適應並發、Retry-After／退避、全域預算 |
 | `udl.network._urllib`／`_requests`／`_curlcffi`／`_websockets` | 各後端 RequestHandler |
+| `udl.store.host_limits` | 學到的 per-host 連線上限（SQLite） |
 | `udl.secrets` | `keyring` 讀寫（`proxy.custom`、`aria2.rpc_secret`、日後登入） |
 | `udl.download.rate` | token-bucket 限速（Response.read 亦經此層） |
 | `udl.download.http` | 共用引擎（限速／代理／UA／aria2 回退／呼叫分段） |

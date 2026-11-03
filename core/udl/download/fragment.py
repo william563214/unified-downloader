@@ -32,7 +32,15 @@ from udl.download.http import (
 )
 from udl.download.rate import make_job_limiter, rate_limiter, throttle
 from udl.events import emitter
-from udl.network import apply_to_session, default_user_agent
+from udl.network import (
+    active_download_guard,
+    active_network,
+    apply_to_session,
+    classify_pressure,
+    default_user_agent,
+    global_tuner,
+    host_key_from_url,
+)
 
 # lowercase constants
 fragment_state_suffix = ".udl.frag.json"
@@ -427,6 +435,21 @@ def download_fragments(
     last_emit = 0.0
     lock = Lock()
     started = time.time()
+    net = active_network()
+    sample_url = remaining[0].url if remaining else (fragments[0].url if fragments else "")
+    host = host_key_from_url(sample_url)
+    tuner = global_tuner()
+    configured = max(1, int(options.concurrent or 1))
+    host_cap = max(1, int(net.per_host_connections or configured))
+    if net.adaptive_concurrency and configured > 1:
+        concurrent = tuner.suggest(
+            host,
+            ceiling=min(configured, host_cap, 32),
+            initial=min(configured, host_cap, 32),
+        )
+    else:
+        concurrent = configured
+    live_connections = {"n": concurrent}
 
     def emit_progress(done_index: int, nbytes: int) -> None:
         nonlocal last_emit, completed_bytes
@@ -444,95 +467,123 @@ def download_fragments(
                     bps=cur_bytes / elapsed,
                     fragment_index=done_index,
                     fragment_count=total_frags,
+                    connections=live_connections["n"],
                 )
                 last_emit = now
 
     try:
-        concurrent = max(1, int(options.concurrent or 1))
-        with tmp.open(open_mode) as dest_stream:
-            if concurrent <= 1:
-                for frag in remaining:
-                    if _is_cancelled(options.cancel):
-                        raise InterruptedError("cancelled")
-                    ok = _download_and_append(
-                        frag,
-                        tmp,
-                        dest_stream,
-                        options,
-                        job_id=job_id,
-                        file_id=file_id,
-                        session=session,
-                        emit=emit,
-                        job_limiter=job_limiter,
-                        on_bytes=lambda n, idx=frag.index: emit_progress(idx + 1, n),
-                    )
-                    if not ok:
-                        if options.skip_unavailable and frag.index > 0:
-                            state.fragment_index = frag.index + 1
-                            save_fragment_state(tmp, state)
-                            continue
-                        raise fragment_error(
-                            f"failed to download fragment {frag.index}: {frag.url}"
-                        )
-                    state.fragment_index = frag.index + 1
-                    save_fragment_state(tmp, state)
-            else:
-                # download ahead then append in order
-                pending = list(remaining)
-                next_append = resume_from
-                ready: dict[int, Path] = {}
-                with ThreadPoolExecutor(max_workers=concurrent) as pool:
-                    futures = {
-                        pool.submit(
-                            _fetch_fragment_file,
-                            frag,
-                            tmp,
-                            options,
-                            job_id=job_id,
-                            file_id=file_id,
-                            session=session,
-                        ): frag
-                        for frag in pending
-                    }
-                    for future in as_completed(futures):
+        with active_download_guard():
+            with tmp.open(open_mode) as dest_stream:
+                if concurrent <= 1:
+                    for frag in remaining:
                         if _is_cancelled(options.cancel):
                             raise InterruptedError("cancelled")
-                        frag = futures[future]
                         try:
-                            path = future.result()
+                            ok = _download_and_append(
+                                frag,
+                                tmp,
+                                dest_stream,
+                                options,
+                                job_id=job_id,
+                                file_id=file_id,
+                                session=session,
+                                emit=emit,
+                                job_limiter=job_limiter,
+                                on_bytes=lambda n, idx=frag.index: emit_progress(
+                                    idx + 1, n
+                                ),
+                            )
                         except Exception as exc:  # noqa: BLE001
+                            reason = classify_pressure(exc=exc)
+                            if reason:
+                                live_connections["n"] = tuner.record_pressure(
+                                    host, reason
+                                )
+                            raise
+                        if not ok:
                             if options.skip_unavailable and frag.index > 0:
-                                ready[frag.index] = Path()  # marker skip
+                                state.fragment_index = frag.index + 1
+                                save_fragment_state(tmp, state)
                                 continue
                             raise fragment_error(
-                                f"failed to download fragment {frag.index}: {exc}"
-                            ) from exc
-                        ready[frag.index] = path
-                        while next_append in ready:
-                            path = ready.pop(next_append)
-                            if path is not None and path != Path() and path.is_file():
-                                data = path.read_bytes()
-                                _append_bytes(dest_stream, data, job_limiter)
-                                emit_progress(next_append + 1, len(data))
-                                if not options.keep_fragments:
-                                    path.unlink(missing_ok=True)
-                            elif path == Path() and options.skip_unavailable:
-                                pass
-                            else:
-                                raise fragment_error(
-                                    f"missing fragment file for index {next_append}"
+                                f"failed to download fragment {frag.index}: {frag.url}"
+                            )
+                        tuner.record_success(host)
+                        live_connections["n"] = tuner.current(host)
+                        state.fragment_index = frag.index + 1
+                        save_fragment_state(tmp, state)
+                else:
+                    # download ahead then append in order
+                    pending = list(remaining)
+                    next_append = resume_from
+                    ready: dict[int, Path] = {}
+                    with ThreadPoolExecutor(max_workers=concurrent) as pool:
+                        futures = {
+                            pool.submit(
+                                _fetch_fragment_file,
+                                frag,
+                                tmp,
+                                options,
+                                job_id=job_id,
+                                file_id=file_id,
+                                session=session,
+                            ): frag
+                            for frag in pending
+                        }
+                        for future in as_completed(futures):
+                            if _is_cancelled(options.cancel):
+                                raise InterruptedError("cancelled")
+                            frag = futures[future]
+                            try:
+                                path = future.result()
+                                tuner.record_success(host)
+                                live_connections["n"] = min(
+                                    concurrent, tuner.current(host)
                                 )
-                            state.fragment_index = next_append + 1
-                            save_fragment_state(tmp, state)
-                            next_append += 1
+                            except Exception as exc:  # noqa: BLE001
+                                reason = classify_pressure(exc=exc)
+                                if reason:
+                                    live_connections["n"] = tuner.record_pressure(
+                                        host, reason
+                                    )
+                                if options.skip_unavailable and frag.index > 0:
+                                    ready[frag.index] = Path()  # marker skip
+                                    continue
+                                raise fragment_error(
+                                    f"failed to download fragment {frag.index}: {exc}"
+                                ) from exc
+                            ready[frag.index] = path
+                            while next_append in ready:
+                                path = ready.pop(next_append)
+                                if path is not None and path != Path() and path.is_file():
+                                    data = path.read_bytes()
+                                    _append_bytes(dest_stream, data, job_limiter)
+                                    emit_progress(next_append + 1, len(data))
+                                    if not options.keep_fragments:
+                                        path.unlink(missing_ok=True)
+                                elif path == Path() and options.skip_unavailable:
+                                    pass
+                                else:
+                                    raise fragment_error(
+                                        f"missing fragment file for index {next_append}"
+                                    )
+                                state.fragment_index = next_append + 1
+                                save_fragment_state(tmp, state)
+                                next_append += 1
 
-        if not tmp.is_file() or tmp.stat().st_size == 0:
-            raise fragment_error("fragment download produced an empty file")
-        tmp.rename(dest)
-        clear_fragment_state(tmp)
-        if emit:
-            emit.done(job=job_id, file=file_id, path=str(dest))
-        return dest
+            if not tmp.is_file() or tmp.stat().st_size == 0:
+                raise fragment_error("fragment download produced an empty file")
+            tmp.rename(dest)
+            clear_fragment_state(tmp)
+            if emit:
+                emit.progress(
+                    job=job_id,
+                    file=file_id,
+                    bytes=dest.stat().st_size if dest.is_file() else 0,
+                    connections=live_connections["n"],
+                )
+                emit.done(job=job_id, file=file_id, path=str(dest))
+            return dest
     except InterruptedError:
         raise
     finally:

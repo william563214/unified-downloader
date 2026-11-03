@@ -10,6 +10,16 @@ from __future__ import annotations
 from typing import Any
 
 from udl.network import settings as _settings
+from udl.network.adaptive import (
+    active_download_guard,
+    classify_pressure,
+    configure_adaptive_from_network,
+    global_tuner,
+    host_key_from_url,
+    parse_retry_after,
+    reset_global_tuner,
+    retry_delay,
+)
 from udl.network.common import (
     features,
     http_headers,
@@ -76,18 +86,23 @@ def update_network(**kwargs: Any) -> network_settings:
 
 __all__ = [
     "active_director",
+    "active_download_guard",
     "active_network",
     "apply_to_session",
     "available_handlers",
     "build_director",
     "build_proxy_url",
     "certificate_verify_error",
+    "classify_pressure",
+    "configure_adaptive_from_network",
     "configure_network",
     "default_user_agent",
     "effective_job_limit_bps",
     "external_env",
     "features",
     "format_speed_kib",
+    "global_tuner",
+    "host_key_from_url",
     "http_error",
     "http_headers",
     "impersonate_request_handler",
@@ -96,6 +111,7 @@ __all__ = [
     "network_cli_bundle",
     "network_settings",
     "no_supporting_handlers",
+    "parse_retry_after",
     "parse_speed_limit",
     "proxy_error",
     "proxy_mode_custom",
@@ -110,9 +126,11 @@ __all__ = [
     "request_error",
     "request_handler",
     "reset_director",
+    "reset_global_tuner",
     "resolve_aria2_secret",
     "resolve_proxy_password",
     "response",
+    "retry_delay",
     "send",
     "settings_from_cli_args",
     "ssl_error",

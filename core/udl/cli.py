@@ -152,13 +152,30 @@ def _add_network_args(parser: argparse.ArgumentParser, *, download: bool = False
             "--connections",
             type=int,
             default=None,
-            help="max connections per file for segmented downloads (default 8)",
+            help="starting connections per file for segmented downloads (default 8)",
         )
         parser.add_argument(
             "--per-host-connections",
             type=int,
             default=None,
             help="per-host connection cap for segmented downloads (default = --connections)",
+        )
+        parser.add_argument(
+            "--global-max-connections",
+            type=int,
+            default=None,
+            help="global connection budget across active downloads (default 24)",
+        )
+        parser.add_argument(
+            "--adaptive-concurrency",
+            action="store_true",
+            default=None,
+            help="enable per-host AIMD adaptive concurrency (default on)",
+        )
+        parser.add_argument(
+            "--no-adaptive-concurrency",
+            action="store_true",
+            help="disable per-host AIMD adaptive concurrency",
         )
         parser.add_argument(
             "--no-segmented",
@@ -973,6 +990,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p_zip_clear = zip_pw_sub.add_parser("clear", help="remove all ZIP passwords")
     p_zip_clear.add_argument("--json", action="store_true")
 
+    p_host_limits = sub.add_parser(
+        "host-limits",
+        help="list or reset learned per-host adaptive connection limits",
+    )
+    hl_sub = p_host_limits.add_subparsers(dest="host_limits_command", required=True)
+    p_hl_list = hl_sub.add_parser("list", help="list learned host connection limits")
+    p_hl_list.add_argument("--json", action="store_true")
+    p_hl_reset = hl_sub.add_parser(
+        "reset", help="clear learned limits (all hosts or one --host)"
+    )
+    p_hl_reset.add_argument("--host", default=None, help="optional host key to reset")
+    p_hl_reset.add_argument("--json", action="store_true")
+
     p_secrets = sub.add_parser(
         "secrets", help="OS keychain helpers for proxy / login tokens"
     )
@@ -1731,6 +1761,53 @@ def _extract_from_args(args: argparse.Namespace, cfg: udl_config) -> extract_opt
         promote_on_success=promote,
         use_secret_password=True,
     )
+
+
+def cmd_host_limits(args: argparse.Namespace) -> int:
+    from udl.network.adaptive import global_tuner, reset_global_tuner
+    from udl.store.host_limits import list_host_limits, reset_host_limits
+
+    cmd = args.host_limits_command
+    if cmd == "list":
+        # merge live tuner + persisted rows
+        tuner = global_tuner()
+        live = {row["host"]: row for row in tuner.list_limits()}
+        for row in list_host_limits():
+            live.setdefault(row["host"], row)
+        rows = sorted(live.values(), key=lambda r: str(r.get("host") or ""))
+        if args.json:
+            print(json.dumps({"count": len(rows), "hosts": rows}, ensure_ascii=False))
+        else:
+            if not rows:
+                print("(empty)", file=sys.stderr)
+            for row in rows:
+                print(
+                    f"{row.get('host')}\tlimit={row.get('limit')}\t"
+                    f"pressure={row.get('pressure_count', 0)}"
+                )
+        return 0
+    if cmd == "reset":
+        host = getattr(args, "host", None)
+        removed_db = reset_host_limits(host=host)
+        tuner = global_tuner()
+        removed_mem = tuner.reset(host=host)
+        # drop singleton so next download reloads empty store
+        if host is None:
+            reset_global_tuner()
+        removed = max(removed_db, removed_mem)
+        if args.json:
+            print(
+                json.dumps(
+                    {"removed": removed, "host": host},
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            target = host or "all hosts"
+            print(f"reset {removed} limit(s) ({target})")
+        return 0
+    print(f"unknown host-limits command: {cmd}", file=sys.stderr)
+    return 2
 
 
 def cmd_zip_passwords(args: argparse.Namespace) -> int:
@@ -2492,6 +2569,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_repair(args)
     if args.command == "zip-passwords":
         return cmd_zip_passwords(args)
+    if args.command == "host-limits":
+        return cmd_host_limits(args)
     if args.command == "secrets":
         return cmd_secrets(args)
     if args.command == "mcp":

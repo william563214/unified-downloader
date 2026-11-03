@@ -124,9 +124,15 @@ struct AppSettings {
     aria2_rpc_url: String,
     #[serde(default)]
     aria2_rpc_secret: String,
-    // multi-connection segmented (v0.9-A)
+    // multi-connection segmented (v0.9-A) + AIMD adaptive
     #[serde(default = "default_connections")]
     connections: u32,
+    #[serde(default = "default_connections")]
+    per_host_connections: u32,
+    #[serde(default = "default_global_max_connections")]
+    global_max_connections: u32,
+    #[serde(default = "default_true")]
+    adaptive_concurrency: bool,
     #[serde(default = "default_true")]
     segmented_enabled: bool,
     #[serde(default)]
@@ -294,6 +300,10 @@ fn default_connections() -> u32 {
     8
 }
 
+fn default_global_max_connections() -> u32 {
+    24
+}
+
 fn default_site_flags() -> HashMap<String, bool> {
     let mut map = HashMap::new();
     for site in [
@@ -384,6 +394,9 @@ impl Default for AppSettings {
             aria2_rpc_url: default_aria2_rpc_url(),
             aria2_rpc_secret: String::new(),
             connections: default_connections(),
+            per_host_connections: default_connections(),
+            global_max_connections: default_global_max_connections(),
+            adaptive_concurrency: true,
             segmented_enabled: true,
             segmented_for_sites: false,
             external_downloader: default_external_downloader(),
@@ -588,6 +601,17 @@ fn append_network_args(
     let conns = settings.connections.max(1).min(32);
     args.push("--connections".into());
     args.push(conns.to_string());
+    let per_host = settings.per_host_connections.max(1).min(32);
+    args.push("--per-host-connections".into());
+    args.push(per_host.to_string());
+    let global_max = settings.global_max_connections.max(1).min(128);
+    args.push("--global-max-connections".into());
+    args.push(global_max.to_string());
+    if settings.adaptive_concurrency {
+        args.push("--adaptive-concurrency".into());
+    } else {
+        args.push("--no-adaptive-concurrency".into());
+    }
     if !settings.segmented_enabled {
         args.push("--no-segmented".into());
     }
@@ -799,6 +823,18 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, S
     }
     if settings.connections > 32 {
         settings.connections = 32;
+    }
+    if settings.per_host_connections == 0 {
+        settings.per_host_connections = settings.connections;
+    }
+    if settings.per_host_connections > 32 {
+        settings.per_host_connections = 32;
+    }
+    if settings.global_max_connections == 0 {
+        settings.global_max_connections = 1;
+    }
+    if settings.global_max_connections > 128 {
+        settings.global_max_connections = 128;
     }
     let conflict = settings.name_conflict.trim();
     settings.name_conflict = match conflict {
@@ -2157,6 +2193,33 @@ fn read_local_image(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn host_limits_list(app: AppHandle) -> Result<serde_json::Value, String> {
+    let args = vec![
+        "host-limits".into(),
+        "list".into(),
+        "--json".into(),
+    ];
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
+async fn host_limits_reset(
+    app: AppHandle,
+    host: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut args = vec![
+        "host-limits".into(),
+        "reset".into(),
+        "--json".into(),
+    ];
+    if let Some(v) = host.filter(|s| !s.trim().is_empty()) {
+        args.push("--host".into());
+        args.push(v);
+    }
+    run_udl_json(&app, args).await
+}
+
+#[tauri::command]
 async fn history_list(
     app: AppHandle,
     site: Option<String>,
@@ -3370,6 +3433,8 @@ pub fn run() {
             read_local_image,
             history_list,
             history_delete,
+            host_limits_list,
+            host_limits_reset,
             queue_list,
             schedule_status,
             schedule_list,

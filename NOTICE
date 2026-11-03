@@ -169,6 +169,16 @@ signed/unsigned app bundle by default; the optional download is user-initiated.
   curl_cffi browser impersonation is **opt-in / off by default** (same policy
   as Cloudflare challenge bypass). No paywall, VIP, ToS, or DRM bypass.
 
+### omniget adaptive concurrency — `core/udl/network/adaptive.py`
+- Upstream inspiration: https://github.com/OpenSelena/omniget
+  (`src-tauri/omniget-core/src/core/adaptive_concurrency.rs`)
+- Notes: AIMD-style per-host connection tuning (additive increase on healthy
+  responses, multiplicative decrease on 429／503／reset／timeout), global
+  connection budget, and SQLite persistence of learned per-host ceilings.
+  Concepts inspired by omniget; **no omniget source is vendored**. Adaptive
+  concurrency is **never** used to evade site rate limits or quotas — it only
+  reduces pressure when the site pushes back and never exceeds the user max.
+
 ## Fragment / external downloaders (adapted patterns)
 
 ### yt-dlp fragment + external downloader — `core/udl/download/fragment.py`, `external.py`

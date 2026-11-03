@@ -126,8 +126,11 @@ export type AppSettings = {
   aria2Enabled: boolean;
   aria2RpcUrl: string;
   aria2RpcSecret: string;
-  // multi-connection segmented (v0.9-A)
+  // multi-connection segmented (v0.9-A) + AIMD adaptive
   connections: number;
+  perHostConnections: number;
+  globalMaxConnections: number;
+  adaptiveConcurrency: boolean;
   segmentedEnabled: boolean;
   segmentedForSites: boolean;
   // fragment backend (v0.10): native | aria2c | ffmpeg
@@ -251,6 +254,9 @@ export const default_settings: AppSettings = {
   aria2RpcUrl: "http://127.0.0.1:6800/jsonrpc",
   aria2RpcSecret: "",
   connections: 8,
+  perHostConnections: 8,
+  globalMaxConnections: 24,
+  adaptiveConcurrency: true,
   segmentedEnabled: true,
   segmentedForSites: false,
   externalDownloader: "native",
@@ -366,6 +372,13 @@ export function importSettingsJson(
   if (!merged.concurrentFragments || merged.concurrentFragments < 1) {
     merged.concurrentFragments = 1;
   }
+  if (!merged.perHostConnections || merged.perHostConnections < 1) {
+    merged.perHostConnections = merged.connections || 8;
+  }
+  if (!merged.globalMaxConnections || merged.globalMaxConnections < 1) {
+    merged.globalMaxConnections = 24;
+  }
+  if (merged.adaptiveConcurrency == null) merged.adaptiveConcurrency = true;
   merged.ppOrder = normalizePpOrder(merged.ppOrder);
   if (merged.moveTemplate == null) merged.moveTemplate = "";
   if (merged.execEnabled == null) merged.execEnabled = false;

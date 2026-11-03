@@ -222,6 +222,21 @@ migrations: list[tuple[int, str]] = [
           on queue_jobs(queue_name);
         """,
     ),
+    (
+        5,
+        """
+        create table if not exists host_connection_limits (
+          host text primary key,
+          limit_n integer not null,
+          success_streak integer not null default 0,
+          pressure_count integer not null default 0,
+          updated_at text not null default (datetime('now'))
+        );
+
+        create index if not exists idx_host_connection_limits_updated
+          on host_connection_limits(updated_at);
+        """,
+    ),
 ]
 
 
