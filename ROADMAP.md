@@ -184,6 +184,12 @@
 
 - [x] 任務完成／失敗系統通知（可關）
 - [x] 系統列／選單列圖示＋快捷狀態；關閉視窗最小化到托盤（可關）
+- [x] 剪貼簿全域快捷鍵（[#42](https://github.com/william563214/unified-downloader/issues/42)；靈感 OpenSelena/omniget）
+  - 預設關閉；設定啟用／重綁；衝突偵測
+  - `Ctrl/Cmd+Shift+D`：剪貼簿 URL（可多行）背景入佇列＋系統通知
+  - `Ctrl/Cmd+Shift+M`：僅音訊（extractor 支援時；否則一般下載並告知）
+  - `tauri-plugin-global-shortcut`＋`tauri-plugin-clipboard-manager`
+  - 可選剪貼簿監看 toast（預設關）；除入佇列 URL 外不記錄剪貼簿內容
 
 ### 設定整合
 

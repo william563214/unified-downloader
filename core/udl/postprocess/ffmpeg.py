@@ -168,3 +168,47 @@ def merge_dash(
     if not output_path.is_file() or output_path.stat().st_size == 0:
         raise merge_error(f"FFmpeg produced empty output: {output_path}")
     return output_path
+
+
+def remux_audio(
+    audio_path: Path,
+    output_path: Path,
+    *,
+    ffmpeg: str | Path | None = None,
+    overwrite: bool = True,
+) -> Path:
+    """remux a DASH audio bitstream into m4a/mp3/etc with stream copy."""
+    binary = find_ffmpeg(ffmpeg)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [str(binary)]
+    if overwrite:
+        cmd.append("-y")
+    cmd.extend(
+        [
+            "-i",
+            str(audio_path),
+            "-vn",
+            "-c:a",
+            "copy",
+            str(output_path),
+        ]
+    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise merge_error(f"failed to run FFmpeg: {exc}") from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        if len(detail) > 800:
+            detail = detail[-800:]
+        raise merge_error(
+            f"FFmpeg audio remux failed (exit {proc.returncode}): {detail or 'no output'}"
+        )
+    if not output_path.is_file() or output_path.stat().st_size == 0:
+        raise merge_error(f"FFmpeg produced empty audio output: {output_path}")
+    return output_path

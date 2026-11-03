@@ -148,6 +148,12 @@ export type AppSettings = {
   gallerydlUseArchive: boolean;
   // tools / shell (v0.8)
   clipboardWatcher: boolean;
+  /** global hotkey: enqueue clipboard URLs (off by default) */
+  hotkeyDownloadEnabled: boolean;
+  hotkeyDownloadBinding: string;
+  /** global hotkey: audio-only enqueue (off by default) */
+  hotkeyAudioEnabled: boolean;
+  hotkeyAudioBinding: string;
   notificationsEnabled: boolean;
   minimizeToTray: boolean;
   themeMode: "system" | "light" | "dark";
@@ -266,6 +272,10 @@ export const default_settings: AppSettings = {
   gallerydlOptions: "",
   gallerydlUseArchive: false,
   clipboardWatcher: false,
+  hotkeyDownloadEnabled: false,
+  hotkeyDownloadBinding: "CmdOrCtrl+Shift+D",
+  hotkeyAudioEnabled: false,
+  hotkeyAudioBinding: "CmdOrCtrl+Shift+M",
   notificationsEnabled: true,
   minimizeToTray: false,
   themeMode: "system",
@@ -334,6 +344,14 @@ export function importSettingsJson(
   if (!merged.gallerydlOptions) merged.gallerydlOptions = "";
   if (merged.gallerydlUseArchive == null) merged.gallerydlUseArchive = false;
   if (merged.clipboardWatcher == null) merged.clipboardWatcher = false;
+  if (merged.hotkeyDownloadEnabled == null) merged.hotkeyDownloadEnabled = false;
+  if (!merged.hotkeyDownloadBinding) {
+    merged.hotkeyDownloadBinding = "CmdOrCtrl+Shift+D";
+  }
+  if (merged.hotkeyAudioEnabled == null) merged.hotkeyAudioEnabled = false;
+  if (!merged.hotkeyAudioBinding) {
+    merged.hotkeyAudioBinding = "CmdOrCtrl+Shift+M";
+  }
   if (merged.notificationsEnabled == null) merged.notificationsEnabled = true;
   if (merged.minimizeToTray == null) merged.minimizeToTray = false;
   if (!merged.themeMode) merged.themeMode = "system";

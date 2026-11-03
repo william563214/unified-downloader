@@ -16,6 +16,8 @@ class bili_options:
     audio_quality: int | None = None
     part: int | str | None = None
     container: str = "mp4"  # mp4 | mkv
+    # when True download DASH audio only and remux to m4a
+    audio_only: bool = False
     danmaku_format: str | None = None  # xml|ass|json
     subtitle_format: str | None = None  # srt|lrc|txt|ass|json
     subtitle_languages: list[str] = field(default_factory=list)
@@ -40,6 +42,7 @@ class bili_options:
             "audio_quality": self.audio_quality,
             "part": self.part,
             "container": self.container,
+            "audio_only": self.audio_only,
             "danmaku_format": self.danmaku_format,
             "subtitle_format": self.subtitle_format,
             "subtitle_languages": list(self.subtitle_languages),

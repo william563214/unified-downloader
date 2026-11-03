@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   isPermissionGranted,
@@ -9,6 +10,14 @@ import {
 } from "@tauri-apps/plugin-notification";
 import { humanizeError, statusLabel } from "./errors";
 import { formatBytes, parseSegments, siteTone } from "./format";
+import {
+  binding_from_event,
+  default_audio_binding,
+  default_download_binding,
+  hotkey_conflict_message,
+  site_supports_audio_only,
+  type HotkeyRegisterResult,
+} from "./hotkeys";
 import { type JobRow, type QueueFilter, newClientId } from "./jobTypes";
 import { QueueDashboard } from "./QueueDashboard";
 import {
@@ -258,6 +267,10 @@ export default function App() {
   const [ffmpegPrompt, setFfmpegPrompt] = useState(false);
   const [clipboardHint, setClipboardHint] = useState<string | null>(null);
   const [clipboardUrls, setClipboardUrls] = useState<string[]>([]);
+  const [hotkeyStatus, setHotkeyStatus] = useState<string | null>(null);
+  const [hotkeyRecording, setHotkeyRecording] = useState<
+    null | "download" | "audio"
+  >(null);
   const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [dragOver, setDragOver] = useState(false);
@@ -426,6 +439,12 @@ export default function App() {
           gallerydlOptions: loaded.gallerydlOptions ?? "",
           gallerydlUseArchive: Boolean(loaded.gallerydlUseArchive),
           clipboardWatcher: Boolean(loaded.clipboardWatcher),
+          hotkeyDownloadEnabled: Boolean(loaded.hotkeyDownloadEnabled),
+          hotkeyDownloadBinding:
+            loaded.hotkeyDownloadBinding || default_download_binding,
+          hotkeyAudioEnabled: Boolean(loaded.hotkeyAudioEnabled),
+          hotkeyAudioBinding:
+            loaded.hotkeyAudioBinding || default_audio_binding,
           notificationsEnabled:
             loaded.notificationsEnabled == null
               ? true
@@ -954,6 +973,7 @@ export default function App() {
           autoExtractOverride: job.autoExtractOverride ?? "inherit",
           extractPasswordMode: job.extractPasswordMode ?? "list",
           extractPassword: job.extractPassword ?? null,
+          audioOnly: job.audioOnly ?? false,
         });
         setJobs((prev) =>
           prev.map((j) =>
@@ -1152,12 +1172,20 @@ export default function App() {
     const offerClipboard = async () => {
       if (!settings.clipboardWatcher) return;
       try {
-        if (!navigator.clipboard?.readText) return;
-        const text = await navigator.clipboard.readText();
+        // prefer native clipboard-manager; fall back to web clipboard API
+        let text = "";
+        try {
+          text = await readText();
+        } catch {
+          if (!navigator.clipboard?.readText) return;
+          text = await navigator.clipboard.readText();
+        }
         const found = extractUrls(text);
         if (found.length === 0) return;
         const known = new Set(
-          [url, urlDraft, ...jobsRef.current.map((j) => j.url)].map((s) => s.trim()),
+          [url, urlDraft, ...jobsRef.current.map((j) => j.url)].map((s) =>
+            s.trim(),
+          ),
         );
         const fresh = found.filter((u) => !known.has(u));
         if (fresh.length === 0) return;
@@ -1301,11 +1329,71 @@ export default function App() {
         (jobExtractPasswordMode === "single" && jobExtractPassword.trim()
           ? jobExtractPassword.trim()
           : null),
+      audioOnly: overrides?.audioOnly ?? false,
       files: [],
       status: "queued",
     };
     setJobs((prev) => [job, ...prev]);
   }
+
+  const enqueueOneRef = useRef(enqueueOne);
+  enqueueOneRef.current = enqueueOne;
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<{
+      mode: string;
+      urls: string[];
+      message?: string | null;
+    }>("clipboard-hotkey", (event) => {
+      const { mode, urls, message } = event.payload;
+      if (message && (!urls || urls.length === 0)) {
+        setHotkeyStatus(message);
+        void notifyJob("剪貼簿快捷鍵", message);
+        return;
+      }
+      if (!urls?.length) return;
+      const audioMode = mode === "audio";
+      let audioFallback = 0;
+      let audioOk = 0;
+      for (const target of urls) {
+        const detected = detectSite(target);
+        const supported = site_supports_audio_only(detected?.site);
+        const wantAudio = audioMode && supported;
+        if (audioMode && !supported) audioFallback += 1;
+        if (wantAudio) audioOk += 1;
+        enqueueOneRef.current(target, {
+          audioOnly: wantAudio,
+          title: wantAudio
+            ? `${detected?.label || "下載"}（僅音訊）`
+            : undefined,
+        });
+      }
+      const n = urls.length;
+      let body = `已加入 ${n} 個任務`;
+      if (audioMode) {
+        if (audioFallback > 0 && audioOk > 0) {
+          body = `已加入 ${n} 個任務（${audioOk} 僅音訊；${audioFallback} 站點不支援僅音訊，改一般下載）`;
+        } else if (audioFallback > 0) {
+          body = `已加入 ${n} 個任務（此站點不支援僅音訊，改一般下載）`;
+        } else {
+          body = `已加入 ${n} 個僅音訊任務`;
+        }
+      }
+      setHotkeyStatus(body);
+      void notifyJob(audioMode ? "僅音訊快捷鍵" : "剪貼簿快捷鍵", body);
+      // only the enqueued URLs are surfaced — never raw clipboard text
+      console.info(
+        `[hotkey] ${mode} enqueued`,
+        urls.map((u) => u.slice(0, 120)),
+      );
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   function enqueueDownload(overrides?: Partial<JobRow>) {
     const targets = overrides?.url
@@ -1495,6 +1583,17 @@ export default function App() {
 
   async function saveSettingsNow() {
     try {
+      const conflict = hotkey_conflict_message(
+        settingsDraft.hotkeyDownloadEnabled,
+        settingsDraft.hotkeyDownloadBinding,
+        settingsDraft.hotkeyAudioEnabled,
+        settingsDraft.hotkeyAudioBinding,
+      );
+      if (conflict) {
+        setHotkeyStatus(conflict);
+        setError(conflict);
+        return;
+      }
       if (clearProxyPasswordOnSave) {
         await invoke("clear_proxy_password");
       } else if (proxyPassword.trim()) {
@@ -1509,6 +1608,29 @@ export default function App() {
       setProxyPassword("");
       setClearProxyPasswordOnSave(false);
       if (saved.downloadDir) setOutput(saved.downloadDir);
+      try {
+        const hotkeyResult = await invoke<HotkeyRegisterResult>(
+          "register_clipboard_hotkeys",
+        );
+        if (!hotkeyResult.ok) {
+          const msgs = [
+            ...(hotkeyResult.conflicts || []),
+            ...(hotkeyResult.errors || []),
+          ];
+          setHotkeyStatus(
+            msgs.length > 0 ? msgs.join("；") : "快捷鍵註冊失敗",
+          );
+        } else if (
+          saved.hotkeyDownloadEnabled ||
+          saved.hotkeyAudioEnabled
+        ) {
+          setHotkeyStatus("快捷鍵已套用");
+        } else {
+          setHotkeyStatus(null);
+        }
+      } catch (e) {
+        setHotkeyStatus(humanizeError(String(e)));
+      }
       await refreshFfmpeg();
     } catch (e) {
       setError(humanizeError(String(e)));
@@ -2364,7 +2486,7 @@ export default function App() {
             <a href="#settings-network">網路</a>
             <a href="#settings-accounts">帳號</a>
             <a href="#settings-tools">工具</a>
-            <a href="#settings-shell">通知／托盤</a>
+            <a href="#settings-shell">通知／托盤／快捷鍵</a>
             <a href="#settings-mcp">MCP</a>
             <a href="#settings-import">匯入匯出</a>
           </div>
@@ -4320,7 +4442,7 @@ export default function App() {
 
 
           <div className="settings-block" id="settings-shell">
-            <h3>通知／托盤／外觀</h3>
+            <h3>通知／托盤／快捷鍵／外觀</h3>
             <label className="check">
               <input
                 type="checkbox"
@@ -4363,6 +4485,196 @@ export default function App() {
               />
               <span>剪貼簿監看（預設關閉；偵測到支援網址時詢問是否加入）</span>
             </label>
+            <h4>剪貼簿全域快捷鍵</h4>
+            <p className="hint">
+              預設關閉。啟用後即使視窗在背景也可讀取剪貼簿網址並入佇列。僅會記錄入佇列的
+              URL，不會記錄其他剪貼簿內容。macOS 可能需授予輔助使用權限。
+            </p>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.hotkeyDownloadEnabled}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    hotkeyDownloadEnabled: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                  setHotkeyStatus(null);
+                }}
+              />
+              <span>
+                啟用下載快捷鍵（預設 {default_download_binding}）
+              </span>
+            </label>
+            {settingsDraft.hotkeyDownloadEnabled && (
+              <label className="field compact">
+                <span>下載快捷鍵</span>
+                <div className="hotkey-bind-row">
+                  <input
+                    type="text"
+                    value={settingsDraft.hotkeyDownloadBinding}
+                    spellCheck={false}
+                    onChange={(e) => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        hotkeyDownloadBinding: e.target.value,
+                      }));
+                      setSettingsDirty(true);
+                      setHotkeyStatus(null);
+                    }}
+                    placeholder={default_download_binding}
+                  />
+                  <button
+                    type="button"
+                    className={
+                      hotkeyRecording === "download" ? "recording" : undefined
+                    }
+                    onClick={(e) => {
+                      setHotkeyRecording("download");
+                      (e.currentTarget as HTMLButtonElement).focus();
+                    }}
+                    onKeyDown={(e) => {
+                      if (hotkeyRecording !== "download") return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (e.key === "Escape") {
+                        setHotkeyRecording(null);
+                        return;
+                      }
+                      const value = binding_from_event(e.nativeEvent);
+                      if (!value) return;
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        hotkeyDownloadBinding: value,
+                      }));
+                      setSettingsDirty(true);
+                      setHotkeyRecording(null);
+                      void invoke<HotkeyRegisterResult>("check_hotkey_binding", {
+                        binding: value,
+                      })
+                        .then((r) => {
+                          if (r.conflicts?.length) {
+                            setHotkeyStatus(r.conflicts.join("；"));
+                          } else {
+                            setHotkeyStatus(null);
+                          }
+                        })
+                        .catch(() => undefined);
+                    }}
+                    onBlur={() => {
+                      if (hotkeyRecording === "download") {
+                        setHotkeyRecording(null);
+                      }
+                    }}
+                  >
+                    {hotkeyRecording === "download"
+                      ? "請按下組合鍵…"
+                      : "錄製"}
+                  </button>
+                </div>
+              </label>
+            )}
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settingsDraft.hotkeyAudioEnabled}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    hotkeyAudioEnabled: e.target.checked,
+                  }));
+                  setSettingsDirty(true);
+                  setHotkeyStatus(null);
+                }}
+              />
+              <span>
+                啟用僅音訊快捷鍵（預設 {default_audio_binding}；Bilibili
+                DASH 支援，其他站點改一般下載）
+              </span>
+            </label>
+            {settingsDraft.hotkeyAudioEnabled && (
+              <label className="field compact">
+                <span>僅音訊快捷鍵</span>
+                <div className="hotkey-bind-row">
+                  <input
+                    type="text"
+                    value={settingsDraft.hotkeyAudioBinding}
+                    spellCheck={false}
+                    onChange={(e) => {
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        hotkeyAudioBinding: e.target.value,
+                      }));
+                      setSettingsDirty(true);
+                      setHotkeyStatus(null);
+                    }}
+                    placeholder={default_audio_binding}
+                  />
+                  <button
+                    type="button"
+                    className={
+                      hotkeyRecording === "audio" ? "recording" : undefined
+                    }
+                    onClick={(e) => {
+                      setHotkeyRecording("audio");
+                      (e.currentTarget as HTMLButtonElement).focus();
+                    }}
+                    onKeyDown={(e) => {
+                      if (hotkeyRecording !== "audio") return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (e.key === "Escape") {
+                        setHotkeyRecording(null);
+                        return;
+                      }
+                      const value = binding_from_event(e.nativeEvent);
+                      if (!value) return;
+                      setSettingsDraft((s) => ({
+                        ...s,
+                        hotkeyAudioBinding: value,
+                      }));
+                      setSettingsDirty(true);
+                      setHotkeyRecording(null);
+                      void invoke<HotkeyRegisterResult>("check_hotkey_binding", {
+                        binding: value,
+                      })
+                        .then((r) => {
+                          if (r.conflicts?.length) {
+                            setHotkeyStatus(r.conflicts.join("；"));
+                          } else {
+                            setHotkeyStatus(null);
+                          }
+                        })
+                        .catch(() => undefined);
+                    }}
+                    onBlur={() => {
+                      if (hotkeyRecording === "audio") {
+                        setHotkeyRecording(null);
+                      }
+                    }}
+                  >
+                    {hotkeyRecording === "audio" ? "請按下組合鍵…" : "錄製"}
+                  </button>
+                </div>
+              </label>
+            )}
+            {hotkey_conflict_message(
+              settingsDraft.hotkeyDownloadEnabled,
+              settingsDraft.hotkeyDownloadBinding,
+              settingsDraft.hotkeyAudioEnabled,
+              settingsDraft.hotkeyAudioBinding,
+            ) && (
+              <p className="hint warn">
+                {hotkey_conflict_message(
+                  settingsDraft.hotkeyDownloadEnabled,
+                  settingsDraft.hotkeyDownloadBinding,
+                  settingsDraft.hotkeyAudioEnabled,
+                  settingsDraft.hotkeyAudioBinding,
+                )}
+              </p>
+            )}
+            {hotkeyStatus && <p className="hint">{hotkeyStatus}</p>}
             <label className="field compact">
               <span>主題</span>
               <select

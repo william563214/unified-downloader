@@ -1,5 +1,7 @@
 //! Tauri shell for 整合下載器 — spawns the `udl` Python sidecar and forwards JSON-lines.
 
+mod hotkey;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -162,6 +164,15 @@ struct AppSettings {
     // shell / UX (v0.8)
     #[serde(default)]
     clipboard_watcher: bool,
+    // clipboard global hotkeys (off by default; rebindable)
+    #[serde(default)]
+    hotkey_download_enabled: bool,
+    #[serde(default = "hotkey::default_download_binding")]
+    hotkey_download_binding: String,
+    #[serde(default)]
+    hotkey_audio_enabled: bool,
+    #[serde(default = "hotkey::default_audio_binding")]
+    hotkey_audio_binding: String,
     #[serde(default = "default_true")]
     notifications_enabled: bool,
     #[serde(default)]
@@ -399,6 +410,10 @@ impl Default for AppSettings {
             gallerydl_options: String::new(),
             gallerydl_use_archive: false,
             clipboard_watcher: false,
+            hotkey_download_enabled: false,
+            hotkey_download_binding: hotkey::default_download_binding(),
+            hotkey_audio_enabled: false,
+            hotkey_audio_binding: hotkey::default_audio_binding(),
             notifications_enabled: true,
             minimize_to_tray: false,
             theme_mode: default_theme_mode(),
@@ -829,6 +844,14 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, S
     if settings.concurrent_fragments > 32 {
         settings.concurrent_fragments = 32;
     }
+    settings.hotkey_download_binding = hotkey::normalize_binding(
+        &settings.hotkey_download_binding,
+        &hotkey::default_download_binding(),
+    );
+    settings.hotkey_audio_binding = hotkey::normalize_binding(
+        &settings.hotkey_audio_binding,
+        &hotkey::default_audio_binding(),
+    );
     let path = settings_path(&app)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -840,6 +863,8 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, S
     let cfg_raw =
         serde_json::to_string_pretty(&settings_to_udl_config(&settings)).map_err(|e| e.to_string())?;
     fs::write(&cfg_path, cfg_raw).map_err(|e| e.to_string())?;
+    // rebind global clipboard hotkeys after settings persist
+    let _ = hotkey::reregister(&app);
     Ok(settings)
 }
 
@@ -1733,6 +1758,7 @@ async fn start_download(
     auto_extract_override: Option<String>,
     extract_password: Option<String>,
     extract_password_mode: Option<String>,
+    audio_only: Option<bool>,
 ) -> Result<String, String> {
     let settings = load_settings_file(&app);
     let job_id = job_id
@@ -1787,6 +1813,9 @@ async fn start_download(
             args.push("--audio-quality".into());
             args.push(aq.to_string());
         }
+    }
+    if audio_only.unwrap_or(false) {
+        args.push("--audio-only".into());
     }
     if let Some(cont) = container {
         let cont = cont.trim();
@@ -3307,6 +3336,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(hotkey::init_plugin().build())
         .manage(JobState {
             children: Mutex::new(HashMap::new()),
         });
@@ -3319,6 +3350,12 @@ pub fn run() {
         .setup(|app| {
             if let Err(e) = setup_tray(app.handle()) {
                 eprintln!("tray setup skipped: {e}");
+            }
+            let result = hotkey::reregister(app.handle());
+            if !result.ok {
+                for msg in result.conflicts.iter().chain(result.errors.iter()) {
+                    eprintln!("[hotkey] {msg}");
+                }
             }
             Ok(())
         })
@@ -3334,6 +3371,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            hotkey::register_clipboard_hotkeys,
+            hotkey::check_hotkey_binding,
             get_mcp_client_config,
             set_proxy_password,
             clear_proxy_password,

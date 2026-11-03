@@ -66,6 +66,8 @@ export type JobRow = {
   autoExtractOverride?: "inherit" | "on" | "off";
   extractPasswordMode?: "list" | "single" | "off";
   extractPassword?: string | null;
+  /** bilibili DASH audio-only remux when supported */
+  audioOnly?: boolean;
   files: FileRow[];
   ok?: number;
   failed?: number;
