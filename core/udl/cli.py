@@ -98,6 +98,51 @@ def _add_gallerydl_args(parser: argparse.ArgumentParser, *, download: bool = Fal
         )
 
 
+def _add_ytdlp_args(parser: argparse.ArgumentParser, *, download: bool = False) -> None:
+    """shared yt-dlp subprocess flags (resolve needs them before match)."""
+    parser.add_argument(
+        "--ytdlp-tool",
+        default=None,
+        help="path to yt-dlp executable (or UDL_YTDLP / managed install)",
+    )
+    parser.add_argument(
+        "--no-ytdlp",
+        action="store_true",
+        help="disable yt-dlp fallback extractor for this run",
+    )
+    if download:
+        parser.add_argument(
+            "--ytdlp-cookies",
+            default=None,
+            help=(
+                "Netscape cookies.txt passed to yt-dlp --cookies "
+                "(only when explicitly set; never from other-site keychain)"
+            ),
+        )
+        parser.add_argument(
+            "--ytdlp-format",
+            default=None,
+            help="yt-dlp -f format expression (or UDL_YTDLP_FORMAT)",
+        )
+        parser.add_argument(
+            "--ytdlp-audio-only",
+            action="store_true",
+            help="yt-dlp --extract-audio (audio-only)",
+        )
+        parser.add_argument(
+            "--ytdlp-audio-format",
+            default=None,
+            help="yt-dlp --audio-format when --ytdlp-audio-only (e.g. mp3/m4a)",
+        )
+        parser.add_argument(
+            "--ytdlp-arg",
+            action="append",
+            default=None,
+            metavar="ARG",
+            help="extra yt-dlp CLI argument (repeatable; no credentials)",
+        )
+
+
 def _add_network_args(parser: argparse.ArgumentParser, *, download: bool = False) -> None:
     """shared proxy / UA / speed / aria2 flags for resolve probe get."""
     parser.add_argument(
@@ -251,6 +296,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_network_args(p_resolve)
     _add_gallerydl_args(p_resolve)
+    _add_ytdlp_args(p_resolve)
 
     p_probe = sub.add_parser(
         "probe",
@@ -309,6 +355,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_network_args(p_probe)
     _add_gallerydl_args(p_probe)
+    _add_ytdlp_args(p_probe)
 
     p_get = sub.add_parser("get", help="download a URL")
     p_get.add_argument("url", help="content URL")
@@ -496,6 +543,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="skip MEGA CBC-MAC integrity check after download",
     )
     _add_gallerydl_args(p_get, download=True)
+    _add_ytdlp_args(p_get, download=True)
     p_get.add_argument(
         "--on-duplicate",
         choices=("skip", "overwrite", "rename"),
@@ -774,6 +822,56 @@ def _build_parser() -> argparse.ArgumentParser:
         help="install directory (default: platform app data /ffmpeg)",
     )
     p_ff_install.add_argument("--json", action="store_true")
+
+    p_ytdlp = sub.add_parser(
+        "ytdlp",
+        help="locate, install, or update-check the yt-dlp binary (subprocess)",
+    )
+    ytdlp_sub = p_ytdlp.add_subparsers(dest="ytdlp_command", required=True)
+    p_ytdlp_status = ytdlp_sub.add_parser("status", help="show whether yt-dlp is available")
+    p_ytdlp_status.add_argument(
+        "--ytdlp-tool",
+        default=None,
+        help="explicit yt-dlp path to check",
+    )
+    p_ytdlp_status.add_argument("--json", action="store_true")
+    p_ytdlp_install = ytdlp_sub.add_parser(
+        "install",
+        help="download official release binary verified against SHA2-256SUMS",
+    )
+    p_ytdlp_install.add_argument(
+        "--dir",
+        type=Path,
+        default=None,
+        help="install directory (default: platform app data /yt-dlp)",
+    )
+    p_ytdlp_install.add_argument(
+        "--tag",
+        default=None,
+        help="release tag (default: latest)",
+    )
+    p_ytdlp_install.add_argument("--json", action="store_true")
+    p_ytdlp_update = ytdlp_sub.add_parser(
+        "update-check",
+        help="compare installed version with GitHub latest release",
+    )
+    p_ytdlp_update.add_argument(
+        "--ytdlp-tool",
+        default=None,
+        help="explicit yt-dlp path to check",
+    )
+    p_ytdlp_update.add_argument(
+        "--install",
+        action="store_true",
+        help="install/update when a newer release is available",
+    )
+    p_ytdlp_update.add_argument(
+        "--dir",
+        type=Path,
+        default=None,
+        help="install directory when --install is set",
+    )
+    p_ytdlp_update.add_argument("--json", action="store_true")
 
     p_history = sub.add_parser("history", help="search manage download history")
     hist_sub = p_history.add_subparsers(dest="history_command", required=True)
@@ -1094,9 +1192,26 @@ def _apply_gallerydl(args: argparse.Namespace) -> None:
     )
 
 
+def _apply_ytdlp(args: argparse.Namespace) -> None:
+    """apply yt-dlp process settings before router.match."""
+    from udl.extractors.external.ytdlp import configure_ytdlp
+
+    enabled = not bool(getattr(args, "no_ytdlp", False))
+    configure_ytdlp(
+        enabled=enabled,
+        tool=getattr(args, "ytdlp_tool", None),
+        cookies=getattr(args, "ytdlp_cookies", None),
+        format=getattr(args, "ytdlp_format", None),
+        audio_only=bool(getattr(args, "ytdlp_audio_only", False)),
+        audio_format=getattr(args, "ytdlp_audio_format", None),
+        extra_args=getattr(args, "ytdlp_arg", None) or [],
+    )
+
+
 def cmd_resolve(args: argparse.Namespace) -> int:
     _apply_network(args)
     _apply_gallerydl(args)
+    _apply_ytdlp(args)
     info = resolve(args.url)
     payload = {
         "site": info.site,
@@ -1123,6 +1238,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 def cmd_probe(args: argparse.Namespace) -> int:
     _apply_network(args)
     _apply_gallerydl(args)
+    _apply_ytdlp(args)
     urls = args.url if isinstance(args.url, list) else [args.url]
     if len(urls) > 1:
         return _cmd_probe_batch(urls, args)
@@ -1358,6 +1474,7 @@ def cmd_get(args: argparse.Namespace) -> int:
         print(f"invalid network option: {exc}", file=sys.stderr)
         return 2
     _apply_gallerydl(args)
+    _apply_ytdlp(args)
 
     out: Path = args.output
     out.mkdir(parents=True, exist_ok=True)
@@ -1889,6 +2006,18 @@ def _apply_site_options(ext: object, args: argparse.Namespace) -> None:
         kwargs["gallerydl_use_archive"] = True
         if args.gallerydl_archive != "default":
             kwargs["gallerydl_archive"] = args.gallerydl_archive
+    if getattr(args, "ytdlp_tool", None):
+        kwargs["ytdlp_tool"] = args.ytdlp_tool
+    if getattr(args, "ytdlp_cookies", None):
+        kwargs["ytdlp_cookies"] = args.ytdlp_cookies
+    if getattr(args, "ytdlp_format", None):
+        kwargs["ytdlp_format"] = args.ytdlp_format
+    if getattr(args, "ytdlp_audio_only", False):
+        kwargs["ytdlp_audio_only"] = True
+    if getattr(args, "ytdlp_audio_format", None):
+        kwargs["ytdlp_audio_format"] = args.ytdlp_audio_format
+    if getattr(args, "ytdlp_arg", None):
+        kwargs["ytdlp_extra"] = args.ytdlp_arg
     if kwargs:
         configure(**kwargs)
 
@@ -2176,6 +2305,100 @@ def cmd_ffmpeg(args: argparse.Namespace) -> int:
         else:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
+
+    return 2
+
+
+def cmd_ytdlp(args: argparse.Namespace) -> int:
+    from udl.postprocess.ytdlp_provision import (
+        check_update,
+        install_ytdlp,
+        probe_ytdlp,
+        provision_supported,
+        ytdlp_provision_error,
+    )
+
+    if args.ytdlp_command == "status":
+        status = probe_ytdlp(getattr(args, "ytdlp_tool", None))
+        payload = {
+            "found": status.found,
+            "path": status.path,
+            "source": status.source,
+            "version": status.version,
+            "platform": status.platform_key,
+            "provision_supported": provision_supported(),
+            "message": status.message,
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if status.found else 1
+
+    if args.ytdlp_command == "install":
+        try:
+            path = install_ytdlp(args.dir, tag=getattr(args, "tag", None))
+        except ytdlp_provision_error as exc:
+            payload = {"ok": False, "message": str(exc), "code": exc.code}
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False))
+            else:
+                print(str(exc), file=sys.stderr)
+            return 1
+        status = probe_ytdlp(path)
+        payload = {
+            "ok": True,
+            "path": str(path),
+            "version": status.version,
+            "platform": status.platform_key,
+            "message": "yt-dlp installed",
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.ytdlp_command == "update-check":
+        status = check_update(getattr(args, "ytdlp_tool", None))
+        payload = {
+            "found": status.found,
+            "path": status.path,
+            "source": status.source,
+            "version": status.version,
+            "latest_version": status.latest_version,
+            "update_available": status.update_available,
+            "platform": status.platform_key,
+            "provision_supported": provision_supported(),
+            "message": status.message,
+        }
+        if bool(getattr(args, "install", False)) and status.update_available:
+            try:
+                path = install_ytdlp(args.dir)
+            except ytdlp_provision_error as exc:
+                payload["ok"] = False
+                payload["message"] = str(exc)
+                payload["code"] = exc.code
+                if args.json:
+                    print(json.dumps(payload, ensure_ascii=False))
+                else:
+                    print(str(exc), file=sys.stderr)
+                return 1
+            refreshed = probe_ytdlp(path)
+            payload.update(
+                {
+                    "ok": True,
+                    "path": str(path),
+                    "version": refreshed.version,
+                    "update_available": False,
+                    "message": "yt-dlp updated",
+                }
+            )
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if status.found else 1
 
     return 2
 
@@ -2478,6 +2701,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_gallerydl(args)
     if args.command == "ffmpeg":
         return cmd_ffmpeg(args)
+    if args.command == "ytdlp":
+        return cmd_ytdlp(args)
     if args.command == "history":
         return cmd_history(args)
     if args.command == "queue":

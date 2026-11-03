@@ -12,11 +12,14 @@ from udl.extractors.bilibili import bilibili_extractor
 from udl.extractors.bunkr import bunkr_extractor
 from udl.extractors.direct import direct_extractor
 from udl.extractors.external.gallerydl import gallerydl_extractor
+from udl.extractors.external.ytdlp import ytdlp_extractor
 from udl.extractors.gofile import gofile_extractor
 from udl.extractors.iwara import iwara_extractor
 from udl.extractors.mega import mega_extractor
 
 # order matters — first suitable() match wins; direct must stay last
+# site-type routing: gallery-dl before yt-dlp so image/gallery hosts stay on
+# gallery-dl; yt-dlp covers the video/stream long tail; see docs/yt-dlp.md
 extractors: list[type[extractor]] = [
     gofile_extractor,
     bunkr_extractor,
@@ -24,6 +27,7 @@ extractors: list[type[extractor]] = [
     bilibili_extractor,
     mega_extractor,
     gallerydl_extractor,
+    ytdlp_extractor,
     direct_extractor,
 ]
 

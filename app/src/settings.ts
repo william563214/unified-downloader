@@ -10,6 +10,7 @@ export type SiteId =
   | "bilibili"
   | "mega"
   | "gallerydl"
+  | "ytdlp"
   | "direct";
 
 export const site_ids: SiteId[] = [
@@ -19,6 +20,7 @@ export const site_ids: SiteId[] = [
   "bilibili",
   "mega",
   "gallerydl",
+  "ytdlp",
   "direct",
 ];
 
@@ -146,6 +148,13 @@ export type AppSettings = {
   gallerydlCookiesPath: string;
   gallerydlOptions: string;
   gallerydlUseArchive: boolean;
+  // yt-dlp external (Unlicense subprocess)
+  ytdlpEnabled: boolean;
+  ytdlpToolPath: string;
+  ytdlpCookiesPath: string;
+  ytdlpFormat: string;
+  ytdlpAudioOnly: boolean;
+  ytdlpAudioFormat: string;
   // tools / shell (v0.8)
   clipboardWatcher: boolean;
   notificationsEnabled: boolean;
@@ -212,6 +221,7 @@ export const default_site_flags = (): Record<SiteId, boolean> => ({
   bilibili: true,
   mega: true,
   gallerydl: true,
+  ytdlp: true,
   direct: true,
 });
 
@@ -265,6 +275,12 @@ export const default_settings: AppSettings = {
   gallerydlCookiesPath: "",
   gallerydlOptions: "",
   gallerydlUseArchive: false,
+  ytdlpEnabled: true,
+  ytdlpToolPath: "",
+  ytdlpCookiesPath: "",
+  ytdlpFormat: "",
+  ytdlpAudioOnly: false,
+  ytdlpAudioFormat: "",
   clipboardWatcher: false,
   notificationsEnabled: true,
   minimizeToTray: false,
@@ -382,6 +398,18 @@ export type FfmpegStatus = {
   platform: string;
   provisionSupported: boolean;
   message: string;
+};
+
+export type YtdlpStatus = {
+  found: boolean;
+  path: string | null;
+  source: string | null;
+  version: string | null;
+  platform: string;
+  provisionSupported: boolean;
+  message: string;
+  latestVersion?: string | null;
+  updateAvailable?: boolean | null;
 };
 
 export type HistoryEntry = {

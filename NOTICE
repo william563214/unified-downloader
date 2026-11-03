@@ -97,12 +97,42 @@ upstream copyright and were adapted under compatible licenses.
   commit). Users may instead install gallery-dl themselves
   (`pip`/`uv`/`brew`) and set Settings → gallery-dl path or `UDL_GALLERY_DL`.
 - Router priority: after native Gofile/Bunkr/Iwara/Bilibili/MEGA, before
-  generic `direct`. Matching uses gallery-dl’s own URL recognition (`-E`).
+  yt-dlp and generic `direct`. Matching uses gallery-dl’s own URL recognition
+  (`-E`). Gallery/image hosts stay on gallery-dl; yt-dlp covers the video
+  long tail (see yt-dlp section below and `docs/yt-dlp.md`).
 - Auth: cookies file and/or `udl.secrets` keys `gallerydl.username` /
   `gallerydl.password` (optional per-site
   `gallerydl.username.<category>`). Secrets are never logged.
 - Explicitly **not** implemented: paywall/quota/DRM bypass; Cloudflare
   challenge bypass stays opt-in / off by default (no automatic bypass).
+
+### yt-dlp — `core/udl/extractors/external/ytdlp.py`
+- Upstream: https://github.com/yt-dlp/yt-dlp
+- License: **Unlicense** (public domain dedication)
+- **Decision:** Invoke **only** as a separate subprocess (`yt-dlp` executable,
+  managed app-data binary, user path / `UDL_YTDLP`, or `python -m yt_dlp`).
+  Do **not** `import yt_dlp` or vendor extractor implementations.
+- Managed install (`udl.postprocess.ytdlp_provision`): optional first-use /
+  Settings download of the official release binary for macOS arm64
+  (`yt-dlp_macos`) and Windows x64 (`yt-dlp.exe`), verified against the
+  release **SHA2-256SUMS** before running; update check compares
+  `--version` to GitHub `releases/latest`. Users may use a system binary
+  instead.
+- Router priority: after gallery-dl, before generic `direct` (site-type
+  routing — galleries prefer gallery-dl). Matching uses yt-dlp’s own
+  extractor recognition (`--print "%(extractor)s" --skip-download`).
+- Progress / metadata: `--dump-json` / `-J` for resolve; `--progress-template`
+  and `--print after_move:…` JSON mapped into udl JSON-lines events so
+  queue, history, dedupe, naming templates, and postprocessors work.
+- Auth: **only** an explicitly configured cookies file (`--ytdlp-cookies` /
+  Settings / `UDL_YTDLP_COOKIES`). Never pass credentials from OS keychain
+  or other site sessions. No `--username`/`--password` from secrets.
+- Explicitly **not** implemented: paywall/DRM bypass (`--no-allow-unplayable-formats`);
+  Cloudflare / browser impersonation stays off by default (no `--impersonate`).
+- Design inspiration (concepts only): OpenSelena/omniget (GPL-3.0) managed
+  yt-dlp fallback. No omniget source is copied. Existing Unlicense design
+  notes for lazy extractors / networking / fragment / PP at commit
+  `8973412` remain below and are unchanged.
 
 ### MEGA external fallback — `core/udl/extractors/external/mega.py`
 - Optional backend (`--mega-backend external` / settings); default is built-in.
@@ -144,6 +174,22 @@ install into the application data directory (`…/ffmpeg/`).
 Users may instead install FFmpeg themselves and point Settings → FFmpeg path
 (or set `UDL_FFMPEG`). This project does not redistribute FFmpeg inside the
 signed/unsigned app bundle by default; the optional download is user-initiated.
+
+## Bundled / first-run yt-dlp downloads
+
+The desktop app may download the **official yt-dlp release binary** on first
+use or from Settings when none is found on PATH / `UDL_YTDLP` / Settings.
+Builds are checksum-verified against the release `SHA2-256SUMS` before
+install into the application data directory (`…/yt-dlp/`).
+
+- Upstream releases: https://github.com/yt-dlp/yt-dlp/releases
+- macOS arm64 asset: `yt-dlp_macos`
+- Windows x64 asset: `yt-dlp.exe`
+- License of yt-dlp: **Unlicense**
+
+Users may instead install yt-dlp themselves and point Settings → yt-dlp path
+(or set `UDL_YTDLP`). This project does not redistribute yt-dlp inside the
+app bundle by default; the optional download is user-initiated.
 
 ## Design inspiration (Unlicense — not a port of upstream code)
 
@@ -209,5 +255,7 @@ signed/unsigned app bundle by default; the optional download is user-initiated.
 - MegaBasterd — GUI-only Java app; MEGA protocol is built-in; megatools/MEGAcmd remain optional fallback.
 - yt-dlp sources / extractors — only lazy-registry, networking, fragment, and
   PP/outtmpl *architecture* ideas are mirrored under Unlicense terms; do not
-  vendor yt-dlp modules.
-- yt-dlp DRM／encrypted-stream handling — udl refuses encrypted manifests.
+  vendor yt-dlp modules. Runtime site support uses a **subprocess** of the
+  official yt-dlp binary (see External tools section above), not an import.
+- yt-dlp DRM／encrypted-stream handling — udl refuses encrypted manifests and
+  passes `--no-allow-unplayable-formats` to the yt-dlp subprocess.

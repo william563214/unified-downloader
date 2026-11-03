@@ -5,6 +5,8 @@ from udl.extractors.external.gallerydl import gallerydl_extractor
 from udl.extractors.external.gallerydl import matches as gallerydl_matches
 from udl.extractors.external.mega import matches as mega_matches
 from udl.extractors.external.mega import mega_extractor
+from udl.extractors.external.ytdlp import matches as ytdlp_matches
+from udl.extractors.external.ytdlp import ytdlp_extractor
 
 __all__ = [
     "external_extractor",
@@ -12,4 +14,6 @@ __all__ = [
     "gallerydl_matches",
     "mega_extractor",
     "mega_matches",
+    "ytdlp_extractor",
+    "ytdlp_matches",
 ]

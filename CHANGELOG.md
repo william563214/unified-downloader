@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- yt-dlp 通用備援：Unlicense 僅子行程（禁止 import）；router 順序 native → gallery-dl → yt-dlp → Direct（圖站仍優先 gallery-dl）
+- Managed yt-dlp binary（Mac arm64／Win x64）＋ SHA2-256SUMS 驗證＋設定頁更新檢查；GUI 畫質／僅音訊；MCP `resolve_url` 顯示 yt-dlp（closes #44）
+- 文件：`docs/yt-dlp.md`、NOTICE／README／ROADMAP；保留 commit `8973412` 設計靈感說明
 - MCP：`udl mcp` stdio 伺服器（官方 `mcp` SDK；optional `--extra mcp`）供 Claude Desktop／Cursor 控制佇列與歷史
 - Tools：add_download／list_queue／get_status／pause／resume／cancel／search_history／list_supported_sites／resolve_url；唯讀 queue／history resources
 - 安全：不暴露憑證；MCP 無法開 Cloudflare／impersonation；輸出路徑限制在 download root；GUI 開關預設關＋可複製客戶端 JSON（closes #39）

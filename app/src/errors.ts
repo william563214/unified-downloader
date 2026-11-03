@@ -20,6 +20,10 @@ const code_messages: Record<string, string> = {
   gallerydl_tool_missing:
     "找不到 gallery-dl，請安裝（pip/brew）或在設定指定路徑；發行版可能已附獨立程式",
   gallerydl_disabled: "gallery-dl 備援已停用",
+  ytdlp_tool_missing:
+    "找不到 yt-dlp，請至設定下載官方 binary 或安裝／指定路徑",
+  ytdlp_disabled: "yt-dlp 備援已停用",
+  ytdlp_provision_failed: "yt-dlp 自動下載失敗，請檢查網路後重試",
   cancelled: "已取消",
   checksum_mismatch: "校驗碼不符",
   hook_failed: "下載後掃毒／指令失敗",

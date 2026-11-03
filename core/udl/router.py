@@ -140,6 +140,11 @@ def resolve(url: str) -> resolve_info:
                 f"{entry.label} downloads via an external gallery-dl CLI "
                 "(subprocess only; GPL-2.0-only — not imported)"
             )
+        elif entry.site == "ytdlp":
+            message = (
+                f"{entry.label} downloads via an external yt-dlp CLI "
+                "(subprocess only; Unlicense — not imported)"
+            )
         else:
             message = (
                 f"{entry.label} downloads via an external CLI "

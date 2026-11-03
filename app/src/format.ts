@@ -41,6 +41,9 @@ export function siteTone(site: string | null | undefined): string {
     case "gallerydl":
     case "gallery-dl":
       return "tone-gallerydl";
+    case "ytdlp":
+    case "yt-dlp":
+      return "tone-ytdlp";
     case "direct":
       return "tone-direct";
     default:

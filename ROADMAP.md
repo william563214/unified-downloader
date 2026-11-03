@@ -282,6 +282,18 @@
 - [x] GUI：設定「啟用 MCP 伺服器」（預設關）＋可複製 Claude Desktop／Cursor JSON
 - [x] README MCP 客戶端設定說明
 
+### yt-dlp 通用備援（子行程）［#44］(https://github.com/william563214/unified-downloader/issues/44)
+
+靈感：[OpenSelena/omniget](https://github.com/OpenSelena/omniget)（GPL-3.0）managed yt-dlp 備援概念；本專案以子行程整合 Unlicense 的 yt-dlp（不 import／vendor）。
+
+- [x] 授權：Unlicense → 子行程 only；保留既有 commit `8973412` 設計靈感 NOTICE
+- [x] `udl.extractors.external.ytdlp`：`--dump-json`／`--progress-template` → 統一事件／metadata
+- [x] Router 站點類型路由：**native → gallery-dl → yt-dlp → direct**（圖站仍優先 gallery-dl；見 `docs/yt-dlp.md`）
+- [x] Managed tool（比照 FFmpeg）：官方 binary（Mac arm64／Win x64）＋ **SHA2-256SUMS** 驗證＋設定頁更新檢查；可自訂路徑／系統 yt-dlp
+- [x] GUI：啟用／路徑／cookies／畫質／僅音訊；MCP `resolve_url` 顯示 yt-dlp
+- [x] 安全：不自動帶 keychain 憑證；無付費牆／DRM 繞過；impersonation 預設關
+- [x] 文件：`docs/yt-dlp.md`、NOTICE／README／本 ROADMAP
+
 ### 規劃中（非本 PR）
 
 - [ ] **瀏覽器擴充功能**（Chrome／Edge MV3）：重用 [william563214/download_classify](https://github.com/william563214/download_classify) — 右鍵選單、下載接管、native messaging／localhost＋token；規則格式已與本機共用
@@ -290,8 +302,9 @@
 ## 不做／延後
 
 - gallery-dl 當 **library／import／vendored 原始碼**（GPL-2.0-only 與 GPL-3.0-or-later 連結不相容）；子行程備援已實作
+- yt-dlp **import／vendored extractor 原始碼**（僅允許獨立子行程／managed binary）
 - Pixeldrain（明確排除）
-- 通用「任意網站」fallback（v0.9-A 僅直連檔案；站點解析交給 gallery-dl 子行程）
+- 通用「任意網站」fallback（v0.9-A 僅直連檔案；站點解析交給 gallery-dl／yt-dlp 子行程）
 - DRM／加密 HLS key 擷取
 - 程式碼簽章／公證（v0.1 明確跳過）
 - 付費牆／VIP／區域限制／MEGA 配額繞過（含 SmartProxy／換 IP）

@@ -32,6 +32,17 @@ from udl.postprocess.ffmpeg_provision import (
 )
 from udl.postprocess.nfo import build_nfo_xml, choose_nfo_kind, write_nfo
 from udl.postprocess.options import parse_site_toggle_list, postprocess_options
+from udl.postprocess.ytdlp_provision import (
+    check_update as check_ytdlp_update,
+)
+from udl.postprocess.ytdlp_provision import (
+    install_ytdlp,
+    probe_ytdlp,
+    ytdlp_provision_error,
+)
+from udl.postprocess.ytdlp_provision import (
+    provision_supported as ytdlp_provision_supported,
+)
 from udl.postprocess.zip_extract import (
     after_extract_classify_hook,
     extract_options,
@@ -72,7 +83,9 @@ __all__ = [
     "ffmpeg_missing_error",
     "ffmpeg_provision_error",
     "find_ffmpeg",
+    "check_ytdlp_update",
     "install_ffmpeg",
+    "install_ytdlp",
     "is_zip_candidate",
     "known_pp_steps",
     "list_password_public",
@@ -83,6 +96,7 @@ __all__ = [
     "parse_site_toggle_list",
     "postprocess_options",
     "probe_ffmpeg",
+    "probe_ytdlp",
     "promote_password",
     "provision_supported",
     "remove_password",
@@ -92,4 +106,6 @@ __all__ = [
     "run_postprocessor_chain",
     "update_password",
     "write_nfo",
+    "ytdlp_provision_error",
+    "ytdlp_provision_supported",
 ]

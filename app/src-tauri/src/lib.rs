@@ -159,6 +159,19 @@ struct AppSettings {
     gallerydl_options: String,
     #[serde(default)]
     gallerydl_use_archive: bool,
+    // yt-dlp external CLI (Unlicense subprocess; mere aggregation)
+    #[serde(default = "default_true")]
+    ytdlp_enabled: bool,
+    #[serde(default)]
+    ytdlp_tool_path: String,
+    #[serde(default)]
+    ytdlp_cookies_path: String,
+    #[serde(default)]
+    ytdlp_format: String,
+    #[serde(default)]
+    ytdlp_audio_only: bool,
+    #[serde(default)]
+    ytdlp_audio_format: String,
     // shell / UX (v0.8)
     #[serde(default)]
     clipboard_watcher: bool,
@@ -303,6 +316,7 @@ fn default_site_flags() -> HashMap<String, bool> {
         "bilibili",
         "mega",
         "gallerydl",
+        "ytdlp",
         "direct",
     ] {
         map.insert(site.into(), true);
@@ -318,6 +332,7 @@ fn sites_cli_list(flags: &HashMap<String, bool>) -> String {
         "bilibili",
         "mega",
         "gallerydl",
+        "ytdlp",
         "direct",
     ];
     let enabled: Vec<&str> = sites
@@ -398,6 +413,12 @@ impl Default for AppSettings {
             gallerydl_cookies_path: String::new(),
             gallerydl_options: String::new(),
             gallerydl_use_archive: false,
+            ytdlp_enabled: true,
+            ytdlp_tool_path: String::new(),
+            ytdlp_cookies_path: String::new(),
+            ytdlp_format: String::new(),
+            ytdlp_audio_only: false,
+            ytdlp_audio_format: String::new(),
             clipboard_watcher: false,
             notifications_enabled: true,
             minimize_to_tray: false,
@@ -435,6 +456,20 @@ struct FfmpegStatus {
     message: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct YtdlpStatus {
+    found: bool,
+    path: Option<String>,
+    source: Option<String>,
+    version: Option<String>,
+    platform: String,
+    provision_supported: bool,
+    message: String,
+    latest_version: Option<String>,
+    update_available: Option<bool>,
+}
+
 fn core_dir(app: &AppHandle) -> PathBuf {
     // repo layout: app/src-tauri -> ../../core
     if let Ok(cwd) = std::env::current_dir() {
@@ -465,6 +500,10 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn ffmpeg_install_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("ffmpeg"))
+}
+
+fn ytdlp_install_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("yt-dlp"))
 }
 
 fn load_settings_file(app: &AppHandle) -> AppSettings {
@@ -550,6 +589,35 @@ fn append_gallerydl_args(args: &mut Vec<String>, settings: &AppSettings) {
     }
     if settings.gallerydl_use_archive {
         args.push("--gallerydl-archive".into());
+    }
+}
+
+fn append_ytdlp_args(args: &mut Vec<String>, settings: &AppSettings) {
+    if !settings.ytdlp_enabled {
+        args.push("--no-ytdlp".into());
+    }
+    let tool = settings.ytdlp_tool_path.trim();
+    if !tool.is_empty() {
+        args.push("--ytdlp-tool".into());
+        args.push(tool.to_string());
+    }
+    let cookies = settings.ytdlp_cookies_path.trim();
+    if !cookies.is_empty() {
+        args.push("--ytdlp-cookies".into());
+        args.push(cookies.to_string());
+    }
+    let format = settings.ytdlp_format.trim();
+    if !format.is_empty() {
+        args.push("--ytdlp-format".into());
+        args.push(format.to_string());
+    }
+    if settings.ytdlp_audio_only {
+        args.push("--ytdlp-audio-only".into());
+    }
+    let audio_format = settings.ytdlp_audio_format.trim();
+    if !audio_format.is_empty() {
+        args.push("--ytdlp-audio-format".into());
+        args.push(audio_format.to_string());
     }
 }
 
@@ -680,6 +748,19 @@ fn spawn_udl(
     }
     if !settings.gallerydl_enabled {
         env_pairs.push(("UDL_GALLERY_DL_ENABLED".into(), "0".into()));
+    }
+    let ytdlp_tool = settings.ytdlp_tool_path.trim();
+    if !ytdlp_tool.is_empty() {
+        env_pairs.push(("UDL_YTDLP".into(), ytdlp_tool.to_string()));
+    }
+    if !settings.ytdlp_enabled {
+        env_pairs.push(("UDL_YTDLP_ENABLED".into(), "0".into()));
+    }
+    if let Ok(dir) = ytdlp_install_dir(app) {
+        env_pairs.push((
+            "UDL_YTDLP_DIR".into(),
+            dir.to_string_lossy().into_owned(),
+        ));
     }
 
     if use_sidecar_binary() {
@@ -1191,6 +1272,7 @@ fn get_app_paths(app: AppHandle) -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({
         "appData": app_data_dir(&app)?.to_string_lossy(),
         "ffmpegDir": ffmpeg_install_dir(&app)?.to_string_lossy(),
+        "ytdlpDir": ytdlp_install_dir(&app)?.to_string_lossy(),
         "settings": settings_path(&app)?.to_string_lossy(),
     }))
 }
@@ -1355,6 +1437,7 @@ async fn resolve_url(app: AppHandle, url: String) -> Result<ResolveResult, Strin
     let mut args = vec!["resolve".into(), url.clone()];
     append_proxy_ua_args(&mut args, &settings);
     append_gallerydl_args(&mut args, &settings);
+    append_ytdlp_args(&mut args, &settings);
     let (mut rx, _child) = spawn_udl(&app, args)?;
     let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
     if code.unwrap_or(1) > 2 {
@@ -1404,6 +1487,7 @@ async fn probe_url(app: AppHandle, url: String) -> Result<ProbeResult, String> {
     let mut args = vec!["probe".into(), url.clone()];
     append_proxy_ua_args(&mut args, &settings);
     append_gallerydl_args(&mut args, &settings);
+    append_ytdlp_args(&mut args, &settings);
     let (mut rx, _child) = spawn_udl(&app, args)?;
     let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
     if code.unwrap_or(1) != 0 {
@@ -1704,6 +1788,140 @@ async fn install_ffmpeg(app: AppHandle) -> Result<FfmpegStatus, String> {
 }
 
 #[tauri::command]
+async fn ytdlp_status(app: AppHandle) -> Result<YtdlpStatus, String> {
+    let settings = load_settings_file(&app);
+    let mut args = vec!["ytdlp".into(), "status".into(), "--json".into()];
+    let tool = settings.ytdlp_tool_path.trim();
+    if !tool.is_empty() {
+        args.push("--ytdlp-tool".into());
+        args.push(tool.to_string());
+    }
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, _code) = collect_stdout_json(&mut rx).await?;
+    let value: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse ytdlp status: {e}; raw={stdout}; err={stderr}"))?;
+    Ok(YtdlpStatus {
+        found: value
+            .get("found")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        path: value
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        source: value
+            .get("source")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        version: value
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        platform: value
+            .get("platform")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        provision_supported: value
+            .get("provision_supported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        message: value
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        latest_version: None,
+        update_available: None,
+    })
+}
+
+#[tauri::command]
+async fn install_ytdlp(app: AppHandle) -> Result<YtdlpStatus, String> {
+    let dir = ytdlp_install_dir(&app)?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let args = vec![
+        "ytdlp".into(),
+        "install".into(),
+        "--json".into(),
+        "--dir".into(),
+        dir.to_string_lossy().into_owned(),
+    ];
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, code) = collect_stdout_json(&mut rx).await?;
+    let value: serde_json::Value = serde_json::from_str(stdout.trim()).map_err(|e| {
+        format!("parse ytdlp install: {e}; raw={stdout}; err={stderr}; code={code:?}")
+    })?;
+    if !value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return Err(value
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("yt-dlp 安裝失敗")
+            .to_string());
+    }
+    let mut settings = load_settings_file(&app);
+    if settings.ytdlp_tool_path.trim().is_empty() {
+        if let Some(path) = value.get("path").and_then(|v| v.as_str()) {
+            settings.ytdlp_tool_path = path.to_string();
+            let _ = save_settings(app.clone(), settings);
+        }
+    }
+    ytdlp_status(app).await
+}
+
+#[tauri::command]
+async fn ytdlp_update_check(app: AppHandle) -> Result<YtdlpStatus, String> {
+    let settings = load_settings_file(&app);
+    let mut args = vec!["ytdlp".into(), "update-check".into(), "--json".into()];
+    let tool = settings.ytdlp_tool_path.trim();
+    if !tool.is_empty() {
+        args.push("--ytdlp-tool".into());
+        args.push(tool.to_string());
+    }
+    let (mut rx, _child) = spawn_udl(&app, args)?;
+    let (stdout, stderr, _code) = collect_stdout_json(&mut rx).await?;
+    let value: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse ytdlp update-check: {e}; raw={stdout}; err={stderr}"))?;
+    Ok(YtdlpStatus {
+        found: value
+            .get("found")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        path: value
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        source: value
+            .get("source")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        version: value
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        platform: value
+            .get("platform")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        provision_supported: value
+            .get("provision_supported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        message: value
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        latest_version: value
+            .get("latest_version")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        update_available: value.get("update_available").and_then(|v| v.as_bool()),
+    })
+}
+
+#[tauri::command]
 async fn start_download(
     app: AppHandle,
     state: State<'_, JobState>,
@@ -1867,6 +2085,7 @@ async fn start_download(
         }
     }
     append_gallerydl_args(&mut args, &settings);
+    append_ytdlp_args(&mut args, &settings);
     let ffmpeg_path = ffmpeg
         .as_deref()
         .map(str::trim)
@@ -3362,6 +3581,9 @@ pub fn run() {
             close_geetest_window,
             ffmpeg_status,
             install_ffmpeg,
+            ytdlp_status,
+            install_ytdlp,
+            ytdlp_update_check,
             gallerydl_status,
             gallerydl_sites,
             start_download,
