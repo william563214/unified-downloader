@@ -28,7 +28,7 @@ unified-downloader/
 GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-lines（見 `docs/events.md`）。  
 全域歷史 DB 在應用資料目錄（與 FFmpeg 佈建同根），由核心擁有。
 
-**不做：** gallery-dl **import／vendor**（GPL-2.0-only；僅允許獨立子行程）、Pixeldrain、付費牆／配額／VIP／區域繞過、簽章、DRM／加密串流繞過、系統級下載攔截。
+**不做：** gallery-dl／yt-dlp **import／vendor**（僅允許獨立子行程）、Pixeldrain、付費牆／配額／VIP／區域繞過、簽章、DRM／加密串流繞過、系統級下載攔截。
 
 ## 目前支援
 
@@ -40,7 +40,10 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 | Bilibili | ✅ v0.7-B | ScottSloan/Bili23-Downloader（解析／登入／帳號清單／CDN；見 `docs/bilibili.md`） |
 | MEGA | ✅ 內建＋外部備援 | 內建協定客戶端；可選 megatools／MEGAcmd 子行程 |
 | gallery-dl | ✅ 外部子行程 | mikf/gallery-dl（GPL-2.0-only；見 `docs/gallery-dl.md`） |
+| yt-dlp | ✅ 外部子行程 | yt-dlp（Unlicense；見 `docs/yt-dlp.md`） |
 | Direct | ✅ | 通用直連（router 最後） |
+
+Router 優先級：原生站點 → gallery-dl（圖站）→ yt-dlp（影音長尾）→ Direct。
 
 上游 commit 與授權細節見 `NOTICE`。介面約定見 `docs/extractor-interface.md`。路線圖見 `ROADMAP.md`。
 
@@ -77,7 +80,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - **統一佇列**：跨站進行中／排隊／暫停／失敗；每任務進度、速度、ETA；暫停／繼續／取消／重試、排序、並發、批次操作；失敗可「開啟修復」。
 - **輸入**：多網址貼上、拖放連結到視窗、可選剪貼簿監看（預設關）；偵測時顯示站點 badge。
 - **系統**：完成／失敗通知（可關）、系統列圖示狀態、關閉視窗最小化到托盤（可關）；主題跟隨系統（亦可強制淺／深色）。
-- **設定頁（單頁分區）**：下載目錄、命名／規則、NFO／封面、網路、Iwara／Bilibili 帳號相關、FFmpeg、MEGA 工具路徑；可匯入／匯出 JSON（不含密鑰）。寫入應用資料目錄 `settings.json`（並同步 `udl.config.json`；代理密碼進 OS keychain）。
+- **設定頁（單頁分區）**：下載目錄、命名／規則、NFO／封面、網路、Iwara／Bilibili 帳號相關、FFmpeg、MEGA／gallery-dl／yt-dlp 工具路徑；可匯入／匯出 JSON（不含密鑰）。寫入應用資料目錄 `settings.json`（並同步 `udl.config.json`；代理密碼進 OS keychain）。
 - **自動更新**：接 GitHub Releases；**未設定簽章公鑰時停用**（見 `docs/updater.md`）。未簽章安裝包仍可手動安裝。
 - **歷史頁**：搜尋、站點／狀態／日期／標籤篩選、排序、刪除條目（可選刪檔）；有本機封面時顯示縮圖。
 - **修復頁**：掃描缺檔／`.part`／大小／hash／checksum／orphan，可重新排隊、重新連結、清殘檔、刪過期紀錄。
@@ -85,6 +88,7 @@ GUI 透過 `tauri-plugin-shell` 啟動 `udl` sidecar，解析 stdout 的 JSON-li
 - **校驗／掃毒（v0.9-D）**：下載後 MD5／SHA-1／SHA-256；可選 Defender／ClamAV 指令（預設關）；見 `docs/checksum-hook.md`。
 - **後處理串接（v0.10）**：NFO／封面／校驗／掃毒／解壓／搬移／exec 可調順序；輸出模板對齊 yt-dlp 欄位／預設值語法；見 `docs/postprocessor-chain.md`、`docs/naming-rules.md`。
 - **FFmpeg 首次佈建**：偵測不到時可下載目前 OS／arch 靜態建置並驗證 checksum（見 `NOTICE`）。CLI：`udl ffmpeg status` / `udl ffmpeg install`。
+- **yt-dlp 首次佈建**：偵測不到時可下載官方 release binary（Mac arm64／Win x64），以 **SHA2-256SUMS** 驗證；設定頁可檢查更新。CLI：`udl ytdlp status|install|update-check`（見 `docs/yt-dlp.md`）。
 - **網路**：見 `docs/networking.md`（全域限速、代理三模式、可選 aria2 RPC、自訂 UA、v0.10 RequestHandler）。
 - **排程／配額**：見 `docs/scheduler.md`（具名佇列、時段、完成後動作、流量配額、時段限速）。
 - **MEGA**：內建 Python 客戶端（分段＋CBC-MAC；見 `docs/mega.md`）；可選 megatools／MEGAcmd 外部後端。

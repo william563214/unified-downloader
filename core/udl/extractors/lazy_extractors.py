@@ -82,6 +82,22 @@ class gallerydl_extractor(lazy_load_extractor):
         return matches(url)
 
 
+class ytdlp_extractor(lazy_load_extractor):
+    _module = 'udl.extractors.external.ytdlp'
+    site = 'ytdlp'
+    label = 'yt-dlp'
+    status = 'external'
+    kind_hint = 'video|playlist|audio'
+    _VALID_URL = False
+
+    @classmethod
+    def suitable(cls, url: str) -> bool:
+        if cls._match_valid_url(url) is not None:
+            return True
+        from udl.extractors.external.ytdlp import matches
+        return matches(url)
+
+
 class direct_extractor(lazy_load_extractor):
     _module = 'udl.extractors.direct'
     site = 'direct'
@@ -98,6 +114,7 @@ extractors: list[type[extractor]] = [
     bilibili_extractor,
     mega_extractor,
     gallerydl_extractor,
+    ytdlp_extractor,
     direct_extractor,
 ]
 
@@ -109,5 +126,6 @@ __all__ = [
     'bilibili_extractor',
     'mega_extractor',
     'gallerydl_extractor',
+    'ytdlp_extractor',
     'direct_extractor',
 ]

@@ -56,6 +56,8 @@ _blocked_option_keys = frozenset(
         "gallerydlPassword",
         "gallerydl_cookies",
         "gallerydlCookies",
+        "ytdlp_cookies",
+        "ytdlpCookies",
         "zip_password",
         "zipPassword",
         "extract_password",

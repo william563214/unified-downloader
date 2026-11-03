@@ -29,6 +29,7 @@ import {
   type ExtensionClassifyRule,
   type ExtractPasswordMode,
   type FfmpegStatus,
+  type YtdlpStatus,
   type HistoryEntry,
   type NameConflictMode,
   type NamingPreview,
@@ -265,6 +266,9 @@ export default function App() {
   const [ffmpegInfo, setFfmpegInfo] = useState<FfmpegStatus | null>(null);
   const [ffmpegBusy, setFfmpegBusy] = useState(false);
   const [ffmpegPrompt, setFfmpegPrompt] = useState(false);
+  const [ytdlpInfo, setYtdlpInfo] = useState<YtdlpStatus | null>(null);
+  const [ytdlpBusy, setYtdlpBusy] = useState(false);
+  const [ytdlpPrompt, setYtdlpPrompt] = useState(false);
   const [clipboardHint, setClipboardHint] = useState<string | null>(null);
   const [clipboardUrls, setClipboardUrls] = useState<string[]>([]);
   const [hotkeyStatus, setHotkeyStatus] = useState<string | null>(null);
@@ -404,6 +408,28 @@ export default function App() {
     }
   }, []);
 
+  const refreshYtdlp = useCallback(async () => {
+    try {
+      const status = await invoke<YtdlpStatus>("ytdlp_status");
+      setYtdlpInfo(status);
+      if (!status.found && status.provisionSupported) {
+        setYtdlpPrompt(true);
+      }
+      return status;
+    } catch (e) {
+      setYtdlpInfo({
+        found: false,
+        path: null,
+        source: null,
+        version: null,
+        platform: "unknown",
+        provisionSupported: false,
+        message: String(e),
+      });
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -438,6 +464,13 @@ export default function App() {
           gallerydlCookiesPath: loaded.gallerydlCookiesPath ?? "",
           gallerydlOptions: loaded.gallerydlOptions ?? "",
           gallerydlUseArchive: Boolean(loaded.gallerydlUseArchive),
+          ytdlpEnabled:
+            loaded.ytdlpEnabled == null ? true : Boolean(loaded.ytdlpEnabled),
+          ytdlpToolPath: loaded.ytdlpToolPath ?? "",
+          ytdlpCookiesPath: loaded.ytdlpCookiesPath ?? "",
+          ytdlpFormat: loaded.ytdlpFormat ?? "",
+          ytdlpAudioOnly: Boolean(loaded.ytdlpAudioOnly),
+          ytdlpAudioFormat: loaded.ytdlpAudioFormat ?? "",
           clipboardWatcher: Boolean(loaded.clipboardWatcher),
           hotkeyDownloadEnabled: Boolean(loaded.hotkeyDownloadEnabled),
           hotkeyDownloadBinding:
@@ -490,6 +523,7 @@ export default function App() {
         /* defaults */
       }
       await refreshFfmpeg();
+      await refreshYtdlp();
       try {
         const result = await invoke<{
           count?: number;
@@ -500,7 +534,7 @@ export default function App() {
         setZipPasswordEntries([]);
       }
     })();
-  }, [refreshFfmpeg]);
+  }, [refreshFfmpeg, refreshYtdlp]);
 
   useEffect(() => {
     if (page === "settings") {
@@ -1917,6 +1951,49 @@ export default function App() {
     }
   }
 
+  async function installYtdlpNow() {
+    setYtdlpBusy(true);
+    setError(null);
+    try {
+      const status = await invoke<YtdlpStatus>("install_ytdlp");
+      setYtdlpInfo(status);
+      setYtdlpPrompt(false);
+      if (status.path) {
+        setSettingsDraft((s) => ({
+          ...s,
+          ytdlpToolPath: status.path || s.ytdlpToolPath,
+        }));
+        setSettings((s) => ({
+          ...s,
+          ytdlpToolPath: status.path || s.ytdlpToolPath,
+        }));
+      }
+    } catch (e) {
+      setError(humanizeError(String(e), "ytdlp_provision_failed"));
+    } finally {
+      setYtdlpBusy(false);
+      await refreshYtdlp();
+    }
+  }
+
+  async function checkYtdlpUpdate() {
+    setYtdlpBusy(true);
+    setError(null);
+    try {
+      const status = await invoke<YtdlpStatus>("ytdlp_update_check");
+      setYtdlpInfo(status);
+      if (status.updateAvailable && status.provisionSupported) {
+        setError(
+          `yt-dlp 有更新：${status.version || "?"} → ${status.latestVersion || "latest"}`,
+        );
+      }
+    } catch (e) {
+      setError(humanizeError(String(e)));
+    } finally {
+      setYtdlpBusy(false);
+    }
+  }
+
   const iwaraQuality =
     resolveInfo?.site === "iwara"
       ? settings.iwaraQuality || "Source"
@@ -2084,6 +2161,35 @@ export default function App() {
         </section>
       )}
 
+      {ytdlpPrompt && ytdlpInfo && !ytdlpInfo.found && (
+        <section className="banner" role="status">
+          <div>
+            <strong>尚未找到 yt-dlp</strong>
+            <p>
+              長尾影音站點備援需要 yt-dlp。可下載官方 release binary（會以
+              SHA2-256SUMS 驗證），或稍後在設定指定系統路徑。
+            </p>
+          </div>
+          <div className="banner-actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={ytdlpBusy || !ytdlpInfo.provisionSupported}
+              onClick={() => void installYtdlpNow()}
+            >
+              {ytdlpBusy ? "下載中…" : "下載 yt-dlp"}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setYtdlpPrompt(false)}
+            >
+              稍後
+            </button>
+          </div>
+        </section>
+      )}
+
       {page === "page" ? (
         <div className="page-shell">
           <PageDownload
@@ -2178,6 +2284,7 @@ export default function App() {
                 <option value="bilibili">Bilibili</option>
                 <option value="mega">MEGA</option>
                 <option value="gallerydl">gallery-dl</option>
+                <option value="ytdlp">yt-dlp</option>
                 <option value="direct">Direct</option>
               </select>
             </label>
@@ -2979,7 +3086,7 @@ export default function App() {
           <div className="settings-block">
             <h3>工具 · gallery-dl</h3>
             <p className="hint">
-              GPL-2.0-only，僅以獨立子行程呼叫（不 import）。原生站點（Gofile／Bunkr／Iwara／Bilibili／MEGA）優先；其餘由 gallery-dl 辨識的網址走此備援，再其次才是 Direct。帳密請用
+              GPL-2.0-only，僅以獨立子行程呼叫（不 import）。優先級：原生站點 → gallery-dl（圖站／相簿）→ yt-dlp（影音長尾）→ Direct。帳密請用
               <code> udl secrets set gallerydl.username </code>
               等 keychain 鍵，勿寫入設定檔。不做付費牆／DRM／Cloudflare 繞過。
             </p>
@@ -3108,6 +3215,186 @@ export default function App() {
               </select>
             </label>
             <GallerydlSitesPanel />
+          </div>
+
+          <div className="settings-block">
+            <h3>工具 · yt-dlp</h3>
+            <p className="hint">
+              Unlicense，僅以獨立子行程呼叫（不 import）。原生與 gallery-dl 之後的影音／串流備援；再其次才是 Direct。僅在此明確設定 cookies
+              檔時才傳給 yt-dlp；不會從其他站點 keychain 帶入憑證。不做付費牆／DRM 繞過；impersonation 預設關。
+            </p>
+            <p className="hint">
+              {ytdlpInfo?.found
+                ? `已找到：${ytdlpInfo.path}（${ytdlpInfo.source || "unknown"}）${
+                    ytdlpInfo.version ? ` · ${ytdlpInfo.version}` : ""
+                  }`
+                : ytdlpInfo?.message || "尚未找到 yt-dlp"}
+            </p>
+            <label className="field compact">
+              <span>啟用</span>
+              <select
+                value={settingsDraft.ytdlpEnabled ? "on" : "off"}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    ytdlpEnabled: e.target.value === "on",
+                  }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="on">啟用</option>
+                <option value="off">停用</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>yt-dlp 路徑</span>
+              <div className="folder-row">
+                <input
+                  value={settingsDraft.ytdlpToolPath}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      ytdlpToolPath: e.target.value,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="空白＝managed／PATH／UDL_YTDLP"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    void (async () => {
+                      const selected = await open({
+                        multiple: false,
+                        title: "選擇 yt-dlp",
+                      });
+                      if (typeof selected === "string") {
+                        setSettingsDraft((s) => ({
+                          ...s,
+                          ytdlpToolPath: selected,
+                        }));
+                        setSettingsDirty(true);
+                      }
+                    })();
+                  }}
+                >
+                  瀏覽
+                </button>
+              </div>
+            </label>
+            <label className="field">
+              <span>cookies.txt（選用）</span>
+              <div className="folder-row">
+                <input
+                  value={settingsDraft.ytdlpCookiesPath}
+                  onChange={(e) => {
+                    setSettingsDraft((s) => ({
+                      ...s,
+                      ytdlpCookiesPath: e.target.value,
+                    }));
+                    setSettingsDirty(true);
+                  }}
+                  placeholder="空白＝不傳 cookies"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    void (async () => {
+                      const selected = await open({
+                        multiple: false,
+                        title: "選擇 cookies.txt",
+                      });
+                      if (typeof selected === "string") {
+                        setSettingsDraft((s) => ({
+                          ...s,
+                          ytdlpCookiesPath: selected,
+                        }));
+                        setSettingsDirty(true);
+                      }
+                    })();
+                  }}
+                >
+                  瀏覽
+                </button>
+              </div>
+            </label>
+            <label className="field">
+              <span>畫質／格式（-f）</span>
+              <input
+                value={settingsDraft.ytdlpFormat}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    ytdlpFormat: e.target.value,
+                  }));
+                  setSettingsDirty(true);
+                }}
+                placeholder="空白＝yt-dlp 預設；亦可填 720／1080 或 bv*+ba/b"
+                spellCheck={false}
+              />
+            </label>
+            <label className="field compact">
+              <span>僅音訊（--extract-audio）</span>
+              <select
+                value={settingsDraft.ytdlpAudioOnly ? "on" : "off"}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    ytdlpAudioOnly: e.target.value === "on",
+                  }));
+                  setSettingsDirty(true);
+                }}
+              >
+                <option value="off">關閉</option>
+                <option value="on">開啟</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>音訊格式（--audio-format）</span>
+              <input
+                value={settingsDraft.ytdlpAudioFormat}
+                onChange={(e) => {
+                  setSettingsDraft((s) => ({
+                    ...s,
+                    ytdlpAudioFormat: e.target.value,
+                  }));
+                  setSettingsDirty(true);
+                }}
+                placeholder="例如 mp3／m4a／opus（僅音訊時）"
+                spellCheck={false}
+                disabled={!settingsDraft.ytdlpAudioOnly}
+              />
+            </label>
+            <div className="actions">
+              <button
+                type="button"
+                className="ghost"
+                disabled={ytdlpBusy || !ytdlpInfo?.provisionSupported}
+                onClick={() => void installYtdlpNow()}
+              >
+                {ytdlpBusy ? "處理中…" : "下載官方 binary"}
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                disabled={ytdlpBusy}
+                onClick={() => void checkYtdlpUpdate()}
+              >
+                檢查更新
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                disabled={ytdlpBusy}
+                onClick={() => void refreshYtdlp()}
+              >
+                重新偵測
+              </button>
+            </div>
           </div>
 
           <div className="settings-block" id="settings-naming">

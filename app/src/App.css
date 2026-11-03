@@ -335,6 +335,12 @@ input:focus {
   border-color: #d4c4b0;
 }
 
+.tone-ytdlp {
+  background: #e8eef6;
+  color: #2a4060;
+  border-color: #b8c8dc;
+}
+
 .gallerydl-module-list {
   max-height: 220px;
   overflow: auto;

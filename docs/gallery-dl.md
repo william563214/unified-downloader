@@ -6,9 +6,11 @@
 
 ## 優先級
 
-Router 順序：Gofile → Bunkr → Iwara → Bilibili → MEGA → **gallerydl** → Direct。
+Router 順序：Gofile → Bunkr → Iwara → Bilibili → MEGA → **gallerydl** → yt-dlp → Direct。
 
-`matches()` 使用 `gallery-dl -E URL`（gallery-dl 自身辨識）。停用、找不到工具、或不支援的 URL 會落到 Direct（或 unsupported）。
+圖站／相簿優先 gallery-dl；yt-dlp 負責 gallery-dl 不認的影音長尾（見 `docs/yt-dlp.md`）。
+
+`matches()` 使用 `gallery-dl -E URL`（gallery-dl 自身辨識）。停用、找不到工具、或不支援的 URL 會落到 yt-dlp 或 Direct。
 
 ## CLI
 
