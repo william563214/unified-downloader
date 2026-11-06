@@ -8,8 +8,11 @@
 立即重啟一次
   powershell -NoProfile -ExecutionPolicy Bypass -File .\restart-taskbar.ps1
 
-每 30 分鐘重啟並登錄排程 約一分鐘後第一次執行
+每 30 分鐘重啟並登錄排程 約一分鐘後第一次執行 同時在桌面放上捷徑
   powershell -NoProfile -ExecutionPolicy Bypass -File .\restart-taskbar.ps1 -Install
+
+只在桌面建立捷徑 雙擊會立刻重啟工作列
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\restart-taskbar.ps1 -Shortcut
 
 改間隔為 60 分鐘
   powershell -NoProfile -ExecutionPolicy Bypass -File .\restart-taskbar.ps1 -Install -IntervalMinutes 60
@@ -37,6 +40,8 @@ param(
 
     [switch]$Install,
 
+    [switch]$Shortcut,
+
     [switch]$Uninstall,
 
     [switch]$Status,
@@ -60,6 +65,8 @@ $mutex_name = "Local\RestartTaskbar"
 $cooldown_name = "last-restart.txt"
 $log_dir_name = "RestartTaskbar"
 $log_file_name = "restart-taskbar.log"
+$shortcut_name = "重啟工作列.lnk"
+$shortcut_window_style = 7
 
 $native_source = @'
 using System;
@@ -409,6 +416,52 @@ function New-TaskXml {
 "@
 }
 
+function Get-ShortcutArguments {
+    param(
+        [string]$ScriptPath,
+        [string]$RunMode
+    )
+
+    return "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ScriptPath`" -Mode $RunMode"
+}
+
+function Get-DesktopDirectory {
+    $desktop = [Environment]::GetFolderPath("Desktop")
+    if ([string]::IsNullOrWhiteSpace($desktop)) {
+        throw "找不到桌面資料夾。"
+    }
+    return $desktop
+}
+
+function New-DesktopShortcut {
+    if ($PSCommandPath -match '"') {
+        throw "腳本路徑含有雙引號，請搬到一般資料夾再建立捷徑。"
+    }
+
+    $desktop = Get-DesktopDirectory
+    $link_path = Join-Path $desktop $shortcut_name
+    $powershell_exe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut($link_path)
+    $link.TargetPath = $powershell_exe
+    $link.Arguments = Get-ShortcutArguments -ScriptPath $PSCommandPath -RunMode $Mode
+    $link.WorkingDirectory = Split-Path -Parent $PSCommandPath
+    $link.WindowStyle = $shortcut_window_style
+    $link.Description = "立刻重啟卡住的工作列"
+    $link.IconLocation = (Join-Path $env:SystemRoot "System32\shell32.dll") + ",239"
+    $link.Save()
+    Write-TaskbarLog "已在桌面建立捷徑「$shortcut_name」。雙擊會立刻重啟工作列。"
+}
+
+function Remove-DesktopShortcut {
+    $link_path = Join-Path (Get-DesktopDirectory) $shortcut_name
+    if (-not (Test-Path -LiteralPath $link_path)) {
+        return
+    }
+    Remove-Item -LiteralPath $link_path -Force
+    Write-TaskbarLog "已移除桌面捷徑「$shortcut_name」。"
+}
+
 function Install-RestartTaskbarTask {
     if ([string]::IsNullOrWhiteSpace($TaskName) -or $TaskName -match '[\\/]') {
         throw "排程名稱不能空白，也不能含有斜線。"
@@ -434,12 +487,13 @@ function Install-RestartTaskbarTask {
 
 function Uninstall-RestartTaskbarTask {
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    if (-not $task) {
+    if ($task) {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        Write-TaskbarLog "已移除排程 $TaskName。"
+    } else {
         Write-TaskbarLog "沒有排程 $TaskName。"
-        return
     }
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-    Write-TaskbarLog "已移除排程 $TaskName。"
+    Remove-DesktopShortcut
 }
 
 function Show-TaskStatus {
@@ -487,8 +541,9 @@ if ($Install) { $action_count += 1 }
 if ($Uninstall) { $action_count += 1 }
 if ($Status) { $action_count += 1 }
 if ($Loop) { $action_count += 1 }
+if ($Shortcut -and -not $Install) { $action_count += 1 }
 if ($action_count -gt 1) {
-    Write-TaskbarLog "請只選一種動作：-Install、-Uninstall、-Status 或 -Loop。"
+    Write-TaskbarLog "請只選一種動作：-Install、-Shortcut、-Uninstall、-Status 或 -Loop。"
     exit 1
 }
 
@@ -503,6 +558,11 @@ try {
     }
     if ($Install) {
         Install-RestartTaskbarTask
+        New-DesktopShortcut
+        exit 0
+    }
+    if ($Shortcut) {
+        New-DesktopShortcut
         exit 0
     }
     if ($Loop) {
